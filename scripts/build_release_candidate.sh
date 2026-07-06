@@ -27,10 +27,21 @@ EOF
 }
 
 ensure_release_path() {
-  case "$1" in
-    "$repo_root/releases/"*) ;;
+  local releases_real target_real
+  releases_real="$(realpath -m "$repo_root/releases")"
+  target_real="$(realpath -m "$1")"
+  case "$target_real/" in
+    "$releases_real/"*) ;;
     *)
       fail "refusing to operate outside $repo_root/releases: $1"
+      ;;
+  esac
+}
+
+validate_release_id() {
+  case "$release_id" in
+    "."|".."|*[!A-Za-z0-9._-]*)
+      fail "release id may only contain letters, digits, dot, underscore, and dash"
       ;;
   esac
 }
@@ -94,11 +105,15 @@ cleanup_release_tree() {
 
 [ -n "$release_id" ] || usage
 [ -n "$release_tag" ] || usage
+validate_release_id
 
 release_dir="$repo_root/releases/$release_id"
 src_dir="$release_dir/src"
 bin_dir="$release_dir/bin"
 manifest_path="$release_dir/manifest.env"
+
+[ ! -L "$repo_root/releases" ] || fail "refusing symlinked releases root: $repo_root/releases"
+[ ! -L "$release_dir" ] || fail "refusing symlinked release directory: $release_dir"
 
 git -C "$repo_root" rev-parse --show-toplevel >/dev/null 2>&1 || fail "repo root is not a git worktree: $repo_root"
 [ -f "$option_manifest" ] || fail "missing local option override manifest: $option_manifest"

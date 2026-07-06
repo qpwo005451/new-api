@@ -29,6 +29,26 @@ usage() {
   exit 1
 }
 
+validate_release_id() {
+  case "$release_id" in
+    "."|".."|*[!A-Za-z0-9._-]*)
+      fail "release id may only contain letters, digits, dot, underscore, and dash"
+      ;;
+  esac
+}
+
+ensure_release_path() {
+  local releases_real target_real
+  releases_real="$(realpath -m "$repo_root/releases")"
+  target_real="$(realpath -m "$1")"
+  case "$target_real/" in
+    "$releases_real/"*) ;;
+    *)
+      fail "refusing to operate outside $repo_root/releases: $1"
+      ;;
+  esac
+}
+
 restart_service() {
   if [ "$systemctl_bin" = "systemctl" ]; then
     systemctl restart new-api
@@ -48,10 +68,20 @@ restore_runtime_after_failure() {
 }
 
 [ -n "$release_id" ] || usage
+validate_release_id
+[ ! -L "$repo_root/releases" ] || fail "refusing symlinked releases root: $repo_root/releases"
+[ ! -L "$release_root" ] || fail "refusing symlinked release directory: $release_root"
+[ ! -L "$runtime_root" ] || fail "refusing symlinked runtime directory: $runtime_root"
+ensure_release_path "$release_root"
+ensure_release_path "$runtime_root"
 [ -x "$candidate_bin" ] || fail "missing candidate binary: $candidate_bin"
+[ ! -L "$candidate_bin" ] || fail "refusing symlinked candidate binary: $candidate_bin"
 [ -f "$manifest_path" ] || fail "missing release manifest: $manifest_path"
+[ ! -L "$manifest_path" ] || fail "refusing symlinked release manifest: $manifest_path"
 [ -f "$live_binary" ] || fail "missing live binary: $live_binary"
+[ ! -L "$live_binary" ] || fail "refusing symlinked live binary: $live_binary"
 [ -f "$live_db" ] || fail "missing live database: $live_db"
+[ ! -L "$live_db" ] || fail "refusing symlinked live database: $live_db"
 
 mkdir -p "$runtime_root"
 cp "$live_binary" "$backup_bin"

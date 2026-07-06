@@ -25,14 +25,35 @@ EOF
   exit 1
 }
 
+validate_release_id() {
+  case "$release_id" in
+    "."|".."|*[!A-Za-z0-9._-]*)
+      fail "release id may only contain letters, digits, dot, underscore, and dash"
+      ;;
+  esac
+}
+
+ensure_release_path() {
+  local releases_real target_real
+  releases_real="$(realpath -m "$repo_root/releases")"
+  target_real="$(realpath -m "$1")"
+  case "$target_real/" in
+    "$releases_real/"*) ;;
+    *)
+      fail "refusing to operate outside $repo_root/releases: $1"
+      ;;
+  esac
+}
+
 model_present() {
   local model="$1"
-  python3 - "$model" <<'PY'
+  MODELS_JSON="$models_json" python3 - "$model" <<'PY'
 import json
+import os
 import sys
 
 target = sys.argv[1]
-data = json.load(sys.stdin)
+data = json.loads(os.environ["MODELS_JSON"])
 ids = [item.get("id") for item in data.get("data", []) if isinstance(item, dict)]
 sys.exit(0 if target in ids else 1)
 PY
@@ -40,16 +61,16 @@ PY
 
 pick_model() {
   if [ -n "$requested_model" ]; then
-    printf '%s' "$models_json" | model_present "$requested_model" || fail "requested smoke model missing from /v1/models: $requested_model"
+    model_present "$requested_model" || fail "requested smoke model missing from /v1/models: $requested_model"
     printf '%s\n' "$requested_model"
     return 0
   fi
 
-  printf '%s' "$models_json" | python3 - <<'PY'
+  MODELS_JSON="$models_json" python3 - <<'PY'
 import json
-import sys
+import os
 
-data = json.load(sys.stdin)
+data = json.loads(os.environ["MODELS_JSON"])
 skip = ("embedding", "reranker", "bge", "tts", "voice", "image", "whisper", "moderation")
 for item in data.get("data", []):
     model_id = item.get("id") or ""
@@ -62,7 +83,12 @@ PY
 
 [ -n "$base_url" ] || usage
 if [ -z "$db_path" ] && [ -n "$release_id" ]; then
+  validate_release_id
+  [ ! -L "$repo_root/releases" ] || fail "refusing symlinked releases root: $repo_root/releases"
+  [ ! -L "$repo_root/releases/$release_id" ] || fail "refusing symlinked release directory: $repo_root/releases/$release_id"
+  [ ! -L "$repo_root/releases/$release_id/runtime" ] || fail "refusing symlinked runtime directory: $repo_root/releases/$release_id/runtime"
   db_path="$repo_root/releases/$release_id/runtime/new-api.db"
+  ensure_release_path "$db_path"
 fi
 [ -f "$db_path" ] || fail "missing database: $db_path"
 case "$mode" in

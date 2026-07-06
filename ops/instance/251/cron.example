@@ -1,0 +1,2 @@
+*/10 * * * * /opt/new-api/watchdog.sh >> /opt/new-api/watchdog.log 2>&1
+*/2 * * * * /usr/bin/flock -n /tmp/newapi-channel.guard.lock /usr/bin/python3 /opt/new-api/scripts/channel_guard.py >> /opt/new-api/data/channel_guard.log 2>&1

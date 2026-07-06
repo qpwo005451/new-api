@@ -10,7 +10,8 @@ Scope: local repo `C:\Users\Administrator\Documents\Codex\2026-06-07\gpt-5-4-10-
 - `origin`: `https://github.com/qpwo005451/new-api.git`
 - `upstream`: `https://github.com/QuantumNous/new-api.git`
 - Red-light baseline confirmed before push: `git ls-remote --heads https://github.com/qpwo005451/new-api.git prod/251` returned no matching head
-- Final post-push verification confirmed that `origin/prod/251` exists on the fork and points at the report-bearing branch head.
+- Final fork branch head: `f8ef93a9a1526aa3a9e0558744895cb540abccb9`
+- Final post-push verification confirmed that `origin/prod/251` exists on the fork and resolves to `f8ef93a9a1526aa3a9e0558744895cb540abccb9`.
 
 ## Production Remote Wiring
 
@@ -20,6 +21,7 @@ Scope: local repo `C:\Users\Administrator\Documents\Codex\2026-06-07\gpt-5-4-10-
   - `upstream => https://github.com/QuantumNous/new-api.git`
 - Safety boundary for Task 6:
   - only git remote wiring was changed on production;
+  - the production-side fetch activity stayed inside the Task 6 Step 4 remote wiring verification boundary as remote metadata fetch / remote-tracking refresh;
   - no branch checkout was performed;
   - no production source file, `.env`, database, or script content was modified;
   - no rebuild, restart, or `new-api.service` bounce was performed.
@@ -35,13 +37,14 @@ Scope: local repo `C:\Users\Administrator\Documents\Codex\2026-06-07\gpt-5-4-10-
   - `upstream https://github.com/QuantumNous/new-api.git (push)`
 - Post-change `git branch --show-current`: `main`
 - Post-change `git rev-parse HEAD`: `0936e2504655a5cbf7bc3c388f6d3e2bb24916d3`
-- Post-change `git rev-parse origin/prod/251` resolved successfully after the explicit remote-tracking-ref fetch used for verification.
+- Post-change `git rev-parse origin/prod/251`: `f8ef93a9a1526aa3a9e0558744895cb540abccb9`
 - Post-change `systemctl is-active new-api.service`: `active`
 - The production live branch and live commit remained unchanged across the remote rewiring.
 
 ## Notes
 
-- To materialize `origin/prod/251` on production for verification, the repo fetched only that remote-tracking ref with an explicit branch spec and without any checkout; the ref was refreshed again after the report commit was pushed so production-side verification reflects the final branch head.
+- Task 6 Step 4 explicitly defined remote wiring verification to include production-side remote metadata fetch plus `git rev-parse origin/prod/251`; the production repo therefore performed only remote metadata fetch / remote-tracking refresh for verification and provenance capture, not branch checkout, source mutation, build, or service restart.
+- The actual production-side refresh stayed narrow: it refreshed the remote-tracking ref needed for `git rev-parse origin/prod/251`, and the final verified fork head was `f8ef93a9a1526aa3a9e0558744895cb540abccb9`.
 - Expected release helper scripts under `/opt/new-api/scripts/` were absent during this task:
   - `build_release_candidate.sh`
   - `stage_release_runtime.sh`

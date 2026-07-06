@@ -431,13 +431,7 @@ def run_fog_health_rule(
         if can_bootstrap and status == CHANNEL_STATUS_ENABLED:
             rule_state["success_streak"] = 0
             return {"action": "none", "reason": probe_outcome["reason"]}
-        if (
-            rule_state.get("success_streak", 0) >= FOG_SUCCESS_THRESHOLD
-            and (
-                (can_bootstrap and status == CHANNEL_STATUS_DISABLED)
-                or (can_reenable and status == CHANNEL_STATUS_AUTO_DISABLED)
-            )
-        ):
+        if rule_state.get("success_streak", 0) >= FOG_SUCCESS_THRESHOLD and can_reenable and status == CHANNEL_STATUS_AUTO_DISABLED:
             conn.execute("begin immediate")
             set_channel_enabled(conn, channel_id, enabled=True)
             conn.commit()

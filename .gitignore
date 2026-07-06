@@ -53,3 +53,4 @@ watchdog.log
 __pycache__/
 *.pyc
 ops/tmp/
+releases/

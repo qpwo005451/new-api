@@ -9,7 +9,7 @@
 | Option override helper | `patches/apply-local-option-overrides.py` | keep as tracked helper | Applies DB-backed local option overrides |
 | Option override manifest | `patches/local-option-overrides.json` | keep as tracked helper | Currently carries `kimi-k2.7-code` billing override |
 | Image filter patch helper | `patches/patch-image-gen-filter.py` | keep as tracked helper | Retained as legacy replay helper during migration |
-| Unified channel guard | `scripts/channel_guard.py` | keep as tracked helper | Manages input and fog channel state |
+| Unified channel guard | `scripts/channel_guard.py` | keep as tracked helper | Manages input and wu/fog route state; the current standard verification matrix names the availability-check route as `wu` |
 | Legacy input budget guard | `scripts/input_budget_guard.py` | keep as tracked helper | Historical guard retained for reference |
 | Watchdog shell | `watchdog.sh` | keep as tracked helper | Relay health check script with server-only key file |
 | Live relay timeout | `/opt/new-api/.env` | document only | `RELAY_TIMEOUT=900` remains server-only runtime config |

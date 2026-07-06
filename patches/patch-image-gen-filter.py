@@ -2,9 +2,16 @@
 """Patch responses_handler.go to filter image_generation tools from requests."""
 
 FILE = "/opt/new-api/relay/responses_handler.go"
+CALL_MARKER = "filterImageGenerationTool(jsonData)"
+REMOVE_DISABLED_FIELDS_CALL = (
+    "\t\tjsonData, err = relaycommon.RemoveDisabledFields("
+    "jsonData, info.ChannelOtherSettings, info.ChannelSetting.PassThroughBodyEnabled)"
+)
 
 with open(FILE, "r") as f:
     content = f.read()
+
+changed = False
 
 # Add encoding/json import if missing
 if '"encoding/json"' not in content:
@@ -12,6 +19,7 @@ if '"encoding/json"' not in content:
         '"github.com/QuantumNous/new-api/common"',
         '"encoding/json"\n\t"github.com/QuantumNous/new-api/common"'
     )
+    changed = True
 
 # Filter function to add
 FILTER_FUNC = '''
@@ -56,23 +64,31 @@ func filterImageGenerationTool(jsonData []byte) []byte {
 }
 '''
 
-# Insert the function after the import block
-for marker in ["\nfunc ", "\ntype ", "\nvar "]:
-    idx = content.find(marker)
-    if idx != -1:
-        content = content[:idx] + "\n" + FILTER_FUNC + content[idx:]
-        break
+if "func filterImageGenerationTool(" in content:
+    print("filterImageGenerationTool already present")
+else:
+    # Insert the function after the import block
+    for marker in ["\nfunc ", "\ntype ", "\nvar "]:
+        idx = content.find(marker)
+        if idx != -1:
+            content = content[:idx] + "\n" + FILTER_FUNC + content[idx:]
+            changed = True
+            break
 
 # Add filter call before RemoveDisabledFields
-old = "\t\tjsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings, info.ChannelSetting.PassThroughBodyEnabled)"
-new = "\t\tjsonData = filterImageGenerationTool(jsonData)\n" + old
-if old in content:
-    content = content.replace(old, new)
+new = "\t\tjsonData = filterImageGenerationTool(jsonData)\n" + REMOVE_DISABLED_FIELDS_CALL
+if CALL_MARKER in content:
+    print("filterImageGenerationTool call already present")
+elif REMOVE_DISABLED_FIELDS_CALL in content:
+    content = content.replace(REMOVE_DISABLED_FIELDS_CALL, new, 1)
+    changed = True
     print("Added filterImageGenerationTool call")
 else:
     print("WARNING: RemoveDisabledFields line not found!")
 
-with open(FILE, "w") as f:
-    f.write(content)
-
-print("Patched successfully")
+if changed:
+    with open(FILE, "w") as f:
+        f.write(content)
+    print("Patched successfully")
+else:
+    print("No changes needed")

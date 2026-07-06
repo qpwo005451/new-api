@@ -39,6 +39,7 @@ Scope: local repo `C:\Users\Administrator\Documents\Codex\2026-06-07\gpt-5-4-10-
 - Post-change `git rev-parse HEAD`: `0936e2504655a5cbf7bc3c388f6d3e2bb24916d3`
 - Post-change `git rev-parse origin/prod/251`: `f8ef93a9a1526aa3a9e0558744895cb540abccb9`
 - Post-change `systemctl is-active new-api.service`: `active`
+- Validation status: `not run` for `prepare`, `verify`, `cutover`, and `rollback`; Task 6 performed only remote wiring verification and service-state confirmation
 - The production live branch and live commit remained unchanged across the remote rewiring.
 
 ## Notes
@@ -53,4 +54,4 @@ Scope: local repo `C:\Users\Administrator\Documents\Codex\2026-06-07\gpt-5-4-10-
   - `cutover_release.sh`
   - `rollback_release.sh`
 - Those missing scripts did not block Task 6 because this task did not perform `prepare`, `verify`, `cutover`, or `rollback`.
-- Next safe action: `prepare` after the required release helper scripts are added or confirmed present
+- Next safe action: `prepare` after the required release helper scripts are added or confirmed present, and after an explicit target version or tag is provided

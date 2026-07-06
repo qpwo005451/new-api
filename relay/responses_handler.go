@@ -1,11 +1,13 @@
 package relay
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 
+	"encoding/json"
 	"github.com/QuantumNous/new-api/common"
 	appconstant "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
@@ -19,6 +21,47 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+
+// filterImageGenerationTool removes image_generation tools from the tools array
+// in the request body to avoid 403 errors from upstream providers.
+func filterImageGenerationTool(jsonData []byte) []byte {
+	var data map[string]interface{}
+	if err := json.Unmarshal(jsonData, &data); err != nil {
+		return jsonData
+	}
+	toolsRaw, ok := data["tools"]
+	if !ok {
+		return jsonData
+	}
+	tools, ok := toolsRaw.([]interface{})
+	if !ok {
+		return jsonData
+	}
+	filtered := make([]interface{}, 0, len(tools))
+	for _, tool := range tools {
+		toolMap, ok := tool.(map[string]interface{})
+		if !ok {
+			filtered = append(filtered, tool)
+			continue
+		}
+		if toolType, exists := toolMap["type"]; exists {
+			if typeStr, ok := toolType.(string); ok && typeStr == "image_generation" {
+				continue // skip image_generation tool
+			}
+		}
+		filtered = append(filtered, tool)
+	}
+	if len(filtered) == len(tools) {
+		return jsonData // no change
+	}
+	data["tools"] = filtered
+	result, err := json.Marshal(data)
+	if err != nil {
+		return jsonData
+	}
+	return result
+}
 
 func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 	info.InitChannelMeta(c)
@@ -89,6 +132,7 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		}
 
 		// remove disabled fields for OpenAI Responses API
+		jsonData = filterImageGenerationTool(jsonData)
 		jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings, info.ChannelSetting.PassThroughBodyEnabled)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
@@ -103,14 +147,7 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		}
 
 		logger.LogDebug(c, "requestBody: %s", jsonData)
-		body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-		}
-		defer closer.Close()
-		jsonData = nil
-		info.UpstreamRequestBodySize = size
-		requestBody = body
+		requestBody = bytes.NewBuffer(jsonData)
 	}
 
 	var httpResp *http.Response

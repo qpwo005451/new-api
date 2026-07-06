@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
@@ -34,6 +35,44 @@ func modelPriceNotConfiguredError(modelName string, userId int) error {
 
 // https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration
 const claudeCacheCreation1hMultiplier = 6 / 3.75
+
+const inputChannelId = 9
+const inputBillingModelPrefix = "input/"
+
+var inputBillingAliasModels = map[string]struct{}{
+	"gpt-5.4":      {},
+	"gpt-5.4-mini": {},
+	"gpt-5.5":      {},
+}
+
+func isInputChannel(c *gin.Context, info *relaycommon.RelayInfo) bool {
+	if info != nil && info.ChannelMeta != nil && info.ChannelMeta.ChannelId == inputChannelId {
+		return true
+	}
+	if c == nil {
+		return false
+	}
+	return common.GetContextKeyInt(c, constant.ContextKeyChannelId) == inputChannelId
+}
+
+func billingModelName(c *gin.Context, info *relaycommon.RelayInfo) string {
+	modelName := info.OriginModelName
+	if !isInputChannel(c, info) {
+		return modelName
+	}
+
+	compactSuffix := ""
+	baseModelName := modelName
+	if strings.HasSuffix(baseModelName, ratio_setting.CompactModelSuffix) {
+		compactSuffix = ratio_setting.CompactModelSuffix
+		baseModelName = strings.TrimSuffix(baseModelName, ratio_setting.CompactModelSuffix)
+	}
+
+	if _, ok := inputBillingAliasModels[baseModelName]; !ok {
+		return modelName
+	}
+	return inputBillingModelPrefix + baseModelName + compactSuffix
+}
 
 // HandleGroupRatio checks for "auto_group" in the context and updates the group ratio and relayInfo.UsingGroup if present
 func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.GroupRatioInfo {
@@ -65,13 +104,14 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 }
 
 func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (types.PriceData, error) {
-	modelPrice, usePrice := ratio_setting.GetModelPrice(info.OriginModelName, false)
+	priceModelName := billingModelName(c, info)
+	modelPrice, usePrice := ratio_setting.GetModelPrice(priceModelName, false)
 
 	groupRatioInfo := HandleGroupRatio(c, info)
 
 	// Check if this model uses tiered_expr billing
-	if billing_setting.GetBillingMode(info.OriginModelName) == billing_setting.BillingModeTieredExpr {
-		return modelPriceHelperTiered(c, info, promptTokens, meta, groupRatioInfo)
+	if billing_setting.GetBillingMode(priceModelName) == billing_setting.BillingModeTieredExpr {
+		return modelPriceHelperTiered(c, info, priceModelName, promptTokens, meta, groupRatioInfo)
 	}
 
 	var preConsumedQuota int
@@ -92,7 +132,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		}
 		var success bool
 		var matchName string
-		modelRatio, success, matchName = ratio_setting.GetModelRatio(info.OriginModelName)
+		modelRatio, success, matchName = ratio_setting.GetModelRatio(priceModelName)
 		if !success {
 			acceptUnsetRatio := false
 			if info.UserSetting.AcceptUnsetRatioModel {
@@ -102,15 +142,15 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 				return types.PriceData{}, modelPriceNotConfiguredError(matchName, info.UserId)
 			}
 		}
-		completionRatio = ratio_setting.GetCompletionRatio(info.OriginModelName)
-		cacheRatio, _ = ratio_setting.GetCacheRatio(info.OriginModelName)
-		cacheCreationRatio, _ = ratio_setting.GetCreateCacheRatio(info.OriginModelName)
+		completionRatio = ratio_setting.GetCompletionRatio(priceModelName)
+		cacheRatio, _ = ratio_setting.GetCacheRatio(priceModelName)
+		cacheCreationRatio, _ = ratio_setting.GetCreateCacheRatio(priceModelName)
 		cacheCreationRatio5m = cacheCreationRatio
 		// 固定1h和5min缓存写入价格的比例
 		cacheCreationRatio1h = cacheCreationRatio * claudeCacheCreation1hMultiplier
-		imageRatio, _ = ratio_setting.GetImageRatio(info.OriginModelName)
-		audioRatio = ratio_setting.GetAudioRatio(info.OriginModelName)
-		audioCompletionRatio = ratio_setting.GetAudioCompletionRatio(info.OriginModelName)
+		imageRatio, _ = ratio_setting.GetImageRatio(priceModelName)
+		audioRatio = ratio_setting.GetAudioRatio(priceModelName)
+		audioCompletionRatio = ratio_setting.GetAudioCompletionRatio(priceModelName)
 		ratio := modelRatio * groupRatioInfo.GroupRatio
 		preConsumedQuota = int(float64(preConsumedTokens) * ratio)
 	} else {
@@ -238,10 +278,10 @@ func HasModelBillingConfig(modelName string) bool {
 	return ok && strings.TrimSpace(expr) != ""
 }
 
-func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta, groupRatioInfo types.GroupRatioInfo) (types.PriceData, error) {
-	exprStr, ok := billing_setting.GetBillingExpr(info.OriginModelName)
+func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, priceModelName string, promptTokens int, meta *types.TokenCountMeta, groupRatioInfo types.GroupRatioInfo) (types.PriceData, error) {
+	exprStr, ok := billing_setting.GetBillingExpr(priceModelName)
 	if !ok {
-		return types.PriceData{}, fmt.Errorf("model %s is configured as tiered_expr but has no billing expression", info.OriginModelName)
+		return types.PriceData{}, fmt.Errorf("model %s is configured as tiered_expr but has no billing expression", priceModelName)
 	}
 
 	estimatedCompletionTokens := 0
@@ -260,7 +300,7 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, promptT
 		Len: float64(promptTokens),
 	}, requestInput)
 	if err != nil {
-		return types.PriceData{}, fmt.Errorf("model %s tiered expr run failed: %w", info.OriginModelName, err)
+		return types.PriceData{}, fmt.Errorf("model %s tiered expr run failed: %w", priceModelName, err)
 	}
 
 	// Expression coefficients are $/1M tokens prices; convert to quota the same way per-call billing does.
@@ -278,7 +318,7 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, promptT
 	exprHash := billingexpr.ExprHashString(exprStr)
 	snapshot := &billingexpr.BillingSnapshot{
 		BillingMode:               billing_setting.BillingModeTieredExpr,
-		ModelName:                 info.OriginModelName,
+		ModelName:                 priceModelName,
 		ExprString:                exprStr,
 		ExprHash:                  exprHash,
 		GroupRatio:                groupRatioInfo.GroupRatio,
@@ -299,7 +339,7 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, promptT
 		QuotaToPreConsume: preConsumedQuota,
 	}
 
-	logger.LogDebug(c, "model_price_helper_tiered result: model=%s preConsume=%d quotaBeforeGroup=%.2f groupRatio=%.2f tier=%s", info.OriginModelName, preConsumedQuota, quotaBeforeGroup, groupRatioInfo.GroupRatio, trace.MatchedTier)
+	logger.LogDebug(c, "model_price_helper_tiered result: model=%s priceModel=%s preConsume=%d quotaBeforeGroup=%.2f groupRatio=%.2f tier=%s", info.OriginModelName, priceModelName, preConsumedQuota, quotaBeforeGroup, groupRatioInfo.GroupRatio, trace.MatchedTier)
 
 	info.PriceData = priceData
 	return priceData, nil

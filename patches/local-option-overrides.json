@@ -1,0 +1,8 @@
+{
+  "billing_setting.billing_mode": {
+    "kimi-k2.7-code": "tiered_expr"
+  },
+  "billing_setting.billing_expr": {
+    "kimi-k2.7-code": "tier(\"standard\", p * 0.95 + cr * 0.19 + c * 4)"
+  }
+}

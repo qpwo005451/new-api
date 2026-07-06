@@ -2,8 +2,15 @@
 set -euo pipefail
 cd /opt/new-api
 
+current_branch="$(git branch --show-current)"
+
 echo "=== Branch ==="
-git branch --show-current
+echo "$current_branch"
+
+if [ "$current_branch" != "prod/251" ]; then
+  echo "Refusing to rebuild: current branch is '$current_branch' (expected 'prod/251')." >&2
+  exit 1
+fi
 
 echo "=== Apply local option overrides ==="
 python3 patches/apply-local-option-overrides.py patches/local-option-overrides.json

@@ -1,25 +1,52 @@
 #!/usr/bin/env python3
 """Patch responses_handler.go to filter image_generation tools from requests."""
 
+import sys
+
 FILE = "/opt/new-api/relay/responses_handler.go"
+IMPORT_ANCHOR = '"github.com/QuantumNous/new-api/common"'
+IMPORT_MARKER = '"encoding/json"'
+FUNCTION_MARKER = "func filterImageGenerationTool("
+FUNCTION_INSERTION_MARKERS = ["\nfunc ", "\ntype ", "\nvar "]
 CALL_MARKER = "filterImageGenerationTool(jsonData)"
 REMOVE_DISABLED_FIELDS_CALL = (
     "\t\tjsonData, err = relaycommon.RemoveDisabledFields("
     "jsonData, info.ChannelOtherSettings, info.ChannelSetting.PassThroughBodyEnabled)"
 )
+CALL_INJECTION = "\t\tjsonData = filterImageGenerationTool(jsonData)\n" + REMOVE_DISABLED_FIELDS_CALL
+
+
+def fail(message: str) -> None:
+    print(f"ERROR: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def find_function_insertion_index(content: str) -> int:
+    for marker in FUNCTION_INSERTION_MARKERS:
+        idx = content.find(marker)
+        if idx != -1:
+            return idx
+    return -1
 
 with open(FILE, "r") as f:
     content = f.read()
 
-changed = False
+needs_import = IMPORT_MARKER not in content
+needs_function = FUNCTION_MARKER not in content
+needs_call = CALL_MARKER not in content
 
-# Add encoding/json import if missing
-if '"encoding/json"' not in content:
-    content = content.replace(
-        '"github.com/QuantumNous/new-api/common"',
-        '"encoding/json"\n\t"github.com/QuantumNous/new-api/common"'
-    )
-    changed = True
+if not needs_import and not needs_function and not needs_call:
+    print("No changes needed")
+    raise SystemExit(0)
+
+if needs_import and IMPORT_ANCHOR not in content:
+    fail(f"cannot insert {IMPORT_MARKER}: missing import anchor {IMPORT_ANCHOR!r}")
+
+if needs_function and find_function_insertion_index(content) == -1:
+    fail("cannot insert filterImageGenerationTool: no function/type/var marker found")
+
+if needs_call and REMOVE_DISABLED_FIELDS_CALL not in content:
+    fail("cannot insert filterImageGenerationTool call: RemoveDisabledFields anchor not found")
 
 # Filter function to add
 FILTER_FUNC = '''
@@ -64,31 +91,44 @@ func filterImageGenerationTool(jsonData []byte) []byte {
 }
 '''
 
-if "func filterImageGenerationTool(" in content:
-    print("filterImageGenerationTool already present")
-else:
-    # Insert the function after the import block
-    for marker in ["\nfunc ", "\ntype ", "\nvar "]:
-        idx = content.find(marker)
-        if idx != -1:
-            content = content[:idx] + "\n" + FILTER_FUNC + content[idx:]
-            changed = True
-            break
+updated = content
+changed = False
 
-# Add filter call before RemoveDisabledFields
-new = "\t\tjsonData = filterImageGenerationTool(jsonData)\n" + REMOVE_DISABLED_FIELDS_CALL
-if CALL_MARKER in content:
-    print("filterImageGenerationTool call already present")
-elif REMOVE_DISABLED_FIELDS_CALL in content:
-    content = content.replace(REMOVE_DISABLED_FIELDS_CALL, new, 1)
+if needs_import:
+    updated = updated.replace(
+        IMPORT_ANCHOR,
+        '"encoding/json"\n\t"github.com/QuantumNous/new-api/common"',
+        1,
+    )
+    changed = True
+    print("Added encoding/json import")
+
+if needs_function:
+    idx = find_function_insertion_index(updated)
+    if idx == -1:
+        fail("cannot insert filterImageGenerationTool after import update: no function/type/var marker found")
+    updated = updated[:idx] + "\n" + FILTER_FUNC + updated[idx:]
+    changed = True
+    print("Added filterImageGenerationTool function")
+
+if needs_call:
+    updated = updated.replace(REMOVE_DISABLED_FIELDS_CALL, CALL_INJECTION, 1)
     changed = True
     print("Added filterImageGenerationTool call")
-else:
-    print("WARNING: RemoveDisabledFields line not found!")
+
+if not changed:
+    fail("internal error: patch was required but no changes were applied")
+
+if IMPORT_MARKER not in updated:
+    fail(f"patch incomplete: missing {IMPORT_MARKER} after update")
+
+if FUNCTION_MARKER not in updated:
+    fail("patch incomplete: missing filterImageGenerationTool after update")
+
+if CALL_MARKER not in updated:
+    fail("patch incomplete: missing filterImageGenerationTool call after update")
 
 if changed:
     with open(FILE, "w") as f:
-        f.write(content)
+        f.write(updated)
     print("Patched successfully")
-else:
-    print("No changes needed")

@@ -1,0 +1,4 @@
+interface:
+  display_name: "NewAPI Prod Upgrade 251"
+  short_description: "Operate fork-backed prod/251 upgrade workflow for NewAPI 251."
+  default_prompt: "Check, prepare, verify, cut over, roll back, or report on the 10.0.0.251:/opt/new-api production NewAPI instance and its prod/251 fork workflow."

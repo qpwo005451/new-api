@@ -11,6 +11,11 @@
 - `prod/251` is the only production deployment branch.
 - Work happens in `topic/*` branches and is merged back into `prod/251`.
 
+## Interim Tracking Warning
+- Until Task 6 publishes `origin/prod/251` and fixes upstream tracking, implicit `git pull` / `git push` on `prod/251` is not safe.
+- For any networked git command on `prod/251`, explicitly specify the remote and branch arguments instead of relying on branch tracking defaults.
+- Treat any branch tracking mismatch, including `prod/251` tracking `origin/main`, as a risk for `check` and `report`, and as a blocker for networked git actions until it is explicitly handled.
+
 ## Tracked Operational Material
 - `ops/instance/251/`
 - `ops/reports/`
@@ -25,3 +30,4 @@
 
 ## Reporting Expectations
 - `check` and `report` should mention fork branch and commit provenance when available.
+- `check` and `report` should call out branch tracking mismatch as a risk or blocker when repository context shows it.

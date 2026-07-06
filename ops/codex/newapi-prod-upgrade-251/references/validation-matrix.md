@@ -33,12 +33,14 @@ For candidate verification only:
 - the candidate rehearsal is not accidentally using production `4002`,
 - the candidate rehearsal is not accidentally using `/opt/new-api/data/new-api.db`.
 
+These proofs are candidate-only requirements and do not apply to explicit production-scope verification.
+
 ## Channel Sample Checks
 Use the fixed matrix from `channel-samples.md`.
 Do not auto-pick substitutes.
 
 ## Pass/Fail Rules
 - Pass only if every required check succeeds.
-- Fail closed on missing scripts, missing manifests, missing auth context, ambiguous release identity, or missing runtime proof.
+- Fail closed on missing scripts, missing manifests, missing auth context, ambiguous release identity, or missing scope-required runtime proof.
 - Separate candidate results from production results in the summary.
 - Include the exact failing check name and the next safe action.

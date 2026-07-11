@@ -1,7 +1,6 @@
 package relay
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,7 +20,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
-
 
 // filterImageGenerationTool removes image_generation tools from the tools array
 // in the request body to avoid 403 errors from upstream providers.
@@ -88,6 +86,8 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 			Input:              req.Input,
 			Instructions:       req.Instructions,
 			PreviousResponseID: req.PreviousResponseID,
+			ParallelToolCalls:  req.ParallelToolCalls,
+			ServiceTier:        req.ServiceTier,
 		}
 	default:
 		return types.NewErrorWithStatusCode(
@@ -147,7 +147,14 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		}
 
 		logger.LogDebug(c, "requestBody: %s", jsonData)
-		requestBody = bytes.NewBuffer(jsonData)
+		body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
+		defer closer.Close()
+		jsonData = nil
+		info.UpstreamRequestBodySize = size
+		requestBody = body
 	}
 
 	var httpResp *http.Response

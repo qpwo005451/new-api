@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -78,6 +79,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 
 	var usage = &dto.Usage{}
 	var responseTextBuilder strings.Builder
+	responseID := helper.GetResponseID(c)
+	firstOutputSeen := false
+	toolOutputIndex := 0
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 
@@ -87,6 +91,61 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			logger.LogError(c, "failed to unmarshal stream response: "+err.Error())
 			sr.Error(err)
 			return
+		}
+		if streamResponse.Type == "response.output_text.delta" && !firstOutputSeen {
+			if toolCalls, ok := parseTextToolCalls(streamResponse.Delta, info); ok {
+				for _, toolCall := range toolCalls {
+					callID := fmt.Sprintf("%s_tool_%d", responseID, toolOutputIndex)
+					outputIndex := toolOutputIndex
+					toolOutputIndex++
+					emitTextToolCallEvent(c, sr, dto.ResponsesStreamResponse{
+						Type:        dto.ResponsesOutputTypeItemAdded,
+						OutputIndex: &outputIndex,
+						ItemID:      callID,
+						Item: &dto.ResponsesOutput{
+							Type:      "function_call",
+							ID:        callID,
+							Status:    "in_progress",
+							CallId:    callID,
+							Name:      toolCall.Name,
+							Arguments: []byte(`""`),
+						},
+					})
+					emitTextToolCallEvent(c, sr, dto.ResponsesStreamResponse{
+						Type:        "response.function_call_arguments.delta",
+						OutputIndex: &outputIndex,
+						ItemID:      callID,
+						Delta:       string(toolCall.Arguments),
+					})
+					emitTextToolCallEvent(c, sr, dto.ResponsesStreamResponse{
+						Type:        "response.function_call_arguments.done",
+						OutputIndex: &outputIndex,
+						ItemID:      callID,
+					})
+					arguments, err := common.Marshal(string(toolCall.Arguments))
+					if err != nil {
+						sr.Error(err)
+						return
+					}
+					emitTextToolCallEvent(c, sr, dto.ResponsesStreamResponse{
+						Type:        dto.ResponsesOutputTypeItemDone,
+						OutputIndex: &outputIndex,
+						Item: &dto.ResponsesOutput{
+							Type:      "function_call",
+							ID:        callID,
+							Status:    "completed",
+							CallId:    callID,
+							Name:      toolCall.Name,
+							Arguments: arguments,
+						},
+					})
+					if sr.IsStopped() {
+						return
+					}
+				}
+				firstOutputSeen = true
+				return
+			}
 		}
 		sendResponsesStreamData(c, streamResponse, data)
 		switch streamResponse.Type {
@@ -113,9 +172,13 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 				}
 			}
 		case "response.output_text.delta":
+			firstOutputSeen = true
 			// 处理输出文本
 			responseTextBuilder.WriteString(streamResponse.Delta)
+		case "response.reasoning_summary_text.delta", dto.ResponsesOutputTypeItemAdded:
+			firstOutputSeen = true
 		case dto.ResponsesOutputTypeItemDone:
+			firstOutputSeen = true
 			// 函数调用处理
 			if streamResponse.Item != nil {
 				switch streamResponse.Item.Type {
@@ -147,4 +210,56 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 
 	return usage, nil
+}
+
+func emitTextToolCallEvent(c *gin.Context, sr *helper.StreamResult, event dto.ResponsesStreamResponse) {
+	data, err := common.Marshal(event)
+	if err != nil {
+		sr.Error(err)
+		return
+	}
+	sendResponsesStreamData(c, event, string(data))
+}
+
+type textToolCall struct {
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments"`
+}
+
+func parseTextToolCalls(text string, info *relaycommon.RelayInfo) ([]textToolCall, bool) {
+	if info == nil || info.Request == nil || !strings.HasPrefix(text, "<TOOLCALL>") || !strings.HasSuffix(text, "</TOOLCALL>") {
+		return nil, false
+	}
+
+	payload := strings.TrimSuffix(strings.TrimPrefix(text, "<TOOLCALL>"), "</TOOLCALL>")
+	var toolCalls []textToolCall
+	if err := common.Unmarshal([]byte(payload), &toolCalls); err != nil || len(toolCalls) == 0 {
+		return nil, false
+	}
+
+	request, ok := info.Request.(*dto.OpenAIResponsesRequest)
+	if !ok {
+		return nil, false
+	}
+	allowedNames := make(map[string]struct{})
+	for _, tool := range request.GetToolsMap() {
+		if common.Interface2String(tool["type"]) != "function" {
+			continue
+		}
+		if name := strings.TrimSpace(common.Interface2String(tool["name"])); name != "" {
+			allowedNames[name] = struct{}{}
+		}
+	}
+
+	for i := range toolCalls {
+		toolCalls[i].Name = strings.TrimSpace(toolCalls[i].Name)
+		if _, ok := allowedNames[toolCalls[i].Name]; !ok || len(toolCalls[i].Arguments) == 0 || !json.Valid(toolCalls[i].Arguments) {
+			return nil, false
+		}
+		var arguments map[string]any
+		if err := common.Unmarshal(toolCalls[i].Arguments, &arguments); err != nil {
+			return nil, false
+		}
+	}
+	return toolCalls, true
 }

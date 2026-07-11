@@ -234,6 +234,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
 			break
 		}
+		if !waitTransientRetryBackoff(c, newAPIError.StatusCode, retryParam.GetRetry()) {
+			break
+		}
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
@@ -352,6 +355,35 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 		return false
 	}
 	return operation_setting.ShouldRetryByStatusCode(code)
+}
+
+func transientRetryBackoff(statusCode int, retryIndex int) time.Duration {
+	if statusCode != http.StatusTooManyRequests && statusCode != http.StatusBadGateway && statusCode != http.StatusServiceUnavailable {
+		return 0
+	}
+	delays := [...]time.Duration{300 * time.Millisecond, 800 * time.Millisecond, 1500 * time.Millisecond}
+	if retryIndex < 0 {
+		retryIndex = 0
+	}
+	if retryIndex >= len(delays) {
+		return delays[len(delays)-1]
+	}
+	return delays[retryIndex]
+}
+
+func waitTransientRetryBackoff(c *gin.Context, statusCode int, retryIndex int) bool {
+	delay := transientRetryBackoff(statusCode, retryIndex)
+	if delay <= 0 {
+		return true
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-c.Request.Context().Done():
+		return false
+	}
 }
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {

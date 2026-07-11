@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -64,14 +66,25 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	responseID := helper.GetResponseID(c)
 	state := relayconvert.NewChatToResponsesStreamState(responseID, info.UpstreamModelName)
 	streamErr := (*types.NewAPIError)(nil)
+	committed := false
+	pendingEvents := make([]relayconvert.ChatToResponsesStreamEvent, 0, 4)
+	info.DisablePing = true
 
-	sendEvent := func(event relayconvert.ChatToResponsesStreamEvent) bool {
+	writeEvent := func(event relayconvert.ChatToResponsesStreamEvent) bool {
 		data, err := common.Marshal(event.Payload)
 		if err != nil {
 			streamErr = types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
 			return false
 		}
 		helper.ResponseChunkData(c, dto.ResponsesStreamResponse{Type: event.Type}, string(data))
+		return true
+	}
+	commitEvents := func(events []relayconvert.ChatToResponsesStreamEvent) bool {
+		for _, event := range events {
+			if !writeEvent(event) {
+				return false
+			}
+		}
 		return true
 	}
 
@@ -84,7 +97,12 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		var errorResp dto.OpenAITextResponse
 		if err := common.UnmarshalJsonStr(data, &errorResp); err == nil {
 			if oaiError := errorResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
-				streamErr = types.WithOpenAIError(*oaiError, resp.StatusCode)
+				statusCode := streamErrorStatusCode(oaiError.Code, resp.StatusCode)
+				if committed {
+					streamErr = types.WithOpenAIError(*oaiError, statusCode, types.ErrOptionWithSkipRetry())
+				} else {
+					streamErr = types.WithOpenAIError(*oaiError, statusCode)
+				}
 				sr.Stop(streamErr)
 				return
 			}
@@ -103,11 +121,21 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			sr.Stop(streamErr)
 			return
 		}
-		for _, event := range events {
-			if !sendEvent(event) {
+		if !committed {
+			pendingEvents = append(pendingEvents, events...)
+			if !chatStreamChunkHasMeaningfulOutput(&chunk) {
+				return
+			}
+			committed = true
+			if !commitEvents(pendingEvents) {
 				sr.Stop(streamErr)
 				return
 			}
+			pendingEvents = nil
+			return
+		}
+		if !commitEvents(events) {
+			sr.Stop(streamErr)
 		}
 	})
 
@@ -121,11 +149,50 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		state.Usage = relayconvert.UsageFromChatUsage(usage)
 	}
 
-	for _, event := range relayconvert.FinalizeChatCompletionsStreamToResponses(state) {
-		if !sendEvent(event) {
+	finalEvents := relayconvert.FinalizeChatCompletionsStreamToResponses(state)
+	if !committed {
+		pendingEvents = append(pendingEvents, finalEvents...)
+		committed = true
+		if !commitEvents(pendingEvents) {
+			return nil, streamErr
+		}
+		return usage, nil
+	}
+	for _, event := range finalEvents {
+		if !writeEvent(event) {
 			return nil, streamErr
 		}
 	}
 
 	return usage, nil
+}
+
+func chatStreamChunkHasMeaningfulOutput(chunk *dto.ChatCompletionsStreamResponse) bool {
+	if chunk == nil {
+		return false
+	}
+	for _, choice := range chunk.Choices {
+		if choice.Delta.GetContentString() != "" || choice.Delta.GetReasoningContent() != "" || len(choice.Delta.ToolCalls) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func streamErrorStatusCode(code any, fallback int) int {
+	statusCode := fallback
+	switch value := code.(type) {
+	case float64:
+		statusCode = int(value)
+	case int:
+		statusCode = value
+	case string:
+		if parsed, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
+			statusCode = parsed
+		}
+	}
+	if statusCode < 100 || statusCode > 599 {
+		return http.StatusInternalServerError
+	}
+	return statusCode
 }

@@ -15,6 +15,34 @@ This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI pro
 - **Auth**: JWT, WebAuthn/Passkeys, OAuth (GitHub, Discord, OIDC, etc.)
 - **Frontend package manager**: Bun (preferred over npm/yarn/pnpm)
 
+## Repository Maintenance Workflow
+
+This repository is a long-lived production fork. Preserve the following remote and branch responsibilities:
+
+- `upstream/main` is the official `QuantumNous/new-api` main branch. Treat it as read-only and never develop or push directly on it.
+- `origin/main` is the fork's mirror of official upstream. Keep it aligned with `upstream/main` and do not place production-only customizations on it.
+- `origin/prod/251` is the long-lived production branch for the deployment on `10.0.0.251`. It contains upstream code plus local production customizations.
+- Local `prod/251` tracks `origin/prod/251`. Do not replace or reset it to `main`, because its production commits must be preserved.
+
+For normal feature or fix work:
+
+1. Start from an up-to-date local `prod/251`.
+2. Create a focused branch using the `codex/` prefix, such as `codex/fix-channel-routing`.
+3. Implement and verify the change on that branch; avoid committing feature work directly to `prod/251`.
+4. Merge the verified branch into `prod/251`, preferably through a pull request.
+5. Push `prod/251` and deploy only after focused tests, build checks, and production smoke tests pass.
+
+For periodic upstream synchronization:
+
+1. Fetch both `upstream` and `origin`.
+2. Fast-forward `origin/main` from `upstream/main`; keep the fork's `main` free of production-only patches.
+3. Create a synchronization branch from `prod/251` rather than merging unverified upstream changes directly into production.
+4. Merge the updated `origin/main` into that synchronization branch and resolve conflicts without discarding production customizations.
+5. Run relevant backend tests, frontend builds when affected, and release-candidate smoke tests.
+6. Merge the verified synchronization branch into `prod/251`, then deploy with rollback artifacts and post-deployment verification.
+
+Never deploy `upstream/main` or `origin/main` directly to the production instance. The deployable source of truth is the verified `prod/251` head.
+
 ## Architecture
 
 Layered architecture: Router -> Controller -> Service -> Model

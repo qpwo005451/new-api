@@ -62,53 +62,7 @@ func TestModelPriceHelperTieredUsesPreloadedRequestInput(t *testing.T) {
 	require.Equal(t, common.QuotaPerUnit, info.TieredBillingSnapshot.QuotaPerUnit)
 }
 
-func TestModelPriceHelperUsesInputPricingAliasOnlyForInputChannel(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	savedModelRatio := ratio_setting.ModelRatio2JSONString()
-	savedCompletionRatio := ratio_setting.CompletionRatio2JSONString()
-	t.Cleanup(func() {
-		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedModelRatio))
-		require.NoError(t, ratio_setting.UpdateCompletionRatioByJSONString(savedCompletionRatio))
-	})
-
-	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"gpt-5.5":0,"input/gpt-5.5":2.5}`))
-	require.NoError(t, ratio_setting.UpdateCompletionRatioByJSONString(`{"gpt-5.5":0,"input/gpt-5.5":6}`))
-
-	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Set("group", "default")
-
-	nonInputInfo := &relaycommon.RelayInfo{
-		OriginModelName: "gpt-5.5",
-		UserGroup:       "default",
-		UsingGroup:      "default",
-		ChannelMeta: &relaycommon.ChannelMeta{
-			ChannelId: 8,
-		},
-	}
-	nonInputPrice, err := ModelPriceHelper(ctx, nonInputInfo, 1000, &types.TokenCountMeta{})
-	require.NoError(t, err)
-	require.Equal(t, 0.0, nonInputPrice.ModelRatio)
-	require.Equal(t, 0, nonInputPrice.QuotaToPreConsume)
-
-	inputInfo := &relaycommon.RelayInfo{
-		OriginModelName: "gpt-5.5",
-		UserGroup:       "default",
-		UsingGroup:      "default",
-		ChannelMeta: &relaycommon.ChannelMeta{
-			ChannelId: 9,
-		},
-	}
-	inputPrice, err := ModelPriceHelper(ctx, inputInfo, 1000, &types.TokenCountMeta{})
-	require.NoError(t, err)
-	require.Equal(t, 2.5, inputPrice.ModelRatio)
-	require.Equal(t, 6.0, inputPrice.CompletionRatio)
-	require.Equal(t, int(float64(common.Max(1000, common.PreConsumedQuota))*2.5), inputPrice.QuotaToPreConsume)
-	require.Equal(t, "gpt-5.5", inputInfo.OriginModelName)
-}
-
-func TestModelPriceHelperUsesInputTieredPricingAlias(t *testing.T) {
+func TestModelPriceHelperTieredPreConsumeMaxTokensFallback(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	saved := map[string]string{}
@@ -121,27 +75,107 @@ func TestModelPriceHelperUsesInputTieredPricingAlias(t *testing.T) {
 	})
 
 	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
-		"billing_setting.billing_mode": `{"input/gpt-5.5":"tiered_expr"}`,
-		"billing_setting.billing_expr": `{"input/gpt-5.5":"len <= 270000 ? tier(\"standard\", p * 5 + cr * 0.5 + c * 30) : tier(\"long_context\", p * 10 + cr * 1 + c * 45)"}`,
+		"billing_setting.billing_mode":    `{"tiered-fallback-model":"tiered_expr"}`,
+		"billing_setting.billing_expr":    `{"tiered-fallback-model":"tier(\"base\", p * 3 + c * 15)"}`,
+		"group_ratio_setting.group_ratio": `{"default":1,"free":0}`,
 	}))
 
+	const promptTokens = 1000
+
+	cases := []struct {
+		name      string
+		group     string
+		maxTokens int
+		expected  int
+	}{
+		{
+			// max_tokens omitted in a paid group -> fall back to 8192 completion tokens.
+			// p*3 + c*15 = 1000*3 + 8192*15 = 125880 -> /1e6 * 500000 = 62940
+			name:      "non-free group falls back to 8192 completion tokens",
+			group:     "default",
+			maxTokens: 0,
+			expected:  62940,
+		},
+		{
+			// explicit max_tokens is used verbatim, no fallback.
+			// 1000*3 + 100*15 = 4500 -> /1e6 * 500000 = 2250
+			name:      "explicit max_tokens is used verbatim",
+			group:     "default",
+			maxTokens: 100,
+			expected:  2250,
+		},
+		{
+			// free group (ratio 0) stays zero; fallback is gated on non-zero group ratio.
+			name:      "free group stays zero without fallback",
+			group:     "free",
+			maxTokens: 0,
+			expected:  0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			req.Header.Set("Content-Type", "application/json")
+			ctx.Request = req
+			ctx.Set("group", tc.group)
+
+			info := &relaycommon.RelayInfo{
+				OriginModelName: "tiered-fallback-model",
+				UserGroup:       tc.group,
+				UsingGroup:      tc.group,
+				RequestHeaders:  map[string]string{"Content-Type": "application/json"},
+				BillingRequestInput: &billingexpr.RequestInput{
+					Headers: map[string]string{"Content-Type": "application/json"},
+					Body:    []byte(`{}`),
+				},
+			}
+
+			priceData, err := ModelPriceHelper(ctx, info, promptTokens, &types.TokenCountMeta{MaxTokens: tc.maxTokens})
+			require.NoError(t, err)
+			require.Equal(t, tc.expected, priceData.QuotaToPreConsume)
+		})
+	}
+}
+
+func TestBillingModelNameUsesInputAlias(t *testing.T) {
+	cases := []struct {
+		name            string
+		channelId       int
+		model, expected string
+	}{
+		{"input gpt 5.6 sol", 9, "gpt-5.6-sol", "input/gpt-5.6-sol"},
+		{"input compact", 9, "gpt-5.6-sol-openai-compact", "input/gpt-5.6-sol-openai-compact"},
+		{"other channel", 8, "gpt-5.6-sol", "gpt-5.6-sol"},
+		{"unlisted model", 9, "deepseek-v4-pro", "deepseek-v4-pro"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			info := &relaycommon.RelayInfo{OriginModelName: tt.model, ChannelMeta: &relaycommon.ChannelMeta{ChannelId: tt.channelId}}
+			require.Equal(t, tt.expected, billingModelName(nil, info))
+		})
+	}
+}
+
+func TestModelPriceHelperUsesInputPricingAlias(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	savedModelRatio := ratio_setting.ModelRatio2JSONString()
+	savedCompletionRatio := ratio_setting.CompletionRatio2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedModelRatio))
+		require.NoError(t, ratio_setting.UpdateCompletionRatioByJSONString(savedCompletionRatio))
+	})
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"gpt-5.6-sol":0,"input/gpt-5.6-sol":2.5}`))
+	require.NoError(t, ratio_setting.UpdateCompletionRatioByJSONString(`{"gpt-5.6-sol":0,"input/gpt-5.6-sol":6}`))
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Set("group", "default")
-
-	inputInfo := &relaycommon.RelayInfo{
-		OriginModelName: "gpt-5.5",
-		UserGroup:       "default",
-		UsingGroup:      "default",
-		ChannelMeta: &relaycommon.ChannelMeta{
-			ChannelId: 9,
-		},
-	}
-	inputPrice, err := ModelPriceHelper(ctx, inputInfo, 1000, &types.TokenCountMeta{MaxTokens: 100})
+	info := &relaycommon.RelayInfo{OriginModelName: "gpt-5.6-sol", UserGroup: "default", UsingGroup: "default", ChannelMeta: &relaycommon.ChannelMeta{ChannelId: 9}}
+	price, err := ModelPriceHelper(ctx, info, 1000, &types.TokenCountMeta{})
 	require.NoError(t, err)
-	require.Equal(t, 4000, inputPrice.QuotaToPreConsume)
-	require.NotNil(t, inputInfo.TieredBillingSnapshot)
-	require.Equal(t, "input/gpt-5.5", inputInfo.TieredBillingSnapshot.ModelName)
-	require.Equal(t, "standard", inputInfo.TieredBillingSnapshot.EstimatedTier)
-	require.Equal(t, "gpt-5.5", inputInfo.OriginModelName)
+	require.Equal(t, 2.5, price.ModelRatio)
+	require.Equal(t, 6.0, price.CompletionRatio)
+	require.Equal(t, "gpt-5.6-sol", info.OriginModelName)
 }

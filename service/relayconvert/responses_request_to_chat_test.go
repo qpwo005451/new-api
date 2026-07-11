@@ -199,6 +199,21 @@ func TestResponsesRequestToChatCompletionsRequestToolsToolChoiceAndTextFormat(t 
 	assert.True(t, gjson.GetBytes(got.ResponseFormat.JsonSchema, "strict").Bool())
 }
 
+func TestResponsesRequestToChatCompletionsRequestSkipsUnsupportedToolDefinitions(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Tools: mustRawMessage(t, []map[string]any{
+			{"type": "function", "name": "lookup", "parameters": map[string]any{"type": "object"}},
+			{"type": "custom", "name": "apply_patch"},
+			{"type": "image_generation"},
+		}),
+	})
+	require.NoError(t, err)
+	require.Len(t, got.Tools, 1)
+	assert.Equal(t, "function", got.Tools[0].Type)
+	assert.Equal(t, "lookup", got.Tools[0].Function.Name)
+}
+
 func TestResponsesRequestToChatCompletionsRequestCustomToolCallPreservesRawShape(t *testing.T) {
 	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
 		Model: "gpt-test",

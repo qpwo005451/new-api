@@ -1,9 +1,13 @@
 package common
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/types"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,4 +41,18 @@ func TestRelayInfoGetFinalRequestRelayFormatFallsBackToRelayFormat(t *testing.T)
 func TestRelayInfoGetFinalRequestRelayFormatNilReceiver(t *testing.T) {
 	var info *RelayInfo
 	require.Equal(t, types.RelayFormat(""), info.GetFinalRequestRelayFormat())
+}
+
+func TestGenRelayInfoResponsesRecordsReasoningEffort(t *testing.T) {
+	oldMode := gin.Mode()
+	gin.SetMode(gin.TestMode)
+	t.Cleanup(func() { gin.SetMode(oldMode) })
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	info := GenRelayInfoResponses(c, &dto.OpenAIResponsesRequest{
+		Reasoning: &dto.Reasoning{Effort: "xhigh"},
+	})
+
+	require.Equal(t, "xhigh", info.ReasoningEffort)
 }

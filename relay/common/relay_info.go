@@ -396,6 +396,9 @@ func GenRelayInfoResponses(c *gin.Context, request *dto.OpenAIResponsesRequest) 
 	info.ResponsesUsageInfo = &ResponsesUsageInfo{
 		BuiltInTools: make(map[string]*BuildInToolInfo),
 	}
+	if request.Reasoning != nil {
+		info.ReasoningEffort = request.Reasoning.Effort
+	}
 	if len(request.Tools) > 0 {
 		for _, tool := range request.GetToolsMap() {
 			toolType := common.Interface2String(tool["type"])

@@ -5,8 +5,6 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 release_id="${1:-${RELEASE_ID:-}}"
 release_tag="${2:-${RELEASE_TAG:-}}"
-app_root="${APP_ROOT:-/opt/new-api}"
-source_app_root="${SOURCE_APP_ROOT:-$app_root}"
 option_manifest="$repo_root/patches/local-option-overrides.json"
 option_helper="$repo_root/patches/apply-local-option-overrides.py"
 
@@ -59,32 +57,49 @@ pick_go_bin() {
   command -v go
 }
 
-sync_embed_assets() {
-  local source_root="$1"
+pick_bun_bin() {
+  if [ -n "${BUN_BIN:-}" ]; then
+    [ -x "$BUN_BIN" ] || fail "bun binary is not executable: $BUN_BIN"
+    printf '%s\n' "$BUN_BIN"
+    return 0
+  fi
+  command -v bun >/dev/null 2>&1 || fail "bun binary not found; set BUN_BIN"
+  command -v bun
+}
+
+build_embed_assets() {
+  local bun_bin="$1"
   local target_root="$2"
-  local source_default="$source_root/web/default/dist"
-  local source_classic="$source_root/web/classic/dist"
-  local target_default="$target_root/web/default/dist"
-  local target_classic="$target_root/web/classic/dist"
+  local frontend_root="$target_root/web"
+  local default_dist="$frontend_root/default/dist"
+  local classic_dist="$frontend_root/classic/dist"
 
-  [ -d "$source_default" ] || fail "missing source default dist: $source_default"
-  [ -d "$source_classic" ] || fail "missing source classic dist: $source_classic"
-  [ -f "$source_default/index.html" ] || fail "missing source default dist index: $source_default/index.html"
-  [ -f "$source_classic/index.html" ] || fail "missing source classic dist index: $source_classic/index.html"
+  [ -f "$frontend_root/package.json" ] || fail "missing frontend workspace package.json: $frontend_root/package.json"
+  [ -f "$frontend_root/bun.lock" ] || fail "missing frontend lockfile: $frontend_root/bun.lock"
+  [ -f "$frontend_root/default/package.json" ] || fail "missing default frontend package.json"
+  [ -f "$frontend_root/classic/package.json" ] || fail "missing classic frontend package.json"
 
-  rm -rf "$target_default" "$target_classic"
-  mkdir -p "$target_default" "$target_classic"
-  cp -a "$source_default/." "$target_default/"
-  cp -a "$source_classic/." "$target_classic/"
+  (
+    cd "$frontend_root"
+    "$bun_bin" install --frozen-lockfile
+    (
+      cd default
+      "$bun_bin" run build
+    )
+    (
+      cd classic
+      "$bun_bin" run build
+    )
+  )
 
   local default_index_size classic_index_size default_js_sample classic_js_sample
-  default_index_size="$(wc -c < "$target_default/index.html")"
-  classic_index_size="$(wc -c < "$target_classic/index.html")"
+  default_index_size="$(wc -c < "$default_dist/index.html")"
+  classic_index_size="$(wc -c < "$classic_dist/index.html")"
   [ "$default_index_size" -gt 128 ] || fail "default dist index.html looks like placeholder content ($default_index_size bytes)"
   [ "$classic_index_size" -gt 128 ] || fail "classic dist index.html looks like placeholder content ($classic_index_size bytes)"
 
-  default_js_sample="$(find "$target_default" -type f \( -name '*.js' -o -name '*.mjs' \) -print -quit)"
-  classic_js_sample="$(find "$target_classic" -type f \( -name '*.js' -o -name '*.mjs' \) -print -quit)"
+  default_js_sample="$(find "$default_dist" -type f \( -name '*.js' -o -name '*.mjs' \) -print -quit)"
+  classic_js_sample="$(find "$classic_dist" -type f \( -name '*.js' -o -name '*.mjs' \) -print -quit)"
   [ -n "$default_js_sample" ] || fail "default dist missing JavaScript assets"
   [ -n "$classic_js_sample" ] || fail "classic dist missing JavaScript assets"
 }
@@ -120,14 +135,15 @@ git -C "$repo_root" rev-parse --show-toplevel >/dev/null 2>&1 || fail "repo root
 [ -f "$option_helper" ] || fail "missing local option override helper: $option_helper"
 
 go_bin="$(pick_go_bin)"
+bun_bin="$(pick_bun_bin)"
 release_commit="$(git -C "$repo_root" rev-parse --verify "${release_tag}^{commit}")"
-source_tree_commit="$(git -C "$repo_root" rev-parse HEAD)"
 
 cleanup_release_tree
 # Contract marker: git worktree add --detach
 git -C "$repo_root" worktree add --detach "$src_dir" "$release_commit" >/dev/null
 
-sync_embed_assets "$source_app_root" "$src_dir"
+build_embed_assets "$bun_bin" "$src_dir"
+source_tree_commit="$(git -C "$src_dir" rev-parse HEAD)"
 
 (
   cd "$src_dir"
@@ -147,9 +163,10 @@ RELEASE_TAG=$release_tag
 RELEASE_COMMIT=$release_commit
 SOURCE_TREE_COMMIT=$source_tree_commit
 BINARY_SHA256=$binary_sha256
+WEB_LOCK_SHA256=$(sha256sum "$src_dir/web/bun.lock" | awk '{print $1}')
 LOCAL_OPTION_OVERRIDES_SHA256=$local_option_overrides_sha256
 LOCAL_OPTION_OVERRIDE_HELPER_SHA256=$local_option_override_helper_sha256
-SOURCE_APP_ROOT=$source_app_root
+BUN_BIN=$bun_bin
 BUILT_AT=$(date -Iseconds)
 EOF
 

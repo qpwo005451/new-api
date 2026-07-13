@@ -21,6 +21,8 @@ tmp_root=""
 stage_pid_path=""
 stage_release_root=""
 symlink_release_root=""
+build_release_root=""
+build_release_src=""
 cleanup() {
   if [ -n "$stage_pid_path" ] && [ -f "$stage_pid_path" ]; then
     stage_pid="$(cat "$stage_pid_path" 2>/dev/null || true)"
@@ -33,6 +35,13 @@ cleanup() {
   fi
   if [ -n "$symlink_release_root" ]; then
     rm -rf "$symlink_release_root"
+  fi
+  if [ -n "$build_release_src" ]; then
+    git -C "$repo_root" worktree remove --force "$build_release_src" >/dev/null 2>&1 || true
+    git -C "$repo_root" worktree prune
+  fi
+  if [ -n "$build_release_root" ]; then
+    rm -rf "$build_release_root"
   fi
   if [ -n "$tmp_root" ]; then
     rm -rf "$tmp_root"
@@ -78,8 +87,13 @@ assert_contains "$script_dir/build_release_candidate.sh" "worktree add --detach"
 assert_contains "$script_dir/build_release_candidate.sh" "RELEASE_TAG"
 assert_contains "$script_dir/build_release_candidate.sh" "BINARY_SHA256"
 assert_contains "$script_dir/build_release_candidate.sh" "LOCAL_OPTION_OVERRIDES_SHA256"
+assert_contains "$script_dir/build_release_candidate.sh" "WEB_LOCK_SHA256"
 assert_contains "$script_dir/build_release_candidate.sh" "validate_release_id"
 assert_contains "$script_dir/build_release_candidate.sh" "realpath -m"
+assert_contains "$script_dir/build_release_candidate.sh" "build_embed_assets"
+assert_contains "$script_dir/build_release_candidate.sh" "install --frozen-lockfile"
+assert_not_contains "$script_dir/build_release_candidate.sh" "SOURCE_APP_ROOT"
+assert_not_contains "$script_dir/build_release_candidate.sh" "sync_embed_assets"
 
 assert_contains "$script_dir/stage_release_runtime.sh" "PORT=4003"
 assert_contains "$script_dir/stage_release_runtime.sh" "SQLITE_PATH="
@@ -116,6 +130,88 @@ assert_contains "$script_dir/rollback_release.sh" "restart new-api"
 tmp_root="$(mktemp -d)"
 fake_bin="$tmp_root/bin"
 mkdir -p "$fake_bin"
+
+build_release_id="test-helper-build-$$"
+build_release_root="$repo_root/releases/$build_release_id"
+build_release_src="$build_release_root/src"
+fake_bun_log="$tmp_root/fake-bun.log"
+fake_go_log="$tmp_root/fake-go.log"
+
+cat >"$fake_bin/bun" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf '%s|%s\n' "$PWD" "$*" >>"$FAKE_BUN_LOG"
+
+case "${1:-}:${2:-}" in
+  install:--frozen-lockfile)
+    exit 0
+    ;;
+  run:build)
+    case "$PWD" in
+      */web/default)
+        marker="default"
+        ;;
+      */web/classic)
+        marker="classic"
+        ;;
+      *)
+        printf 'unexpected build directory: %s\n' "$PWD" >&2
+        exit 1
+        ;;
+    esac
+    mkdir -p dist/assets
+    printf '<!doctype html><html><body>fresh %s source build for embedded release validation; this fixture deliberately exceeds the release artifact minimum index size check.</body></html>\n' "$marker" >dist/index.html
+    printf 'console.log("fresh %s source build")\n' "$marker" >"dist/assets/$marker.js"
+    ;;
+  *)
+    printf 'unexpected bun command: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
+EOF
+chmod +x "$fake_bin/bun"
+
+cat >"$fake_bin/go" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf '%s|%s\n' "$PWD" "$*" >>"$FAKE_GO_LOG"
+
+output=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o)
+      output="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+[ -n "$output" ] || exit 1
+mkdir -p "$(dirname "$output")"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$output"
+chmod +x "$output"
+EOF
+chmod +x "$fake_bin/go"
+
+FAKE_BUN_LOG="$fake_bun_log" \
+FAKE_GO_LOG="$fake_go_log" \
+BUN_BIN="$fake_bin/bun" \
+GO_BIN="$fake_bin/go" \
+"$script_dir/build_release_candidate.sh" "$build_release_id" HEAD >/dev/null
+
+grep -Fq "fresh default source build" "$build_release_src/web/default/dist/index.html" || fail "default frontend was not rebuilt in the release worktree"
+grep -Fq "fresh classic source build" "$build_release_src/web/classic/dist/index.html" || fail "classic frontend was not rebuilt in the release worktree"
+grep -Fxq "BUN_BIN=$fake_bin/bun" "$build_release_root/manifest.env" || fail "release manifest did not record the bun binary"
+expected_web_lock_sha="$(sha256sum "$build_release_src/web/bun.lock" | awk '{print $1}')"
+grep -Fxq "WEB_LOCK_SHA256=$expected_web_lock_sha" "$build_release_root/manifest.env" || fail "release manifest did not record the frontend lockfile"
+grep -Fq "install --frozen-lockfile" "$fake_bun_log" || fail "release build did not install locked frontend dependencies"
+[ "$(grep -Fc "run build" "$fake_bun_log")" -eq 2 ] || fail "release build did not build both frontend themes"
+grep -Fq "build " "$fake_go_log" || fail "release build did not invoke Go"
 
 cat >"$fake_bin/sqlite3" <<'EOF'
 #!/usr/bin/env bash

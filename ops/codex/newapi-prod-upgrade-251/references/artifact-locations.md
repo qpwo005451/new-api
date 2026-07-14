@@ -9,6 +9,8 @@
 ## Runtime Source Of Truth
 - App root: `/opt/new-api`
 - Production database: `/opt/new-api/data/new-api.db`
+- Stable release checkout: `/opt/new-api-release-runner`
+- Retained release binaries and manifests: `/opt/new-api-release-archive`
 
 ## Runtime Patch And Override Assets
 - `/opt/new-api/post-rebuild-patches.sh`

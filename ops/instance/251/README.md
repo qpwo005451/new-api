@@ -18,3 +18,4 @@ This directory documents the production NewAPI instance at `10.0.0.251:/opt/new-
 - Durable source changes belong in git, not only on the server.
 - Secrets stay only on the server.
 - Production cutover still requires prepare, verify, and explicit confirmation.
+- A confirmed stable release must be finalized with `scripts/finalize_release.sh <release-id>` so build and candidate runtime files do not accumulate.

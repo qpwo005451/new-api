@@ -11,3 +11,20 @@ Use explicit remote and branch arguments for any networked git command on `prod/
 4. Push `prod/251` to `origin`.
 5. On production, fetch the fork and run prepare, verify, and explicit cutover.
 6. Never deploy directly from a personal branch.
+
+## Build Placement
+
+- Prefer building both frontend themes and the Linux `amd64` Go binary on the operator workstation, then upload only the candidate binary and manifest.
+- Remote-only steps are copying the live environment and database for the isolated `4003` candidate, smoke testing, cutover, rollback, and finalization.
+- If the operator workstation does not have Go and Bun, the production build helper may be used as a fallback. Its detached source worktree is removed immediately after a successful build and on build failure.
+- Remote fallback builds must run from one stable managed checkout. Do not create an outer worktree per release; the build helper already creates and removes the only source worktree it needs.
+
+## Finalization
+
+After the operator confirms the release is stable, run:
+
+```bash
+scripts/finalize_release.sh <release-id>
+```
+
+Finalization verifies that the live binary hash matches the release manifest, stops the matching `4003` candidate if needed, and removes the detached source worktree, candidate database, copied environment, schemas, and candidate logs. It preserves the release manifest, candidate binary, and any cutover rollback metadata and backups.

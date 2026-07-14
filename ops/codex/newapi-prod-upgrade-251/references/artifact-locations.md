@@ -26,3 +26,6 @@
 - `/opt/new-api/releases/release-id/runtime/candidate.pid`
 - `/opt/new-api/releases/release-id/runtime/candidate.log`
 - `/opt/new-api/releases/release-id/runtime/cutover-backup.env`
+- `/opt/new-api/releases/release-id/finalized.env`
+
+The detached `releases/release-id/src` worktree and candidate database are temporary. The build helper removes the source worktree after compilation, and `finalize_release.sh` removes candidate runtime copies after the operator confirms stability.

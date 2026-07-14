@@ -6,6 +6,15 @@
 - Reports: `C:\Users\Administrator\Documents\Codex\2026-06-07\gpt-5-4-10-0-0\newapi-fork-251\ops\reports`
 - Repo-tracked skill: `C:\Users\Administrator\Documents\Codex\2026-06-07\gpt-5-4-10-0-0\newapi-fork-251\ops\codex\newapi-prod-upgrade-251`
 
+## Local Build Locations
+- Project-private toolchain: `.local-tools/`
+- Local candidate output: `releases/release-id/bin/new-api`
+- Local candidate manifest: `releases/release-id/manifest.env`
+- Local build entrypoint: `scripts/build_release_candidate_local.ps1`
+- Local closeout cleanup: `scripts/cleanup_local_release.ps1`
+
+The toolchain, caches, release source worktree, and candidate output are local-only and ignored by Git. Build caches are deleted automatically by default. Delete the candidate release directory after remote acceptance.
+
 ## Runtime Source Of Truth
 - App root: `/opt/new-api`
 - Production database: `/opt/new-api/data/new-api.db`

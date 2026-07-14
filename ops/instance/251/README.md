@@ -18,5 +18,7 @@ This directory documents the production NewAPI instance at `10.0.0.251:/opt/new-
 ## Guardrails
 - Durable source changes belong in git, not only on the server.
 - Secrets stay only on the server.
+- Builds and repository tests run locally; production receives release artifacts only.
 - Production cutover still requires prepare, verify, and explicit confirmation.
 - A confirmed stable release must be finalized with `scripts/finalize_release.sh <release-id>` so build and candidate runtime files do not accumulate.
+- The matching local release must be removed with `scripts/cleanup_local_release.ps1 -ReleaseId <release-id>` after remote acceptance.

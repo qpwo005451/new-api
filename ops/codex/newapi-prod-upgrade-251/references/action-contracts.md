@@ -19,7 +19,13 @@
 ## prepare
 **Requires**
 - Explicit target version or tag
-- Remote build and stage scripts present
+- Successful local tests and build checks
+- A locally built Linux `amd64` candidate binary and matching manifest
+- Local temporary source worktree and build cache cleanup completed
+
+**Must Not**
+- Install dependencies, build frontend assets, run `go build`, or execute repository test suites on production.
+- Use the remote build fallback without explicit human confirmation in the current thread.
 
 ## verify
 **Requires**
@@ -61,6 +67,7 @@
 - Stop the matching candidate process on port `4003` when still running.
 - Remove the detached source worktree and transient candidate runtime files.
 - Preserve the candidate binary, manifest, and any cutover rollback metadata and backups.
+- Remove the matching local release directory and local build cache with `cleanup_local_release.ps1`.
 
 ## report
 **Returns**

@@ -14,10 +14,12 @@ Use explicit remote and branch arguments for any networked git command on `prod/
 
 ## Build Placement
 
-- Prefer building both frontend themes and the Linux `amd64` Go binary on the operator workstation, then upload only the candidate binary and manifest.
-- Remote-only steps are copying the live environment and database for the isolated `4003` candidate, smoke testing, cutover, rollback, and finalization.
-- If the operator workstation does not have Go and Bun, the production build helper may be used as a fallback. Its detached source worktree is removed immediately after a successful build and on build failure.
-- Remote fallback builds must run from the stable `/opt/new-api-release-runner` checkout. Do not create an outer worktree per release; the build helper already creates and removes the only source worktree it needs.
+- Build both frontend themes, run relevant tests, and compile the Linux `amd64` Go binary on the operator workstation.
+- Use `scripts/build_release_candidate_local.ps1 -ReleaseId <id> -ReleaseTag <commit>`. It uses the project-private `.local-tools` toolchain, targets `linux/amd64` with CGO disabled, verifies the ELF output, and removes build caches by default.
+- Upload only the candidate binary and manifest. Remote-only steps are copying the live environment and database for the isolated `4003` candidate, smoke testing, cutover, rollback, and finalization.
+- Do not run dependency installation, frontend builds, Go builds, or repository tests on the production host.
+- A remote build is allowed only as an explicitly confirmed emergency fallback. It must run from `/opt/new-api-release-runner`, must not create an outer worktree per release, and must be finalized in the same release workflow.
+- After upload and acceptance, run `scripts/cleanup_local_release.ps1 -ReleaseId <id>` to remove the local release directory, detached worktrees, project Go caches, frontend dependency/build directories, and local toolchain caches.
 
 ## Finalization
 

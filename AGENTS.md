@@ -32,6 +32,16 @@ For normal feature or fix work:
 4. Merge the verified branch into `prod/251`, preferably through a pull request.
 5. Push `prod/251` and deploy only after focused tests, build checks, and production smoke tests pass.
 
+### Local Build And Test Policy
+
+- All dependency installation, frontend builds, Go builds, unit tests, integration tests, and release-candidate compilation MUST run on the local workstation by default.
+- Do NOT run `bun install`, frontend production builds, `go build`, or repository test suites on the production host.
+- Build Linux `amd64` release candidates with `scripts/build_release_candidate_local.ps1 -ReleaseId <id> -ReleaseTag <commit>`. The project-private Go and Bun toolchain lives under `.local-tools/` and must not be added to the system `PATH`.
+- The production host is limited to receiving the candidate binary and manifest, staging an isolated database copy on port `4003`, smoke testing, cutover, rollback, and finalization.
+- A remote build is an emergency exception only. It requires explicit human confirmation in the current thread and must use the stable `/opt/new-api-release-runner` checkout.
+- Local build caches are temporary. The local build wrapper removes them after both successful and failed builds unless `-KeepCache` is explicitly supplied for active debugging.
+- After the candidate has been uploaded and accepted, run `scripts/cleanup_local_release.ps1 -ReleaseId <id>`. It removes the local release directory, detached worktrees, project Go caches, frontend `node_modules`/`dist`, and local toolchain caches. Do not leave candidate databases, logs, dependency trees, or build caches behind after the task is closed.
+
 For periodic upstream synchronization:
 
 1. Fetch both `upstream` and `origin`.

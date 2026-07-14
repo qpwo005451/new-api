@@ -10,6 +10,7 @@ This directory documents the production NewAPI instance at `10.0.0.251:/opt/new-
 ## Runtime Scope
 - Host: `10.0.0.251`
 - App root: `/opt/new-api`
+- Stable release checkout: `/opt/new-api-release-runner`
 - Service: `new-api.service`
 - Production port: `4002`
 - Candidate port: `4003`

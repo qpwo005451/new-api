@@ -118,6 +118,28 @@ cleanup_release_tree() {
   mkdir -p "$release_dir" "$bin_dir"
 }
 
+source_worktree_active="0"
+cleanup_source_worktree() {
+  ensure_release_path "$src_dir"
+
+  if git -C "$repo_root" worktree list --porcelain | grep -Fqx "worktree $src_dir"; then
+    git -C "$repo_root" worktree remove --force "$src_dir"
+  elif [ -e "$src_dir" ]; then
+    rm -rf "$src_dir"
+  fi
+  git -C "$repo_root" worktree prune
+  source_worktree_active="0"
+}
+
+cleanup_source_worktree_on_exit() {
+  local exit_code="$?"
+
+  if [ "$source_worktree_active" = "1" ]; then
+    cleanup_source_worktree || true
+  fi
+  exit "$exit_code"
+}
+
 [ -n "$release_id" ] || usage
 [ -n "$release_tag" ] || usage
 validate_release_id
@@ -141,6 +163,8 @@ release_commit="$(git -C "$repo_root" rev-parse --verify "${release_tag}^{commit
 cleanup_release_tree
 # Contract marker: git worktree add --detach
 git -C "$repo_root" worktree add --detach "$src_dir" "$release_commit" >/dev/null
+source_worktree_active="1"
+trap cleanup_source_worktree_on_exit EXIT
 
 build_embed_assets "$bun_bin" "$src_dir"
 source_tree_commit="$(git -C "$src_dir" rev-parse HEAD)"
@@ -170,7 +194,9 @@ BUN_BIN=$bun_bin
 BUILT_AT=$(date -Iseconds)
 EOF
 
+cleanup_source_worktree
+trap - EXIT
+
 printf 'Release candidate ready: %s\n' "$release_dir"
-printf 'Candidate source: %s\n' "$src_dir"
 printf 'Binary: %s\n' "$bin_dir/new-api"
 printf 'Manifest: %s\n' "$manifest_path"

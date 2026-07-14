@@ -10,6 +10,7 @@ required_scripts=(
   smoke_release.sh
   cutover_release.sh
   rollback_release.sh
+  finalize_release.sh
 )
 
 fail() {
@@ -23,7 +24,9 @@ stage_release_root=""
 symlink_release_root=""
 build_release_root=""
 build_release_src=""
+failed_build_release_root=""
 cutover_release_root=""
+finalize_release_root=""
 cleanup() {
   if [ -n "$stage_pid_path" ] && [ -f "$stage_pid_path" ]; then
     stage_pid="$(cat "$stage_pid_path" 2>/dev/null || true)"
@@ -44,8 +47,14 @@ cleanup() {
   if [ -n "$build_release_root" ]; then
     rm -rf "$build_release_root"
   fi
+  if [ -n "$failed_build_release_root" ]; then
+    rm -rf "$failed_build_release_root"
+  fi
   if [ -n "$cutover_release_root" ]; then
     rm -rf "$cutover_release_root"
+  fi
+  if [ -n "$finalize_release_root" ]; then
+    rm -rf "$finalize_release_root"
   fi
   if [ -n "$tmp_root" ]; then
     rm -rf "$tmp_root"
@@ -96,6 +105,7 @@ assert_contains "$script_dir/build_release_candidate.sh" "validate_release_id"
 assert_contains "$script_dir/build_release_candidate.sh" "realpath -m"
 assert_contains "$script_dir/build_release_candidate.sh" "build_embed_assets"
 assert_contains "$script_dir/build_release_candidate.sh" "install --frozen-lockfile"
+assert_contains "$script_dir/build_release_candidate.sh" "cleanup_source_worktree_on_exit"
 assert_not_contains "$script_dir/build_release_candidate.sh" "SOURCE_APP_ROOT"
 assert_not_contains "$script_dir/build_release_candidate.sh" "sync_embed_assets"
 
@@ -132,6 +142,12 @@ assert_contains "$script_dir/rollback_release.sh" "cutover-backup.env"
 assert_contains "$script_dir/rollback_release.sh" "RESTORE_DB"
 assert_contains "$script_dir/rollback_release.sh" "restart new-api"
 
+assert_contains "$script_dir/finalize_release.sh" "live binary does not match release candidate"
+assert_contains "$script_dir/finalize_release.sh" "cleanup_source_worktree"
+assert_contains "$script_dir/finalize_release.sh" "candidate.pid"
+assert_contains "$script_dir/finalize_release.sh" "cutover-backup.env"
+assert_contains "$script_dir/finalize_release.sh" "finalized.env"
+
 tmp_root="$(mktemp -d)"
 fake_bin="$tmp_root/bin"
 mkdir -p "$fake_bin"
@@ -153,6 +169,9 @@ case "${1:-}:${2:-}" in
     exit 0
     ;;
   run:build)
+    if [ "${FAIL_BUN_BUILD:-0}" = "1" ]; then
+      exit 42
+    fi
     case "$PWD" in
       */web/default)
         marker="default"
@@ -209,14 +228,31 @@ BUN_BIN="$fake_bin/bun" \
 GO_BIN="$fake_bin/go" \
 "$script_dir/build_release_candidate.sh" "$build_release_id" HEAD >/dev/null
 
-grep -Fq "fresh default source build" "$build_release_src/web/default/dist/index.html" || fail "default frontend was not rebuilt in the release worktree"
-grep -Fq "fresh classic source build" "$build_release_src/web/classic/dist/index.html" || fail "classic frontend was not rebuilt in the release worktree"
+[ ! -e "$build_release_src" ] || fail "release source worktree was not removed after build"
 grep -Fxq "BUN_BIN=$fake_bin/bun" "$build_release_root/manifest.env" || fail "release manifest did not record the bun binary"
-expected_web_lock_sha="$(sha256sum "$build_release_src/web/bun.lock" | awk '{print $1}')"
+expected_web_lock_sha="$(sha256sum "$repo_root/web/bun.lock" | awk '{print $1}')"
 grep -Fxq "WEB_LOCK_SHA256=$expected_web_lock_sha" "$build_release_root/manifest.env" || fail "release manifest did not record the frontend lockfile"
 grep -Fq "install --frozen-lockfile" "$fake_bun_log" || fail "release build did not install locked frontend dependencies"
 [ "$(grep -Fc "run build" "$fake_bun_log")" -eq 2 ] || fail "release build did not build both frontend themes"
 grep -Fq "build " "$fake_go_log" || fail "release build did not invoke Go"
+
+failed_build_release_id="test-helper-build-failure-$$"
+failed_build_release_root="$repo_root/releases/$failed_build_release_id"
+set +e
+FAKE_BUN_LOG="$fake_bun_log" \
+FAKE_GO_LOG="$fake_go_log" \
+FAIL_BUN_BUILD="1" \
+BUN_BIN="$fake_bin/bun" \
+GO_BIN="$fake_bin/go" \
+"$script_dir/build_release_candidate.sh" "$failed_build_release_id" HEAD >/dev/null 2>&1
+failed_build_exit="$?"
+set -e
+[ "$failed_build_exit" -ne 0 ] || fail "failed frontend build unexpectedly succeeded"
+[ ! -e "$failed_build_release_root/src" ] || fail "failed build left its source worktree behind"
+if git -C "$repo_root" worktree list --porcelain | grep -Fqx "worktree $failed_build_release_root/src"; then
+  fail "failed build left registered worktree metadata behind"
+fi
+rm -rf "$failed_build_release_root"
 
 cat >"$fake_bin/sqlite3" <<'EOF'
 #!/usr/bin/env bash
@@ -319,6 +355,10 @@ grep -Fxq "SQL_DSN=local" "$stage_env_dump" || fail "candidate process did not i
 if grep -Fq "LOG_SQL_DSN=" "$stage_env_dump" || grep -Fq "inherited.example" "$stage_env_dump"; then
   fail "candidate process inherited an external database DSN"
 fi
+stage_pid="$(cat "$stage_pid_path")"
+kill "$stage_pid" 2>/dev/null || true
+wait "$stage_pid" 2>/dev/null || true
+rm -f "$stage_pid_path"
 
 symlink_release_id="test-helper-symlink-$$"
 symlink_release_root="$repo_root/releases/$symlink_release_id"
@@ -429,9 +469,52 @@ cmp -s "$cutover_release_root/bin/new-api" "$cutover_app_root/new-api" || fail "
 [ "$(wc -l <"$cutover_restart_log")" -eq 1 ] || fail "cutover rolled back instead of waiting for service readiness"
 [ "$(cat "$cutover_curl_state")" -ge 3 ] || fail "cutover did not retry the readiness endpoint"
 
+finalize_release_id="test-helper-finalize-$$"
+finalize_release_root="$repo_root/releases/$finalize_release_id"
+finalize_app_root="$tmp_root/finalize-app"
+mkdir -p "$finalize_release_root/bin" "$finalize_release_root/runtime/logs" "$finalize_release_root/src" "$finalize_app_root"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$finalize_release_root/bin/new-api"
+chmod +x "$finalize_release_root/bin/new-api"
+cp "$finalize_release_root/bin/new-api" "$finalize_app_root/new-api"
+finalize_binary_sha="$(sha256sum "$finalize_release_root/bin/new-api" | awk '{print $1}')"
+cat >"$finalize_release_root/manifest.env" <<EOF
+RELEASE_ID=$finalize_release_id
+BINARY_SHA256=$finalize_binary_sha
+EOF
+touch \
+  "$finalize_release_root/runtime/candidate.env" \
+  "$finalize_release_root/runtime/candidate.log" \
+  "$finalize_release_root/runtime/live.env" \
+  "$finalize_release_root/runtime/new-api.db" \
+  "$finalize_release_root/runtime/schema-before.sha256" \
+  "$finalize_release_root/runtime/schema-after.sha256" \
+  "$finalize_release_root/runtime/schema-changed.flag" \
+  "$finalize_release_root/runtime/logs/oneapi.log" \
+  "$finalize_release_root/runtime/live-new-api.test.bak" \
+  "$finalize_release_root/runtime/live-new-api.db.test.bak"
+cat >"$finalize_release_root/runtime/cutover-backup.env" <<EOF
+RELEASE_ID=$finalize_release_id
+BACKUP_BIN=$finalize_release_root/runtime/live-new-api.test.bak
+BACKUP_DB=$finalize_release_root/runtime/live-new-api.db.test.bak
+EOF
+
+PATH="$fake_bin:$PATH" APP_ROOT="$finalize_app_root" "$script_dir/finalize_release.sh" "$finalize_release_id" >/dev/null
+
+[ ! -e "$finalize_release_root/src" ] || fail "finalize did not remove release source"
+[ ! -e "$finalize_release_root/runtime/new-api.db" ] || fail "finalize did not remove candidate database"
+[ ! -e "$finalize_release_root/runtime/candidate.log" ] || fail "finalize did not remove candidate log"
+[ ! -e "$finalize_release_root/runtime/logs" ] || fail "finalize did not remove candidate log directory"
+[ -f "$finalize_release_root/bin/new-api" ] || fail "finalize removed the candidate binary"
+[ -f "$finalize_release_root/manifest.env" ] || fail "finalize removed the release manifest"
+[ -f "$finalize_release_root/finalized.env" ] || fail "finalize did not record completion"
+[ -f "$finalize_release_root/runtime/cutover-backup.env" ] || fail "finalize removed rollback metadata"
+[ -f "$finalize_release_root/runtime/live-new-api.test.bak" ] || fail "finalize removed rollback binary"
+[ -f "$finalize_release_root/runtime/live-new-api.db.test.bak" ] || fail "finalize removed rollback database"
+
 assert_fails_with "release id may only contain" "$script_dir/build_release_candidate.sh" "../bad" HEAD
 assert_fails_with "release id may only contain" "$script_dir/stage_release_runtime.sh" "../bad"
 assert_fails_with "release id may only contain" env RELEASE_ID="../bad" "$script_dir/smoke_release.sh" "http://fake.local"
 assert_fails_with "release id may only contain" "$script_dir/cutover_release.sh" "../bad"
+assert_fails_with "release id may only contain" "$script_dir/finalize_release.sh" "../bad"
 
 printf 'release-helper-contracts:PASS\n'

@@ -1,7 +1,7 @@
 # Action Contracts
 
 ## Shared Rules
-- Map every request to exactly one action: `check`, `prepare`, `verify`, `cutover`, `rollback`, or `report`.
+- Map every request to exactly one action: `check`, `prepare`, `verify`, `cutover`, `rollback`, `finalize`, or `report`.
 - If the request is ambiguous, choose the safer earlier action.
 - Refuse alternate hosts, roots, ports, or deployments immediately; do not substitute a fallback action.
 - Classify the action before checking missing scripts, manifests, runtime proof, or fork provenance.
@@ -50,6 +50,17 @@
 **Requires**
 - Explicit operator request
 - Explicit backup handle or release identity
+
+## finalize
+**Requires**
+- Explicit release identity
+- Operator confirmation that the production release is stable
+- Live binary hash matching the release manifest
+
+**Does**
+- Stop the matching candidate process on port `4003` when still running.
+- Remove the detached source worktree and transient candidate runtime files.
+- Preserve the candidate binary, manifest, and any cutover rollback metadata and backups.
 
 ## report
 **Returns**

@@ -23,6 +23,7 @@ stage_release_root=""
 symlink_release_root=""
 build_release_root=""
 build_release_src=""
+cutover_release_root=""
 cleanup() {
   if [ -n "$stage_pid_path" ] && [ -f "$stage_pid_path" ]; then
     stage_pid="$(cat "$stage_pid_path" 2>/dev/null || true)"
@@ -42,6 +43,9 @@ cleanup() {
   fi
   if [ -n "$build_release_root" ]; then
     rm -rf "$build_release_root"
+  fi
+  if [ -n "$cutover_release_root" ]; then
+    rm -rf "$cutover_release_root"
   fi
   if [ -n "$tmp_root" ]; then
     rm -rf "$tmp_root"
@@ -122,6 +126,7 @@ assert_contains "$script_dir/cutover_release.sh" "smoke_release.sh"
 assert_contains "$script_dir/cutover_release.sh" "validate_release_id"
 assert_contains "$script_dir/cutover_release.sh" "realpath -m"
 assert_contains "$script_dir/cutover_release.sh" "refusing symlinked live database"
+assert_contains "$script_dir/cutover_release.sh" "wait_for_http_ready"
 
 assert_contains "$script_dir/rollback_release.sh" "cutover-backup.env"
 assert_contains "$script_dir/rollback_release.sh" "RESTORE_DB"
@@ -326,6 +331,103 @@ if [ -L "$symlink_release_root/runtime" ]; then
   assert_fails_with "refusing symlinked runtime directory" env PATH="$fake_bin:$PATH" APP_ROOT="$stage_app_root" "$script_dir/stage_release_runtime.sh" "$symlink_release_id"
 fi
 rm -rf "$symlink_release_root"
+
+cutover_release_id="test-helper-cutover-$$"
+cutover_release_root="$repo_root/releases/$cutover_release_id"
+cutover_app_root="$tmp_root/cutover-app"
+cutover_restart_log="$tmp_root/cutover-restarts.log"
+cutover_curl_state="$tmp_root/cutover-curl-state"
+mkdir -p "$cutover_release_root/bin" "$cutover_release_root/runtime" "$cutover_app_root/data"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$cutover_release_root/bin/new-api"
+chmod +x "$cutover_release_root/bin/new-api"
+printf 'RELEASE_ID=%s\n' "$cutover_release_id" >"$cutover_release_root/manifest.env"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$cutover_app_root/new-api"
+chmod +x "$cutover_app_root/new-api"
+printf 'database\n' >"$cutover_app_root/data/new-api.db"
+
+cat >"$fake_bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$CUTOVER_RESTART_LOG"
+EOF
+chmod +x "$fake_bin/systemctl"
+
+cat >"$fake_bin/sqlite3" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+db=""
+for arg in "$@"; do
+  case "$arg" in
+    *.db)
+      db="$arg"
+      ;;
+  esac
+done
+query="${!#}"
+case "$query" in
+  ".schema")
+    printf 'create table test(id integer);\n'
+    ;;
+  ".backup "*)
+    target="${query#".backup "}"
+    target="${target#\'}"
+    target="${target%\'}"
+    cp "$db" "$target"
+    ;;
+  *"select key from tokens"*)
+    printf 'smoke-token\n'
+    ;;
+esac
+EOF
+chmod +x "$fake_bin/sqlite3"
+
+cat >"$fake_bin/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_file="${CUTOVER_CURL_STATE:?}"
+last="${!#}"
+case "$last" in
+  */api/status)
+    count=0
+    if [ -f "$state_file" ]; then
+      count="$(cat "$state_file")"
+    fi
+    count=$((count + 1))
+    printf '%s\n' "$count" >"$state_file"
+    if [ "$count" -lt 3 ]; then
+      exit 7
+    fi
+    printf '{}'
+    ;;
+  */v1/models)
+    printf '{"data":[{"id":"gpt-smoke"}]}'
+    ;;
+  *)
+    printf '{}'
+    ;;
+esac
+EOF
+chmod +x "$fake_bin/curl"
+
+cat >"$fake_bin/sleep" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$fake_bin/sleep"
+
+PATH="$fake_bin:$PATH" \
+APP_ROOT="$cutover_app_root" \
+PROD_BASE_URL="http://cutover.test" \
+SYSTEMCTL_BIN="$fake_bin/systemctl" \
+CUTOVER_RESTART_LOG="$cutover_restart_log" \
+CUTOVER_CURL_STATE="$cutover_curl_state" \
+"$script_dir/cutover_release.sh" "$cutover_release_id" >/dev/null
+
+cmp -s "$cutover_release_root/bin/new-api" "$cutover_app_root/new-api" || fail "cutover did not install the candidate binary"
+[ "$(wc -l <"$cutover_restart_log")" -eq 1 ] || fail "cutover rolled back instead of waiting for service readiness"
+[ "$(cat "$cutover_curl_state")" -ge 3 ] || fail "cutover did not retry the readiness endpoint"
 
 assert_fails_with "release id may only contain" "$script_dir/build_release_candidate.sh" "../bad" HEAD
 assert_fails_with "release id may only contain" "$script_dir/stage_release_runtime.sh" "../bad"

@@ -57,6 +57,19 @@ restart_service() {
   fi
 }
 
+wait_for_http_ready() {
+  local attempt
+
+  for ((attempt = 1; attempt <= 30; attempt++)); do
+    if curl --connect-timeout 1 --max-time 2 -fsS "$prod_base_url/api/status" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  return 1
+}
+
 restore_runtime_after_failure() {
   local restore_db="$1"
 
@@ -109,6 +122,11 @@ install -m 755 "$candidate_bin" "$live_binary"
 if ! restart_service; then
   restore_runtime_after_failure 0
   fail "systemctl restart new-api failed during cutover"
+fi
+
+if ! wait_for_http_ready; then
+  restore_runtime_after_failure 0
+  fail "new-api did not become ready after cutover; restored previous runtime"
 fi
 
 if ! bash "$script_dir/smoke_release.sh" "$prod_base_url" "$live_db" fast; then

@@ -1,4 +1,9 @@
 {
+  "GroupRatio": {
+    "default": 0,
+    "vip": 0,
+    "svip": 0
+  },
   "billing_setting.billing_mode": {
     "kimi-k2.7-code": "tiered_expr"
   },

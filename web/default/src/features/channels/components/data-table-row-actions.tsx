@@ -240,6 +240,30 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         </Tooltip>
       )}
 
+      {layout !== 'card' && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant='ghost'
+                size='icon-sm'
+                disabled={!canEditSensitive}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (!canEditSensitive) return
+                  setDeleteConfirmOpen(true)
+                }}
+                aria-label={t('Delete')}
+                className='text-destructive hover:text-destructive'
+              />
+            }
+          >
+            <Trash2 className='size-4' />
+          </TooltipTrigger>
+          <TooltipContent>{t('Delete')}</TooltipContent>
+        </Tooltip>
+      )}
+
       <DropdownMenu>
         <DropdownMenuTrigger
           render={

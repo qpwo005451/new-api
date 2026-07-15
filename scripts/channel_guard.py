@@ -7,9 +7,6 @@ import json
 import os
 import sqlite3
 import sys
-import urllib.error
-import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
@@ -21,25 +18,10 @@ LEGACY_INPUT_STATE_PATH = Path("/opt/new-api/data/input_budget_guard_state.json"
 DEFAULT_QUOTA_PER_UNIT = 500000.0
 DEFAULT_INPUT_CHANNEL_ID = 9
 DEFAULT_INPUT_BUDGET_USD = 300.0
-DEFAULT_FOG_CHANNEL_ID = 1
-DEFAULT_FOG_MODEL = "gpt-5.4-mini"
-DEFAULT_FOG_TIMEOUT_SECONDS = 20
-DEFAULT_FOG_USER_AGENT = "Go-http-client/1.1"
 CONSUME_LOG_TYPE = 2
 ERROR_LOG_TYPE = 5
 CHANNEL_STATUS_ENABLED = 1
-CHANNEL_STATUS_DISABLED = 2
 CHANNEL_STATUS_AUTO_DISABLED = 3
-FOG_SOFT_FAILURE_THRESHOLD = 5
-FOG_SUCCESS_THRESHOLD = 2
-
-
-class ProbeResult:
-    def __init__(self, ok: bool, category: str, http_status: int | None, message: str) -> None:
-        self.ok = ok
-        self.category = category
-        self.http_status = http_status
-        self.message = message
 
 
 def now_local() -> dt.datetime:
@@ -95,20 +77,6 @@ def migrate_legacy_input_budget_state(state: dict[str, Any], legacy_path: Path) 
     legacy = _load_json_mapping(legacy_path, label="legacy input budget state")
     rules["input_budget"] = dict(legacy)
     return True
-
-
-def ensure_fog_rule_state(state: dict[str, Any], channel_id: int) -> dict[str, Any]:
-    rules = ensure_rules_root(state)
-    fog_state = rules.get("fog_health")
-    if not isinstance(fog_state, dict):
-        fog_state = {}
-        rules["fog_health"] = fog_state
-    fog_state["channel_id"] = channel_id
-    fog_state.setdefault("managed_by_guard", False)
-    fog_state.setdefault("disabled_by_guard", False)
-    fog_state.setdefault("soft_failure_streak", 0)
-    fog_state.setdefault("success_streak", 0)
-    return fog_state
 
 
 def quota_per_unit(conn: sqlite3.Connection) -> float:
@@ -379,217 +347,10 @@ def run_input_budget_rule(
     return {"action": "none", "reason": "no action"}
 
 
-def apply_fog_probe_result(rule_state: dict[str, Any], probe_result: ProbeResult) -> dict[str, Any]:
-    rule_state["last_probe"] = {
-        "status": probe_result.category,
-        "http_status": probe_result.http_status,
-        "message": probe_result.message,
-        "checked_at": now_local().isoformat(timespec="seconds"),
-    }
-    if probe_result.category == "skipped":
-        return {"action": "skipped", "reason": probe_result.message}
-    if probe_result.ok:
-        rule_state["soft_failure_streak"] = 0
-        rule_state["success_streak"] = int(rule_state.get("success_streak", 0)) + 1
-        return {"action": "success", "reason": probe_result.message}
-
-    rule_state["success_streak"] = 0
-    if probe_result.category == "hard_failure":
-        rule_state["soft_failure_streak"] = 0
-        return {"action": "disable_now", "reason": probe_result.message}
-
-    rule_state["soft_failure_streak"] = int(rule_state.get("soft_failure_streak", 0)) + 1
-    if rule_state["soft_failure_streak"] >= FOG_SOFT_FAILURE_THRESHOLD:
-        return {"action": "disable_now", "reason": probe_result.message}
-    return {"action": "none", "reason": probe_result.message}
-
-
-def run_fog_health_rule(
-    conn: sqlite3.Connection,
-    state: dict[str, Any],
-    channel_id: int,
-    probe: Callable[[], ProbeResult],
-) -> dict[str, Any]:
-    rule_state = ensure_fog_rule_state(state, channel_id)
-    status = channel_status(conn, channel_id)
-    if status is None:
-        return {"action": "missing", "reason": f"channel_id={channel_id} missing"}
-    fog_owns_current_auto_disabled = (
-        status == CHANNEL_STATUS_AUTO_DISABLED and channel_status_reason(conn, channel_id) == "fog health guard"
-    )
-    if status == CHANNEL_STATUS_ENABLED and rule_state.get("disabled_by_guard"):
-        rule_state["disabled_by_guard"] = False
-        rule_state["disable_reason"] = ""
-    if status == CHANNEL_STATUS_AUTO_DISABLED and rule_state.get("disabled_by_guard") and not fog_owns_current_auto_disabled:
-        rule_state["disabled_by_guard"] = False
-        rule_state["disable_reason"] = ""
-
-    probe_outcome = apply_fog_probe_result(rule_state, probe())
-    if probe_outcome["action"] == "success":
-        can_bootstrap = not rule_state.get("managed_by_guard") and not rule_state.get("disabled_by_guard")
-        can_reenable = bool(rule_state.get("disabled_by_guard")) and fog_owns_current_auto_disabled
-        if can_bootstrap and status == CHANNEL_STATUS_ENABLED:
-            rule_state["success_streak"] = 0
-            return {"action": "none", "reason": probe_outcome["reason"]}
-        if rule_state.get("success_streak", 0) >= FOG_SUCCESS_THRESHOLD and can_reenable and status == CHANNEL_STATUS_AUTO_DISABLED:
-            conn.execute("begin immediate")
-            set_channel_enabled(conn, channel_id, enabled=True)
-            conn.commit()
-            rule_state["managed_by_guard"] = True
-            rule_state["disabled_by_guard"] = False
-            rule_state["disable_reason"] = ""
-            return {"action": "enabled", "reason": probe_outcome["reason"]}
-        return {"action": "none", "reason": probe_outcome["reason"]}
-
-    if probe_outcome["action"] != "disable_now":
-        return {"action": probe_outcome["action"], "reason": probe_outcome["reason"]}
-
-    if status == CHANNEL_STATUS_ENABLED:
-        conn.execute("begin immediate")
-        set_channel_enabled(conn, channel_id, enabled=False, reason="fog health guard")
-        conn.commit()
-        rule_state["managed_by_guard"] = True
-        rule_state["disabled_by_guard"] = True
-        rule_state["disable_reason"] = probe_outcome["reason"]
-        return {"action": "disabled", "reason": probe_outcome["reason"]}
-
-    return {"action": "none", "reason": probe_outcome["reason"]}
-
-
-def load_fog_probe_config(conn: sqlite3.Connection, channel_id: int) -> dict[str, Any]:
-    row = conn.execute(
-        """
-        select id, "key", base_url, test_model, models, "group", model_mapping, other_info
-        from channels
-        where id = ?
-        """,
-        (channel_id,),
-    ).fetchone()
-    if row is None:
-        raise ValueError(f"channel_id={channel_id} missing")
-
-    model = row[3] or DEFAULT_FOG_MODEL
-    base_url = row[2] or ""
-    api_key = row[1] or ""
-    if not isinstance(base_url, str) or not base_url.strip():
-        raise ValueError(f"channel_id={channel_id} missing base_url")
-    if not isinstance(api_key, str) or not api_key.strip():
-        raise ValueError(f"channel_id={channel_id} missing key")
-    if not isinstance(model, str) or not model.strip():
-        raise ValueError(f"channel_id={channel_id} missing test_model")
-
-    return {
-        "channel_id": int(row[0]),
-        "api_key": api_key,
-        "base_url": base_url,
-        "model": model,
-        "models": row[4] or "",
-        "group": row[5] or "",
-        "model_mapping": row[6] or "",
-        "other_info": row[7] or "",
-    }
-
-
-def probe_openai_chat(base_url: str, api_key: str, model: str, timeout_seconds: int = DEFAULT_FOG_TIMEOUT_SECONDS) -> ProbeResult:
-    payload = json.dumps(
-        {
-            "model": model,
-            "messages": [{"role": "user", "content": "ping"}],
-            "max_tokens": 1,
-            "temperature": 0,
-        }
-    ).encode("utf-8")
-    request = urllib.request.Request(
-        urllib.parse.urljoin(base_url.rstrip("/") + "/", "v1/chat/completions"),
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-            "User-Agent": DEFAULT_FOG_USER_AGENT,
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-            body = response.read().decode("utf-8", errors="replace")
-            if response.status == 200 and '"choices"' in body:
-                return ProbeResult(ok=True, category="success", http_status=200, message="ok")
-            return ProbeResult(ok=False, category="soft_failure", http_status=response.status, message=body[:200])
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        message = f"status_code={exc.code}, {body[:200]}"
-        hard_markers = (
-            "invalid api key",
-            "key group deleted",
-            "permission denied",
-            "not authorized",
-            "daily limit exceeded",
-            "balance too low",
-            "quota exceeded",
-        )
-        body_lower = body.lower()
-        if exc.code in (401, 403, 429) or any(marker in body_lower for marker in hard_markers):
-            return ProbeResult(ok=False, category="hard_failure", http_status=exc.code, message=message)
-        return ProbeResult(ok=False, category="soft_failure", http_status=exc.code, message=message)
-    except Exception as exc:
-        text = str(exc).lower()
-        if (
-            "timed out" in text
-            or "cloudflare invalid or incomplete response" in text
-            or "do request failed" in text
-            or "connection" in text
-        ):
-            return ProbeResult(ok=False, category="soft_failure", http_status=None, message=str(exc))
-        return ProbeResult(ok=False, category="hard_failure", http_status=None, message=str(exc))
-
-
-def build_default_fog_probe(
-    conn: sqlite3.Connection,
-    *,
-    channel_id: int = DEFAULT_FOG_CHANNEL_ID,
-    probe_openai_chat_fn: Callable[[str, str, str, int], ProbeResult] = probe_openai_chat,
-) -> Callable[[], ProbeResult]:
-    config = load_fog_probe_config(conn, channel_id=channel_id)
-
-    def _probe() -> ProbeResult:
-        return probe_openai_chat_fn(
-            config["base_url"],
-            config["api_key"],
-            config["model"],
-            DEFAULT_FOG_TIMEOUT_SECONDS,
-        )
-
-    return _probe
-
-
-def run_selected_rules(
-    selected_rule: str,
-    conn: sqlite3.Connection | None,
-    state: dict[str, Any],
-    input_rule_runner: Callable[..., dict[str, Any]],
-    fog_rule_runner: Callable[..., dict[str, Any]],
-    fog_probe: Callable[[], ProbeResult],
-) -> int:
-    if selected_rule in ("all", "input_budget"):
-        input_rule_runner(
-            conn,
-            state,
-            channel_id=DEFAULT_INPUT_CHANNEL_ID,
-            budget_usd=DEFAULT_INPUT_BUDGET_USD,
-            disable_at_usd=0.0,
-        )
-    if selected_rule in ("all", "fog_health"):
-        fog_rule_runner(conn, state, channel_id=DEFAULT_FOG_CHANNEL_ID, probe=fog_probe)
-    return 0
-
-
 def run(
     args: argparse.Namespace,
     *,
     input_rule_runner: Callable[..., dict[str, Any]] = run_input_budget_rule,
-    fog_rule_runner: Callable[..., dict[str, Any]] = run_fog_health_rule,
-    fog_probe: Callable[[], ProbeResult] | None = None,
-    probe_openai_chat_fn: Callable[[str, str, str, int], ProbeResult] = probe_openai_chat,
 ) -> int:
     state = load_state(args.state)
     migrate_legacy_input_budget_state(state, args.legacy_input_state)
@@ -608,23 +369,6 @@ def run(
             save_state(args.state, state)
             append_log_line(args.log, "input_budget", input_result)
 
-        if args.rule in ("all", "fog_health"):
-            resolved_fog_probe = fog_probe
-            if resolved_fog_probe is None:
-                resolved_fog_probe = build_default_fog_probe(
-                    conn,
-                    channel_id=DEFAULT_FOG_CHANNEL_ID,
-                    probe_openai_chat_fn=probe_openai_chat_fn,
-                )
-            fog_result = fog_rule_runner(
-                conn,
-                state,
-                channel_id=DEFAULT_FOG_CHANNEL_ID,
-                probe=resolved_fog_probe,
-            )
-            save_state(args.state, state)
-            append_log_line(args.log, "fog_health", fog_result)
-
         return 0
     except Exception:
         try:
@@ -637,12 +381,12 @@ def run(
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Unified guard for NewAPI channels.")
+    parser = argparse.ArgumentParser(description="Guard the input channel against upstream daily-limit failures.")
     parser.add_argument("--db", type=Path, default=DEFAULT_DB_PATH)
     parser.add_argument("--state", type=Path, default=DEFAULT_STATE_PATH)
     parser.add_argument("--log", type=Path, default=DEFAULT_LOG_PATH)
     parser.add_argument("--legacy-input-state", type=Path, default=LEGACY_INPUT_STATE_PATH)
-    parser.add_argument("--rule", choices=("all", "input_budget", "fog_health"), default="all")
+    parser.add_argument("--rule", choices=("all", "input_budget"), default="all")
     return parser.parse_args(argv)
 
 

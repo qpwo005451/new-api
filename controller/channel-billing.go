@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -121,6 +123,18 @@ type OpenRouterCreditResponse struct {
 	} `json:"data"`
 }
 
+type Sub2APIUsageResponse struct {
+	Mode      string   `json:"mode"`
+	IsValid   bool     `json:"isValid"`
+	Remaining *float64 `json:"remaining"`
+	Balance   *float64 `json:"balance"`
+	Unit      string   `json:"unit"`
+	Quota     *struct {
+		Remaining *float64 `json:"remaining"`
+		Unit      string   `json:"unit"`
+	} `json:"quota"`
+}
+
 // GetAuthHeader get auth header
 func GetAuthHeader(token string) http.Header {
 	h := http.Header{}
@@ -153,6 +167,7 @@ func GetResponseBody(method, url string, channel *model.Channel, headers http.He
 		return nil, err
 	}
 	if res.StatusCode != http.StatusOK {
+		_ = res.Body.Close()
 		return nil, fmt.Errorf("status code: %d", res.StatusCode)
 	}
 	body, err := io.ReadAll(res.Body)
@@ -356,6 +371,104 @@ func updateChannelMoonshotBalance(channel *model.Channel) (float64, error) {
 	return availableBalanceUsd, nil
 }
 
+func parseSub2APIUsageBalance(body []byte) (float64, error) {
+	response := Sub2APIUsageResponse{}
+	if err := common.Unmarshal(body, &response); err != nil {
+		return 0, err
+	}
+	if response.Mode != "quota_limited" && response.Mode != "unrestricted" {
+		return 0, fmt.Errorf("unsupported sub2api usage mode: %s", response.Mode)
+	}
+	if !response.IsValid {
+		return 0, errors.New("sub2api reports invalid API key")
+	}
+
+	unit := response.Unit
+	if unit == "" && response.Quota != nil {
+		unit = response.Quota.Unit
+	}
+	if !strings.EqualFold(unit, "USD") {
+		return 0, fmt.Errorf("sub2api uses unsupported unit: %s", unit)
+	}
+
+	balance := response.Remaining
+	if balance == nil {
+		balance = response.Balance
+	}
+	if balance == nil && response.Quota != nil {
+		balance = response.Quota.Remaining
+	}
+	if balance == nil {
+		return 0, errors.New("sub2api response is missing remaining balance")
+	}
+	if math.IsNaN(*balance) || math.IsInf(*balance, 0) {
+		return 0, errors.New("sub2api balance must be finite")
+	}
+	if *balance == -1 {
+		return 0, errors.New("sub2api reports unlimited quota")
+	}
+	if *balance < 0 {
+		return 0, fmt.Errorf("sub2api balance must not be negative: %v", *balance)
+	}
+	return *balance, nil
+}
+
+func updateChannelSub2APIBalance(channel *model.Channel, baseURL string) (float64, error) {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	baseURL = strings.TrimSuffix(baseURL, "/v1")
+	if baseURL == "" {
+		return 0, errors.New("sub2api base URL is empty")
+	}
+
+	body, err := GetResponseBody(
+		http.MethodGet,
+		fmt.Sprintf("%s/v1/usage", baseURL),
+		channel,
+		GetAuthHeader(channel.Key),
+	)
+	if err != nil {
+		return 0, err
+	}
+	balance, err := parseSub2APIUsageBalance(body)
+	if err != nil {
+		return 0, err
+	}
+	channel.UpdateBalance(balance)
+	return balance, nil
+}
+
+func updateChannelLegacyOpenAIBalance(channel *model.Channel, baseURL string) (float64, error) {
+	url := fmt.Sprintf("%s/v1/dashboard/billing/subscription", baseURL)
+	body, err := GetResponseBody(http.MethodGet, url, channel, GetAuthHeader(channel.Key))
+	if err != nil {
+		return 0, err
+	}
+	subscription := OpenAISubscriptionResponse{}
+	if err = common.Unmarshal(body, &subscription); err != nil {
+		return 0, err
+	}
+
+	now := time.Now()
+	startDate := fmt.Sprintf("%s-01", now.Format("2006-01"))
+	endDate := now.Format("2006-01-02")
+	if !subscription.HasPaymentMethod {
+		startDate = now.AddDate(0, 0, -100).Format("2006-01-02")
+	}
+	url = fmt.Sprintf("%s/v1/dashboard/billing/usage?start_date=%s&end_date=%s", baseURL, startDate, endDate)
+	body, err = GetResponseBody(http.MethodGet, url, channel, GetAuthHeader(channel.Key))
+	if err != nil {
+		return 0, err
+	}
+	usage := OpenAIUsageResponse{}
+	if err = common.Unmarshal(body, &usage); err != nil {
+		return 0, err
+	}
+
+	balance := subscription.HardLimitUSD - usage.TotalUsage/100
+	channel.UpdateBalance(balance)
+	return balance, nil
+}
+
 func updateChannelBalance(channel *model.Channel) (float64, error) {
 	baseURL := constant.ChannelBaseURLs[channel.Type]
 	if channel.GetBaseURL() == "" {
@@ -389,36 +502,20 @@ func updateChannelBalance(channel *model.Channel) (float64, error) {
 	default:
 		return 0, errors.New("尚未实现")
 	}
-	url := fmt.Sprintf("%s/v1/dashboard/billing/subscription", baseURL)
 
-	body, err := GetResponseBody("GET", url, channel, GetAuthHeader(channel.Key))
-	if err != nil {
-		return 0, err
+	balance, legacyErr := updateChannelLegacyOpenAIBalance(channel, baseURL)
+	if legacyErr == nil {
+		return balance, nil
 	}
-	subscription := OpenAISubscriptionResponse{}
-	err = json.Unmarshal(body, &subscription)
-	if err != nil {
-		return 0, err
+	balance, sub2APIErr := updateChannelSub2APIBalance(channel, baseURL)
+	if sub2APIErr == nil {
+		return balance, nil
 	}
-	now := time.Now()
-	startDate := fmt.Sprintf("%s-01", now.Format("2006-01"))
-	endDate := now.Format("2006-01-02")
-	if !subscription.HasPaymentMethod {
-		startDate = now.AddDate(0, 0, -100).Format("2006-01-02")
-	}
-	url = fmt.Sprintf("%s/v1/dashboard/billing/usage?start_date=%s&end_date=%s", baseURL, startDate, endDate)
-	body, err = GetResponseBody("GET", url, channel, GetAuthHeader(channel.Key))
-	if err != nil {
-		return 0, err
-	}
-	usage := OpenAIUsageResponse{}
-	err = json.Unmarshal(body, &usage)
-	if err != nil {
-		return 0, err
-	}
-	balance := subscription.HardLimitUSD - usage.TotalUsage/100
-	channel.UpdateBalance(balance)
-	return balance, nil
+	return 0, fmt.Errorf(
+		"legacy OpenAI balance query failed: %v; sub2api balance query failed: %w",
+		legacyErr,
+		sub2APIErr,
+	)
 }
 
 func UpdateChannelBalance(c *gin.Context) {

@@ -536,19 +536,21 @@ func UpdateChannelBalance(c *gin.Context) {
 		})
 		return
 	}
-	balance, err := updateChannelBalance(channel)
+	balance, err := checkChannelBalanceWithProtection(channel)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	attachChannelBalanceProtection(channel)
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"balance": balance,
+		"success":            true,
+		"message":            "",
+		"balance":            balance,
+		"balance_protection": channel.BalanceProtection,
 	})
 }
 
-func updateAllChannelsBalance() error {
+func updateAllChannelsBalance(includeProtected bool) error {
 	channels, err := model.GetAllChannels(0, 0, true, false)
 	if err != nil {
 		return err
@@ -560,16 +562,22 @@ func updateAllChannelsBalance() error {
 		if channel.ChannelInfo.IsMultiKey {
 			continue // skip multi-key channels
 		}
+		protection, protectionErr := model.GetChannelBalanceProtection(channel.Id)
+		if protectionErr != nil {
+			continue
+		}
+		if protection != nil && protection.Enabled && !includeProtected {
+			continue
+		}
 		// TODO: support Azure
 		//if channel.Type != common.ChannelTypeOpenAI && channel.Type != common.ChannelTypeCustom {
 		//	continue
 		//}
-		balance, err := updateChannelBalance(channel)
+		balance, err := checkChannelBalanceWithProtection(channel)
 		if err != nil {
 			continue
 		} else {
-			// err is nil & balance <= 0 means quota is used up
-			if balance <= 0 {
+			if balance <= 0 && (protection == nil || !protection.Enabled) {
 				service.DisableChannel(*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, "", channel.GetAutoBan()), "余额不足")
 			}
 		}
@@ -580,7 +588,7 @@ func updateAllChannelsBalance() error {
 
 func UpdateAllChannelsBalance(c *gin.Context) {
 	// TODO: make it async
-	err := updateAllChannelsBalance()
+	err := updateAllChannelsBalance(true)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -596,7 +604,7 @@ func AutomaticallyUpdateChannels(frequency int) {
 	for {
 		time.Sleep(time.Duration(frequency) * time.Minute)
 		common.SysLog("updating all channels")
-		_ = updateAllChannelsBalance()
+		_ = updateAllChannelsBalance(false)
 		common.SysLog("channels update done")
 	}
 }

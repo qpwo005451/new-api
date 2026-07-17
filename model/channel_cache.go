@@ -18,6 +18,8 @@ import (
 
 var group2model2channels map[string]map[string][]int // enabled channel
 var channelsIDM map[int]*Channel                     // all channels include disabled
+var channel2balanceProtection map[int]*ChannelBalanceProtection
+
 // channel2advancedCustomConfig caches parsed Advanced Custom (type 58) configs so
 // path-aware selection avoids re-parsing JSON per request. Refreshed on full sync.
 var channel2advancedCustomConfig map[int]*dto.AdvancedCustomConfig
@@ -29,6 +31,7 @@ func InitChannelCache() {
 	}
 	newChannelId2channel := make(map[int]*Channel)
 	newChannel2advancedCustomConfig := make(map[int]*dto.AdvancedCustomConfig)
+	newChannel2balanceProtection := make(map[int]*ChannelBalanceProtection)
 	var channels []*Channel
 	DB.Find(&channels)
 	for _, channel := range channels {
@@ -41,6 +44,14 @@ func InitChannelCache() {
 	}
 	var abilities []*Ability
 	DB.Find(&abilities)
+	protections, err := GetAllChannelBalanceProtections()
+	if err != nil {
+		common.SysLog(fmt.Sprintf("failed to load channel balance protections: %v", err))
+	} else {
+		for _, protection := range protections {
+			newChannel2balanceProtection[protection.ChannelId] = protection
+		}
+	}
 	groups := make(map[string]bool)
 	for _, ability := range abilities {
 		groups[ability.Group] = true
@@ -93,6 +104,7 @@ func InitChannelCache() {
 	}
 	channelsIDM = newChannelId2channel
 	channel2advancedCustomConfig = newChannel2advancedCustomConfig
+	channel2balanceProtection = newChannel2balanceProtection
 	channelSyncLock.Unlock()
 	common.SysLog("channels synced from database")
 }
@@ -115,12 +127,12 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 	defer channelSyncLock.RUnlock()
 
 	// First, try to find channels with the exact model name.
-	channels := filterChannelsByRequestPath(group2model2channels[group][model], requestPath)
+	channels := filterChannelsForRequest(group2model2channels[group][model], model, requestPath)
 
 	// If no channels found, try to find channels with the normalized model name.
 	if len(channels) == 0 {
 		normalizedModel := ratio_setting.FormatMatchingModelName(model)
-		channels = filterChannelsByRequestPath(group2model2channels[group][normalizedModel], requestPath)
+		channels = filterChannelsForRequest(group2model2channels[group][normalizedModel], model, requestPath)
 	}
 
 	if len(channels) == 0 {
@@ -207,8 +219,8 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 // configured routes matches requestPath. All other channel types always pass.
 // When requestPath is empty (non-relay callers) filtering is skipped.
 // Caller must hold channelSyncLock (read lock). The cached slice is never mutated.
-func filterChannelsByRequestPath(channels []int, requestPath string) []int {
-	if requestPath == "" || len(channels) == 0 {
+func filterChannelsForRequest(channels []int, modelName string, requestPath string) []int {
+	if len(channels) == 0 {
 		return channels
 	}
 	filtered := make([]int, 0, len(channels))
@@ -216,6 +228,13 @@ func filterChannelsByRequestPath(channels []int, requestPath string) []int {
 		channel, ok := channelsIDM[channelId]
 		if !ok {
 			// keep it so the downstream consistency error is raised as before
+			filtered = append(filtered, channelId)
+			continue
+		}
+		if protection := channel2balanceProtection[channelId]; protection != nil && !protection.AllowsModel(modelName) {
+			continue
+		}
+		if requestPath == "" {
 			filtered = append(filtered, channelId)
 			continue
 		}
@@ -228,6 +247,37 @@ func filterChannelsByRequestPath(channels []int, requestPath string) []int {
 		}
 	}
 	return filtered
+}
+
+func CacheUpdateChannelBalanceProtection(protection *ChannelBalanceProtection) {
+	if !common.MemoryCacheEnabled || protection == nil {
+		return
+	}
+	protection.prepareFreeModelSet()
+	channelSyncLock.Lock()
+	defer channelSyncLock.Unlock()
+	if channel2balanceProtection == nil {
+		channel2balanceProtection = make(map[int]*ChannelBalanceProtection)
+	}
+	channel2balanceProtection[protection.ChannelId] = protection
+}
+
+func IsChannelModelAllowed(channelId int, modelName string) bool {
+	if channelId <= 0 || strings.TrimSpace(modelName) == "" {
+		return false
+	}
+	if !common.MemoryCacheEnabled {
+		protection, err := GetChannelBalanceProtection(channelId)
+		if err != nil {
+			common.SysLog(fmt.Sprintf("failed to load channel balance protection: channel_id=%d error=%v", channelId, err))
+			return true
+		}
+		return protection == nil || protection.AllowsModel(modelName)
+	}
+	channelSyncLock.RLock()
+	defer channelSyncLock.RUnlock()
+	protection := channel2balanceProtection[channelId]
+	return protection == nil || protection.AllowsModel(modelName)
 }
 
 func CacheGetChannel(id int) (*Channel, error) {

@@ -53,6 +53,15 @@ func Distribute() func(c *gin.Context) {
 				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorChannelDisabled))
 				return
 			}
+			if shouldSelectChannel && !model.IsChannelModelAllowed(channel.Id, modelRequest.Model) {
+				abortWithOpenAiMessage(
+					c,
+					http.StatusServiceUnavailable,
+					fmt.Sprintf("channel balance protection blocks model %s on pinned channel #%d", modelRequest.Model, channel.Id),
+					types.ErrorCodeModelNotFound,
+				)
+				return
+			}
 		} else {
 			// Select a channel for the user
 			// check token model mapping
@@ -105,7 +114,8 @@ func Distribute() func(c *gin.Context) {
 					affinityUsable := false
 					preferred, err := model.CacheGetChannel(preferredChannelID)
 					if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled &&
-						channelSupportsRequestPath(preferred, c.Request.URL.Path) {
+						channelSupportsRequestPath(preferred, c.Request.URL.Path) &&
+						model.IsChannelModelAllowed(preferred.Id, modelRequest.Model) {
 						if usingGroup == "auto" {
 							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
 							autoGroups := service.GetUserAutoGroup(userGroup)

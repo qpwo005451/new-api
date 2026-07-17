@@ -121,7 +121,7 @@ func GetChannel(group string, model string, retry int, requestPath string) (*Cha
 	if err != nil {
 		return nil, err
 	}
-	abilities = filterAbilitiesByRequestPath(abilities, requestPath)
+	abilities = filterAbilitiesForRequest(abilities, model, requestPath)
 	channel := Channel{}
 	if len(abilities) > 0 {
 		// Randomly choose one
@@ -150,8 +150,8 @@ func GetChannel(group string, model string, retry int, requestPath string) (*Cha
 // (non-memory-cache) selection path. Only Advanced Custom (type 58) channels are
 // path-checked: kept only when one of their routes matches requestPath; all other
 // channel types always pass. When requestPath is empty, filtering is skipped.
-func filterAbilitiesByRequestPath(abilities []Ability, requestPath string) []Ability {
-	if requestPath == "" || len(abilities) == 0 {
+func filterAbilitiesForRequest(abilities []Ability, modelName string, requestPath string) []Ability {
+	if len(abilities) == 0 {
 		return abilities
 	}
 
@@ -172,6 +172,10 @@ func filterAbilitiesByRequestPath(abilities []Ability, requestPath string) []Abi
 	}
 
 	advancedConfigs := make(map[int]*dto.AdvancedCustomConfig)
+	protections, protectionErr := GetChannelBalanceProtections(channelIds)
+	if protectionErr != nil {
+		return abilities
+	}
 	for _, channel := range channels {
 		if channel.Type == constant.ChannelTypeAdvancedCustom {
 			advancedConfigs[channel.Id] = channel.GetOtherSettings().AdvancedCustom
@@ -180,6 +184,13 @@ func filterAbilitiesByRequestPath(abilities []Ability, requestPath string) []Abi
 
 	filtered := make([]Ability, 0, len(abilities))
 	for _, ability := range abilities {
+		if protection := protections[ability.ChannelId]; protection != nil && !protection.AllowsModel(modelName) {
+			continue
+		}
+		if requestPath == "" {
+			filtered = append(filtered, ability)
+			continue
+		}
 		config, isAdvancedCustom := advancedConfigs[ability.ChannelId]
 		if !isAdvancedCustom {
 			filtered = append(filtered, ability)

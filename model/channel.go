@@ -57,6 +57,8 @@ type Channel struct {
 
 	// cache info
 	Keys []string `json:"-" gorm:"-"`
+
+	BalanceProtection *ChannelBalanceProtectionView `json:"balance_protection,omitempty" gorm:"-"`
 }
 
 type ChannelInfo struct {
@@ -434,6 +436,7 @@ func BatchInsertChannels(channels []Channel) error {
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
+			panic(r)
 		}
 	}()
 
@@ -462,6 +465,10 @@ func BatchDeleteChannels(ids []int) error {
 		return tx.Error
 	}
 	for _, chunk := range lo.Chunk(ids, 200) {
+		if err := DeleteChannelBalanceProtection(tx, chunk); err != nil {
+			tx.Rollback()
+			return err
+		}
 		if err := tx.Where("id in (?)", chunk).Delete(&Channel{}).Error; err != nil {
 			tx.Rollback()
 			return err
@@ -524,6 +531,11 @@ func (channel *Channel) Insert() error {
 }
 
 func (channel *Channel) Update() error {
+	_, err := channel.UpdateWithBalanceProtection(nil)
+	return err
+}
+
+func (channel *Channel) UpdateWithBalanceProtection(protection *ChannelBalanceProtectionView) (bool, error) {
 	// If this is a multi-key channel, recalculate MultiKeySize based on the current key list to avoid inconsistency after editing keys
 	if channel.ChannelInfo.IsMultiKey {
 		var keyStr string
@@ -562,14 +574,41 @@ func (channel *Channel) Update() error {
 			}
 		}
 	}
-	var err error
-	err = DB.Model(channel).Updates(channel).Error
-	if err != nil {
-		return err
+	tx := DB.Begin()
+	if tx.Error != nil {
+		return false, tx.Error
 	}
-	DB.Model(channel).First(channel, "id = ?", channel.Id)
-	err = channel.UpdateAbilities(nil)
-	return err
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			panic(r)
+		}
+	}()
+	if err := tx.Model(channel).Updates(channel).Error; err != nil {
+		tx.Rollback()
+		return false, err
+	}
+	if err := tx.Model(channel).First(channel, "id = ?", channel.Id).Error; err != nil {
+		tx.Rollback()
+		return false, err
+	}
+	if err := channel.UpdateAbilities(tx); err != nil {
+		tx.Rollback()
+		return false, err
+	}
+	needsImmediateCheck := false
+	if protection != nil {
+		var err error
+		needsImmediateCheck, err = saveChannelBalanceProtection(tx, channel, protection)
+		if err != nil {
+			tx.Rollback()
+			return false, err
+		}
+	}
+	if err := tx.Commit().Error; err != nil {
+		return false, err
+	}
+	return needsImmediateCheck, nil
 }
 
 func (channel *Channel) UpdateResponseTime(responseTime int64) {
@@ -593,13 +632,23 @@ func (channel *Channel) UpdateBalance(balance float64) {
 }
 
 func (channel *Channel) Delete() error {
-	var err error
-	err = DB.Delete(channel).Error
-	if err != nil {
+	tx := DB.Begin()
+	if tx.Error != nil {
+		return tx.Error
+	}
+	if err := DeleteChannelBalanceProtection(tx, []int{channel.Id}); err != nil {
+		tx.Rollback()
 		return err
 	}
-	err = channel.DeleteAbilities()
-	return err
+	if err := tx.Delete(channel).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+	if err := tx.Where("channel_id = ?", channel.Id).Delete(&Ability{}).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+	return tx.Commit().Error
 }
 
 var channelStatusLock sync.Mutex
@@ -868,13 +917,27 @@ func updateChannelUsedQuota(id int, quota int) {
 }
 
 func DeleteChannelByStatus(status int64) (int64, error) {
-	result := DB.Where("status = ?", status).Delete(&Channel{})
-	return result.RowsAffected, result.Error
+	var ids []int
+	if err := DB.Model(&Channel{}).Where("status = ?", status).Pluck("id", &ids).Error; err != nil {
+		return 0, err
+	}
+	if err := BatchDeleteChannels(ids); err != nil {
+		return 0, err
+	}
+	return int64(len(ids)), nil
 }
 
 func DeleteDisabledChannel() (int64, error) {
-	result := DB.Where("status = ? or status = ?", common.ChannelStatusAutoDisabled, common.ChannelStatusManuallyDisabled).Delete(&Channel{})
-	return result.RowsAffected, result.Error
+	var ids []int
+	if err := DB.Model(&Channel{}).
+		Where("status = ? or status = ?", common.ChannelStatusAutoDisabled, common.ChannelStatusManuallyDisabled).
+		Pluck("id", &ids).Error; err != nil {
+		return 0, err
+	}
+	if err := BatchDeleteChannels(ids); err != nil {
+		return 0, err
+	}
+	return int64(len(ids)), nil
 }
 
 func GetPaginatedTags(offset int, limit int) ([]*string, error) {

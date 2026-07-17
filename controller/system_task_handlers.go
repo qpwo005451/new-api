@@ -20,8 +20,30 @@ import (
 func RegisterScheduledSystemTasks() {
 	service.RegisterSystemTaskHandler(channelTestHandler{})
 	service.RegisterSystemTaskHandler(modelUpdateHandler{})
+	service.RegisterSystemTaskHandler(balanceProtectionHandler{})
 	service.RegisterSystemTaskHandler(midjourneyPollHandler{})
 	service.RegisterSystemTaskHandler(asyncTaskPollHandler{})
+}
+
+type balanceProtectionHandler struct{}
+
+func (balanceProtectionHandler) Type() string { return model.SystemTaskTypeBalanceProtection }
+
+func (balanceProtectionHandler) Enabled() bool {
+	return model.HasEnabledChannelBalanceProtection()
+}
+
+func (balanceProtectionHandler) Interval() time.Duration { return time.Minute }
+
+func (balanceProtectionHandler) NewPayload() any { return nil }
+
+func (balanceProtectionHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	summary, err := runBalanceProtectionTaskOnce(ctx, service.NewSystemTaskProgressReporter(task, runnerID))
+	if err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
+		return
+	}
+	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, summary, nil)
 }
 
 // channelTestHandler runs the scheduled "test all channels" job. Enablement and

@@ -34,6 +34,36 @@ export const channelInfoSchema = z.object({
 
 export type ChannelInfo = z.infer<typeof channelInfoSchema>
 
+export const channelBalanceProtectionSchema = z.object({
+  supported: z.boolean().default(false),
+  enabled: z.boolean().default(false),
+  active: z.boolean().default(false),
+  trigger_balance: z.number().default(2),
+  recovery_balance: z.number().default(5),
+  check_interval_minutes: z.number().int().min(1).max(60).default(1),
+  free_models: z.array(z.string()).default([]),
+  notify_enabled: z.boolean().default(true),
+  state: z
+    .enum([
+      'disabled',
+      'pending',
+      'normal',
+      'protected',
+      'unknown',
+      'invalid_allowlist',
+    ])
+    .default('disabled'),
+  consecutive_failures: z.number().int().default(0),
+  last_check_time: z.number().default(0),
+  last_success_time: z.number().default(0),
+  last_transition_time: z.number().default(0),
+  last_error: z.string().default(''),
+})
+
+export type ChannelBalanceProtection = z.infer<
+  typeof channelBalanceProtectionSchema
+>
+
 export const channelSchema = z.object({
   id: z.number(),
   type: z.number(),
@@ -71,6 +101,22 @@ export const channelSchema = z.object({
     multi_key_mode: 'random',
   }),
   settings: z.string().default('{}'), // other_settings JSON
+  balance_protection: channelBalanceProtectionSchema.default({
+    supported: false,
+    enabled: false,
+    active: false,
+    trigger_balance: 2,
+    recovery_balance: 5,
+    check_interval_minutes: 1,
+    free_models: [],
+    notify_enabled: true,
+    state: 'disabled',
+    consecutive_failures: 0,
+    last_check_time: 0,
+    last_success_time: 0,
+    last_transition_time: 0,
+    last_error: '',
+  }),
 })
 
 export type Channel = z.infer<typeof channelSchema>
@@ -193,6 +239,7 @@ export interface ChannelBalanceResponse {
   message?: string
   balance?: number
   currency?: string
+  balance_protection?: ChannelBalanceProtection
 }
 
 export interface FetchModelsResponse {

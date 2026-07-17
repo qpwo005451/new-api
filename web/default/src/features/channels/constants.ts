@@ -309,6 +309,10 @@ export const BALANCE_THRESHOLDS = {
   HIGH: 100,
 } as const
 
+export const BALANCE_PROTECTION_SUPPORTED_TYPES = new Set([
+  1, 8, 10, 12, 13, 20, 25, 40, 43,
+])
+
 // ============================================================================
 // Response Time Thresholds (in ms)
 // ============================================================================

@@ -427,6 +427,32 @@ function BalanceCell({ channel }: { channel: Channel }) {
   } else if (isUpdating) {
     remainingBadgeVariant = 'neutral'
   }
+  let protectionLabel = ''
+  let protectionVariant: StatusBadgeProps['variant'] = 'neutral'
+  if (channel.balance_protection?.enabled) {
+    switch (channel.balance_protection.state) {
+      case 'normal':
+        protectionLabel = t('Balance protected')
+        protectionVariant = 'success'
+        break
+      case 'protected':
+        protectionLabel = t('Free models only')
+        protectionVariant = 'warning'
+        break
+      case 'pending':
+        protectionLabel = t('Pending verification')
+        protectionVariant = 'warning'
+        break
+      case 'unknown':
+        protectionLabel = t('Balance unknown')
+        protectionVariant = 'destructive'
+        break
+      case 'invalid_allowlist':
+        protectionLabel = t('Free model list invalid')
+        protectionVariant = 'destructive'
+        break
+    }
+  }
 
   return (
     <TooltipProvider>
@@ -468,6 +494,29 @@ function BalanceCell({ channel }: { channel: Channel }) {
             {channel.type !== 57 && <p>{t('Click to update balance')}</p>}
           </TooltipContent>
         </Tooltip>
+        {protectionLabel && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <StatusBadge
+                  variant={protectionVariant}
+                  size='sm'
+                  className='cursor-help'
+                >
+                  {protectionLabel}
+                </StatusBadge>
+              }
+            />
+            <TooltipContent>
+              <p>{t('Balance Protection')}</p>
+              <p>
+                {t('{{count}} free model(s) configured', {
+                  count: channel.balance_protection?.free_models.length ?? 0,
+                })}
+              </p>
+            </TooltipContent>
+          </Tooltip>
+        )}
       </div>
 
       <CodexUsageDialog

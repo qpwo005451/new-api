@@ -209,6 +209,35 @@ export const channelFormSchema = z
     upstream_model_update_check_enabled: z.boolean().optional(),
     upstream_model_update_auto_sync_enabled: z.boolean().optional(),
     upstream_model_update_ignored_models: z.string().optional(),
+    balance_protection: z.object({
+      supported: z.boolean(),
+      enabled: z.boolean(),
+      active: z.boolean(),
+      trigger_balance: z
+        .number()
+        .min(0, 'Trigger balance must not be negative'),
+      recovery_balance: z.number(),
+      check_interval_minutes: z
+        .number()
+        .int()
+        .min(1, 'Check interval must be at least 1 minute')
+        .max(60, 'Check interval must not exceed 60 minutes'),
+      free_models: z.array(z.string()),
+      notify_enabled: z.boolean(),
+      state: z.enum([
+        'disabled',
+        'pending',
+        'normal',
+        'protected',
+        'unknown',
+        'invalid_allowlist',
+      ]),
+      consecutive_failures: z.number().int(),
+      last_check_time: z.number(),
+      last_success_time: z.number(),
+      last_transition_time: z.number(),
+      last_error: z.string(),
+    }),
   })
   .superRefine((data, ctx) => {
     if ([3, 8, 36, 45].includes(data.type) && !data.base_url?.trim()) {
@@ -290,6 +319,27 @@ export const channelFormSchema = z
         'Vertex AI API Key mode does not support batch creation'
       )
     }
+
+    if (
+      data.balance_protection.recovery_balance <=
+      data.balance_protection.trigger_balance
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['balance_protection', 'recovery_balance'],
+        message: 'Recovery balance must be greater than trigger balance',
+      })
+    }
+    if (
+      data.balance_protection.enabled &&
+      data.balance_protection.free_models.length === 0
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['balance_protection', 'free_models'],
+        message: 'Select at least one free model',
+      })
+    }
   })
 
 export type ChannelFormValues = z.infer<typeof channelFormSchema>
@@ -349,6 +399,22 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   upstream_model_update_auto_sync_enabled: false,
   upstream_model_update_ignored_models: '',
   advanced_custom: '',
+  balance_protection: {
+    supported: false,
+    enabled: false,
+    active: false,
+    trigger_balance: 2,
+    recovery_balance: 5,
+    check_interval_minutes: 1,
+    free_models: [],
+    notify_enabled: true,
+    state: 'disabled',
+    consecutive_failures: 0,
+    last_check_time: 0,
+    last_success_time: 0,
+    last_transition_time: 0,
+    last_error: '',
+  },
 }
 
 // ============================================================================
@@ -484,6 +550,7 @@ export function transformChannelToFormDefaults(
     upstream_model_update_auto_sync_enabled: upstreamModelUpdateAutoSyncEnabled,
     upstream_model_update_ignored_models: upstreamModelUpdateIgnoredModels,
     advanced_custom: advancedCustom,
+    balance_protection: channel.balance_protection,
   }
 }
 
@@ -564,12 +631,15 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     settingsObj.allow_inference_geo = formData.allow_inference_geo === true
   } else {
     if ('disable_store' in settingsObj) delete settingsObj.disable_store
-    if ('allow_safety_identifier' in settingsObj)
+    if ('allow_safety_identifier' in settingsObj) {
       delete settingsObj.allow_safety_identifier
-    if ('allow_include_obfuscation' in settingsObj)
+    }
+    if ('allow_include_obfuscation' in settingsObj) {
       delete settingsObj.allow_include_obfuscation
-    if (formData.type !== 14 && 'allow_inference_geo' in settingsObj)
+    }
+    if (formData.type !== 14 && 'allow_inference_geo' in settingsObj) {
       delete settingsObj.allow_inference_geo
+    }
   }
 
   // Anthropic (type 14): claude_beta_query, allow_inference_geo, allow_speed
@@ -592,14 +662,14 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     settingsObj.upstream_model_update_auto_sync_enabled =
       settingsObj.upstream_model_update_check_enabled === true &&
       formData.upstream_model_update_auto_sync_enabled === true
-    settingsObj.upstream_model_update_ignored_models = Array.from(
-      new Set(
+    settingsObj.upstream_model_update_ignored_models = [
+      ...new Set(
         String(formData.upstream_model_update_ignored_models || '')
           .split(',')
           .map((model) => model.trim())
           .filter(Boolean)
-      )
-    )
+      ),
+    ]
     if (
       !Array.isArray(settingsObj.upstream_model_update_last_detected_models) ||
       settingsObj.upstream_model_update_check_enabled !== true
@@ -711,6 +781,7 @@ export function transformFormDataToUpdatePayload(
     header_override: formData.header_override || null,
     settings: buildSettingsJSON(formData),
     other: formData.other || '',
+    balance_protection: formData.balance_protection,
   }
 
   // Only include key if it was changed (not empty)

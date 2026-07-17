@@ -390,7 +390,19 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.Error())))
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
-	if service.ShouldDisableChannel(err) && channelError.AutoBan {
+	protectionActivated := false
+	if isBalanceExhaustionError(err) {
+		channel, channelErr := model.CacheGetChannel(channelError.ChannelId)
+		if channelErr == nil && activateBalanceProtectionForChannel(channel, err.ErrorWithStatusCode()) {
+			protectionActivated = true
+			gopool.Go(func() {
+				if _, checkErr := checkChannelBalanceWithProtection(channel); checkErr != nil {
+					common.SysLog(fmt.Sprintf("balance protection follow-up check failed: channel_id=%d error=%v", channel.Id, checkErr))
+				}
+			})
+		}
+	}
+	if !protectionActivated && service.ShouldDisableChannel(err) && channelError.AutoBan {
 		gopool.Go(func() {
 			service.DisableChannel(channelError, err.ErrorWithStatusCode())
 		})

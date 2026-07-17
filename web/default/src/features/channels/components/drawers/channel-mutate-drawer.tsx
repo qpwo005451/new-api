@@ -37,6 +37,7 @@ import {
   Plus,
   Eye,
   RefreshCw,
+  ShieldCheck,
   Code,
   Route,
   Settings,
@@ -139,6 +140,7 @@ import {
   CHANNEL_STATUS_LABELS,
   CHANNEL_TYPE_OPTIONS,
   CHANNEL_TYPE_WARNINGS,
+  BALANCE_PROTECTION_SUPPORTED_TYPES,
   ERROR_MESSAGES,
   FIELD_DESCRIPTIONS,
   FIELD_PLACEHOLDERS,
@@ -184,6 +186,7 @@ import {
   ChannelAdvancedSection,
   ChannelApiAccessSection,
   ChannelAuthSection,
+  ChannelBalanceProtectionSection,
   ChannelBasicSection,
   ChannelEditorLoadingState,
   ChannelModelsSection,
@@ -242,12 +245,14 @@ const CHANNEL_EDITOR_SECTION_IDS = {
   identity: 'channel-section-identity',
   credentials: 'channel-section-credentials',
   models: 'channel-section-models',
+  balanceProtection: 'channel-section-balance-protection',
   advanced: 'channel-section-advanced',
 } as const
 const CHANNEL_EDITOR_MAIN_SECTION_IDS = [
   CHANNEL_EDITOR_SECTION_IDS.identity,
   CHANNEL_EDITOR_SECTION_IDS.credentials,
   CHANNEL_EDITOR_SECTION_IDS.models,
+  CHANNEL_EDITOR_SECTION_IDS.balanceProtection,
   CHANNEL_EDITOR_SECTION_IDS.advanced,
 ]
 const ADVANCED_SETTINGS_SECTION_IDS = {
@@ -940,6 +945,7 @@ export function ChannelMutateDrawer({
   const modelsHaveErrors = Boolean(
     formErrors.models || formErrors.group || formErrors.model_mapping
   )
+  const balanceProtectionHasErrors = Boolean(formErrors.balance_protection)
   const advancedHaveErrors =
     hasAdvancedSettingsErrors(formErrors) || Boolean(formErrors.advanced_custom)
   const providerRequiresBaseUrl = [3, 8, 36, 45].includes(currentType)
@@ -972,6 +978,17 @@ export function ChannelMutateDrawer({
     credentialsComplete
   )
   const modelsStatus = getCompletionStatus(modelsHaveErrors, modelsComplete)
+  const balanceProtectionConfigured =
+    form.watch('balance_protection.enabled') === true
+  let balanceProtectionStatus: ChannelEditorSectionStatus = 'idle'
+  let balanceProtectionSummary = t('Optional')
+  if (balanceProtectionHasErrors) {
+    balanceProtectionStatus = 'error'
+    balanceProtectionSummary = t('Error')
+  } else if (balanceProtectionConfigured) {
+    balanceProtectionStatus = 'configured'
+    balanceProtectionSummary = t('Configured')
+  }
   const advancedStatus: ChannelEditorSectionStatus = advancedHaveErrors
     ? 'error'
     : 'idle'
@@ -1090,6 +1107,19 @@ export function ChannelMutateDrawer({
       status: modelsStatus,
       icon: <Boxes className='h-4 w-4' aria-hidden='true' />,
     },
+    ...(isEditing
+      ? [
+          {
+            id: CHANNEL_EDITOR_SECTION_IDS.balanceProtection,
+            title: t('Balance Protection'),
+            description: balanceProtectionSummary,
+            statusLabel: balanceProtectionSummary,
+            status: balanceProtectionStatus,
+            icon: <ShieldCheck className='h-4 w-4' aria-hidden='true' />,
+            configured: balanceProtectionConfigured,
+          } satisfies ChannelEditorNavItem,
+        ]
+      : []),
     {
       id: CHANNEL_EDITOR_SECTION_IDS.advanced,
       title: t('Advanced Settings'),
@@ -3549,6 +3579,22 @@ export function ChannelMutateDrawer({
                         </div>
                       </ChannelModelsSection>
                     </div>
+
+                    {isEditing && channelId && (
+                      <div
+                        id={CHANNEL_EDITOR_SECTION_IDS.balanceProtection}
+                        className='scroll-mt-4'
+                      >
+                        <ChannelBalanceProtectionSection
+                          channelId={channelId}
+                          form={form}
+                          isMultiKey={isMultiKeyChannel}
+                          supported={BALANCE_PROTECTION_SUPPORTED_TYPES.has(
+                            currentType
+                          )}
+                        />
+                      </div>
+                    )}
 
                     <div
                       id={CHANNEL_EDITOR_SECTION_IDS.advanced}

@@ -168,6 +168,7 @@ func GetAllChannels(c *gin.Context) {
 	for _, datum := range channelData {
 		clearChannelInfo(datum)
 	}
+	attachChannelBalanceProtections(channelData)
 
 	countQuery := buildChannelListQuery(groupFilter, statusFilter, -1)
 	var results []struct {
@@ -374,6 +375,7 @@ func SearchChannels(c *gin.Context) {
 	for _, datum := range pagedData {
 		clearChannelInfo(datum)
 	}
+	attachChannelBalanceProtections(pagedData)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -400,6 +402,7 @@ func GetChannel(c *gin.Context) {
 	}
 	if channel != nil {
 		clearChannelInfo(channel)
+		attachChannelBalanceProtection(channel)
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -954,6 +957,24 @@ func UpdateChannel(c *gin.Context) {
 
 	// Always copy the original ChannelInfo so that fields like IsMultiKey and MultiKeySize are retained.
 	channel.ChannelInfo = originChannel.ChannelInfo
+	if !supportsChannelBalanceQuery(channel.Type) {
+		protectionEnabled := channel.BalanceProtection != nil && channel.BalanceProtection.Enabled
+		if channel.BalanceProtection == nil {
+			existingProtection, protectionErr := model.GetChannelBalanceProtection(channel.Id)
+			if protectionErr != nil {
+				common.ApiError(c, protectionErr)
+				return
+			}
+			protectionEnabled = existingProtection != nil && existingProtection.Enabled
+		}
+		if protectionEnabled {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "该渠道类型不支持余额保护，请先关闭余额保护",
+			})
+			return
+		}
+	}
 
 	if channelHasSensitiveChanges(&channel, originChannel, requestData) &&
 		!authz.Can(c.GetInt("id"), c.GetInt("role"), authz.ChannelSensitiveWrite) {
@@ -1046,12 +1067,17 @@ func UpdateChannel(c *gin.Context) {
 			// 覆盖模式：直接使用新密钥（默认行为，不需要特殊处理）
 		}
 	}
-	err = channel.Update()
+	needsImmediateBalanceCheck, err := channel.UpdateWithBalanceProtection(channel.BalanceProtection)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	model.InitChannelCache()
+	if needsImmediateBalanceCheck {
+		if _, checkErr := checkChannelBalanceWithProtection(&channel.Channel); checkErr != nil {
+			common.SysLog(fmt.Sprintf("initial balance protection check failed: channel_id=%d error=%v", channel.Id, checkErr))
+		}
+	}
 	service.ResetProxyClientCache()
 	// 记录变更的字段名（语言无关的字段标识），密钥仅记录"已更换"绝不记录内容。
 	changedFields := make([]string, 0)
@@ -1077,6 +1103,7 @@ func UpdateChannel(c *gin.Context) {
 	})
 	channel.Key = ""
 	clearChannelInfo(&channel.Channel)
+	attachChannelBalanceProtection(&channel.Channel)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -1389,6 +1416,12 @@ func CopyChannel(c *gin.Context) {
 	if err := clone.Insert(); err != nil {
 		common.SysError("failed to clone channel: " + err.Error())
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "复制渠道失败，请稍后重试"})
+		return
+	}
+	if err := model.CopyChannelBalanceProtection(origin.Id, clone.Id); err != nil {
+		_ = clone.Delete()
+		common.SysError("failed to copy channel balance protection: " + err.Error())
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "复制渠道余额保护配置失败"})
 		return
 	}
 	model.InitChannelCache()

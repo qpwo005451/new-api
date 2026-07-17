@@ -21,11 +21,12 @@ func IsChannelEnabledForGroupModel(group string, modelName string, channelID int
 	}
 
 	if isChannelIDInList(group2model2channels[group][modelName], channelID) {
-		return true
+		return channelModelAllowedCached(channelID, modelName)
 	}
 	normalized := ratio_setting.FormatMatchingModelName(modelName)
 	if normalized != "" && normalized != modelName {
-		return isChannelIDInList(group2model2channels[group][normalized], channelID)
+		return isChannelIDInList(group2model2channels[group][normalized], channelID) &&
+			channelModelAllowedCached(channelID, modelName)
 	}
 	return false
 }
@@ -48,7 +49,7 @@ func isChannelEnabledForGroupModelDB(group string, modelName string, channelID i
 		Where(commonGroupCol+" = ? and model = ? and channel_id = ? and enabled = ?", group, modelName, channelID, true).
 		Count(&count).Error
 	if err == nil && count > 0 {
-		return true
+		return IsChannelModelAllowed(channelID, modelName)
 	}
 	normalized := ratio_setting.FormatMatchingModelName(modelName)
 	if normalized == "" || normalized == modelName {
@@ -58,7 +59,12 @@ func isChannelEnabledForGroupModelDB(group string, modelName string, channelID i
 	err = DB.Model(&Ability{}).
 		Where(commonGroupCol+" = ? and model = ? and channel_id = ? and enabled = ?", group, normalized, channelID, true).
 		Count(&count).Error
-	return err == nil && count > 0
+	return err == nil && count > 0 && IsChannelModelAllowed(channelID, modelName)
+}
+
+func channelModelAllowedCached(channelID int, modelName string) bool {
+	protection := channel2balanceProtection[channelID]
+	return protection == nil || protection.AllowsModel(modelName)
 }
 
 func isChannelIDInList(list []int, channelID int) bool {

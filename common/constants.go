@@ -116,6 +116,9 @@ var MemoryCacheEnabled bool
 
 var LogConsumeEnabled = true
 
+var InFlightUsageLogEnabled = true
+var InFlightUsageLogStaleSeconds = 30 * 60
+
 var TLSInsecureSkipVerify bool
 var InsecureTLSConfig = &tls.Config{InsecureSkipVerify: true}
 

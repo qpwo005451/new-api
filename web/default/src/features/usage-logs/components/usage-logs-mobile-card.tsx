@@ -36,6 +36,7 @@ import { LOG_TYPE_ENUM } from '../constants'
 const logTypeRowTint: Record<number, string> = {
   [LOG_TYPE_ENUM.ERROR]: 'bg-destructive/5 border-destructive/20',
   [LOG_TYPE_ENUM.REFUND]: 'bg-info/5 border-info/20',
+  [LOG_TYPE_ENUM.PENDING]: 'bg-warning/5 border-warning/20',
 }
 
 interface UsageLogsMobileListProps<TData> {

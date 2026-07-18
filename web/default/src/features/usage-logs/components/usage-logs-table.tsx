@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import type { ColumnDef } from '@tanstack/react-table'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -49,6 +50,7 @@ const route = getRouteApi('/_authenticated/usage-logs/$section')
 const logTypeRowTint: Record<number, string> = {
   [LOG_TYPE_ENUM.ERROR]: 'bg-destructive/5',
   [LOG_TYPE_ENUM.REFUND]: 'bg-info/5',
+  [LOG_TYPE_ENUM.PENDING]: 'bg-warning/5',
 }
 
 // Warning tint for logs where a quota conversion saturated (admin-only marker).
@@ -123,6 +125,8 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     ],
   })
 
+  const [autoRefresh, setAutoRefresh] = useState(false)
+
   const { data, isLoading, isFetching } = useQuery({
     queryKey: [
       'logs',
@@ -134,6 +138,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
       searchParams,
       t,
     ],
+    refetchInterval: autoRefresh && logCategory === 'common' ? 3000 : false,
     queryFn: async () => {
       const result = await fetchLogsByCategory({
         logCategory,
@@ -216,7 +221,11 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
       }
       toolbar={
         isCommon ? (
-          <CommonLogsFilterBar table={table} />
+          <CommonLogsFilterBar
+            table={table}
+            autoRefresh={autoRefresh}
+            onAutoRefreshChange={setAutoRefresh}
+          />
         ) : (
           <TaskLogsFilterBar table={table} logCategory={logCategory} />
         )

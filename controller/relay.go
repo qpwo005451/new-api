@@ -169,7 +169,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	if relayFormat != types.RelayFormatOpenAIRealtime {
 		model.RecordPendingLog(c, relayInfo.UserId, model.RecordPendingLogParams{
-			ChannelId: relayInfo.ChannelId,
+			ChannelId: common.GetContextKeyInt(c, constant.ContextKeyChannelId),
 			ModelName: relayInfo.OriginModelName,
 			TokenName: c.GetString("token_name"),
 			TokenId:   relayInfo.TokenId,

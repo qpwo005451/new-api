@@ -66,6 +66,9 @@ export const useLogsData = () => {
 
   // Basic state
   const [logs, setLogs] = useState([]);
+  const [pendingNowSeconds, setPendingNowSeconds] = useState(() =>
+    Math.floor(Date.now() / 1000),
+  );
   const [expandData, setExpandData] = useState({});
   const [showStat, setShowStat] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -164,7 +167,9 @@ export const useLogsData = () => {
   };
 
   // Column visibility state
-  const [visibleColumns, setVisibleColumns] = useState(getInitialVisibleColumns);
+  const [visibleColumns, setVisibleColumns] = useState(
+    getInitialVisibleColumns,
+  );
   const [showColumnSelector, setShowColumnSelector] = useState(false);
   const [billingDisplayMode, setBillingDisplayMode] = useState(
     getInitialBillingDisplayMode,
@@ -383,7 +388,13 @@ export const useLogsData = () => {
       let other = getLogOther(logs[i].other);
       let expandDataLocal = [];
 
-      if (isAdminUser && (logs[i].type === 0 || logs[i].type === 2 || logs[i].type === 6)) {
+      if (
+        isAdminUser &&
+        (logs[i].type === 0 ||
+          logs[i].type === 2 ||
+          logs[i].type === 6 ||
+          logs[i].type === 8)
+      ) {
         expandDataLocal.push({
           key: t('渠道信息'),
           value: `${logs[i].channel} - ${logs[i].channel_name || '[未知]'}`,
@@ -430,7 +441,10 @@ export const useLogsData = () => {
           expandDataLocal.push({
             key: t('日志详情'),
             value: other?.claude
-              ? renderClaudeLogContent({ ...other, displayMode: billingDisplayMode })
+              ? renderClaudeLogContent({
+                  ...other,
+                  displayMode: billingDisplayMode,
+                })
               : renderLogContent({ ...other, displayMode: billingDisplayMode }),
           });
         }
@@ -520,7 +534,14 @@ export const useLogsData = () => {
           expandDataLocal.push({
             key: t('失败原因'),
             value: (
-              <div style={{ maxWidth: 600, whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.6 }}>
+              <div
+                style={{
+                  maxWidth: 600,
+                  whiteSpace: 'normal',
+                  wordBreak: 'break-word',
+                  lineHeight: 1.6,
+                }}
+              >
                 {other.reason}
               </div>
             ),
@@ -537,7 +558,8 @@ export const useLogsData = () => {
         const ss = other.stream_status;
         const isOk = ss.status === 'ok';
         const statusLabel = isOk ? '✓ ' + t('正常') : '✗ ' + t('异常');
-        let streamValue = statusLabel + ' (' + (ss.end_reason || 'unknown') + ')';
+        let streamValue =
+          statusLabel + ' (' + (ss.end_reason || 'unknown') + ')';
         if (ss.error_count > 0) {
           streamValue += ` [${t('软错误')}: ${ss.error_count}]`;
         }
@@ -552,7 +574,14 @@ export const useLogsData = () => {
           expandDataLocal.push({
             key: t('流错误详情'),
             value: (
-              <div style={{ maxWidth: 600, whiteSpace: 'pre-line', wordBreak: 'break-word', lineHeight: 1.6 }}>
+              <div
+                style={{
+                  maxWidth: 600,
+                  whiteSpace: 'pre-line',
+                  wordBreak: 'break-word',
+                  lineHeight: 1.6,
+                }}
+              >
                 {ss.errors.join('\n')}
               </div>
             ),
@@ -726,8 +755,15 @@ export const useLogsData = () => {
   };
 
   // Load logs function
-  const loadLogs = async (startIdx, pageSize, customLogType = null) => {
-    setLoading(true);
+  const loadLogs = async (
+    startIdx,
+    pageSize,
+    customLogType = null,
+    silent = false,
+  ) => {
+    if (!silent) {
+      setLoading(true);
+    }
 
     let url = '';
     const {
@@ -769,7 +805,9 @@ export const useLogsData = () => {
     } else {
       showError(message);
     }
-    setLoading(false);
+    if (!silent) {
+      setLoading(false);
+    }
   };
 
   // Page handlers
@@ -825,6 +863,35 @@ export const useLogsData = () => {
     }
   }, [formApi]);
 
+  const hasPendingLogs = logs.some((log) => log.type === 8);
+
+  useEffect(() => {
+    if (!hasPendingLogs) {
+      return undefined;
+    }
+
+    setPendingNowSeconds(Math.floor(Date.now() / 1000));
+    const intervalId = window.setInterval(() => {
+      setPendingNowSeconds(Math.floor(Date.now() / 1000));
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [hasPendingLogs]);
+
+  useEffect(() => {
+    if (!hasPendingLogs) {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => {
+      loadLogs(activePage, pageSize, null, true).catch((reason) => {
+        showError(reason);
+      });
+    }, 3000);
+
+    return () => window.clearInterval(intervalId);
+  }, [hasPendingLogs, activePage, pageSize]);
+
   // Check if any record has expandable content
   const hasExpandableRows = () => {
     return logs.some(
@@ -835,6 +902,7 @@ export const useLogsData = () => {
   return {
     // Basic state
     logs,
+    pendingNowSeconds,
     expandData,
     showStat,
     loading,

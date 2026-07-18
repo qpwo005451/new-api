@@ -44,7 +44,7 @@ import {
 } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
-import { LOG_TYPE_ALL_VALUE } from '../../constants'
+import { LOG_TYPE_ALL_VALUE, LOG_TYPE_ENUM } from '../../constants'
 import type { UsageLog } from '../../data/schema'
 import {
   formatModelName,
@@ -71,6 +71,11 @@ interface DetailSegment {
   text: string
   muted?: boolean
   danger?: boolean
+}
+
+function getDisplayUseTime(log: UsageLog, pendingNowSeconds: number): number {
+  if (log.type !== LOG_TYPE_ENUM.PENDING) return log.use_time
+  return Math.max(0, pendingNowSeconds - log.created_at)
 }
 
 function formatRatioCompact(ratio: number | undefined): string {
@@ -132,6 +137,14 @@ function buildTypeDetailSegments(
 
   if (log.type === 6) {
     return [{ text: t('Async task refund') }]
+  }
+
+  if (log.type === LOG_TYPE_ENUM.PENDING) {
+    const segments: DetailSegment[] = [{ text: t('In Progress') }]
+    if (other?.request_path) {
+      segments.push({ text: other.request_path, muted: true })
+    }
+    return segments
   }
 
   if (log.type !== 2) return []
@@ -289,7 +302,10 @@ function buildTypeDetailSegments(
   return segments
 }
 
-export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
+export function useCommonLogsColumns(
+  isAdmin: boolean,
+  pendingNowSeconds: number
+): ColumnDef<UsageLog>[] {
   const { t } = useTranslation()
   const groupRatios = useGroupRatios()
   const columns: ColumnDef<UsageLog>[] = [
@@ -339,6 +355,13 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
           const log = row.original
 
           if (!isDisplayableLogType(log.type)) return null
+          if (log.type === LOG_TYPE_ENUM.PENDING && log.channel <= 0) {
+            return (
+              <StatusBadge variant='warning' size='sm'>
+                {t('Waiting')}
+              </StatusBadge>
+            )
+          }
 
           const other = parseLogOther(log.other)
           const affinity = other?.admin_info?.channel_affinity
@@ -658,7 +681,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
         const log = row.original
         if (!isTimingLogType(log.type)) return null
 
-        const useTime = row.getValue('use_time') as number
+        const useTime = getDisplayUseTime(log, pendingNowSeconds)
         const other = parseLogOther(log.other)
         const frt = other?.frt
         const tokensPerSecond =
@@ -695,7 +718,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
                     size='sm'
                     className='tabular-nums'
                   >
-                    N/A
+                    {log.type === LOG_TYPE_ENUM.PENDING ? t('Waiting') : 'N/A'}
                   </StatusBadge>
                 ))}
             </div>
@@ -810,6 +833,13 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
       cell: ({ row }) => {
         const log = row.original
         if (!isDisplayableLogType(log.type)) return null
+        if (log.type === LOG_TYPE_ENUM.PENDING) {
+          return (
+            <StatusBadge variant='warning' size='sm'>
+              {t('In Progress')}
+            </StatusBadge>
+          )
+        }
 
         const quota = row.getValue('quota') as number
         const other = parseLogOther(log.other)
@@ -856,6 +886,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
         const log = row.original
         const other = parseLogOther(log.other)
         const ip = log.ip.trim()
+        const displayUseTime = getDisplayUseTime(log, pendingNowSeconds)
 
         const segments = buildDetailSegments(log, other, t, isAdmin)
         const primary = segments[0]
@@ -913,6 +944,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
             <DetailsDialog
               log={log}
               isAdmin={isAdmin}
+              displayUseTime={displayUseTime}
               open={dialogOpen}
               onOpenChange={setDialogOpen}
             />

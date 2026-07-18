@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/types"
 
@@ -59,8 +60,8 @@ func sanitizeClickHouseLikePattern(input string) (string, error) {
 type Log struct {
 	Id                int    `json:"id" gorm:"index:idx_created_at_id,priority:2;index:idx_user_id_id,priority:2"`
 	UserId            int    `json:"user_id" gorm:"index;index:idx_user_id_id,priority:1"`
-	CreatedAt         int64  `json:"created_at" gorm:"bigint;index:idx_created_at_id,priority:1;index:idx_created_at_type"`
-	Type              int    `json:"type" gorm:"index:idx_created_at_type"`
+	CreatedAt         int64  `json:"created_at" gorm:"bigint;index:idx_created_at_id,priority:1;index:idx_created_at_type;index:idx_type_created_at,priority:2"`
+	Type              int    `json:"type" gorm:"index:idx_created_at_type;index:idx_type_created_at,priority:1"`
 	Content           string `json:"content"`
 	Username          string `json:"username" gorm:"index;index:index_username_model_name,priority:2;default:''"`
 	TokenName         string `json:"token_name" gorm:"index;default:''"`
@@ -90,6 +91,7 @@ const (
 	LogTypeError   = 5
 	LogTypeRefund  = 6
 	LogTypeLogin   = 7
+	LogTypePending = 8
 )
 
 func ensureLogRequestId(log *Log) {
@@ -319,6 +321,9 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 		UpstreamRequestId: upstreamRequestId,
 		Other:             otherStr,
 	}
+	if !isIntermediateRetryLog(other) && finalizeInFlightLog(c, log) {
+		return
+	}
 	err := createLog(log)
 	if err != nil {
 		logger.LogError(c, "failed to record log: "+err.Error())
@@ -341,7 +346,9 @@ type RecordConsumeLogParams struct {
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
-	if !common.LogConsumeEnabled {
+	consumeLogEnabled := common.LogConsumeEnabled
+	hasPendingLog := c != nil && common.GetContextKeyInt(c, constant.ContextKeyPendingLogId) > 0
+	if !consumeLogEnabled && !hasPendingLog {
 		return
 	}
 	logger.LogInfo(c, fmt.Sprintf("record consume log: userId=%d, params=%s", userId, common.GetJsonString(params)))
@@ -383,11 +390,15 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		UpstreamRequestId: upstreamRequestId,
 		Other:             otherStr,
 	}
-	err := createLog(log)
-	if err != nil {
-		logger.LogError(c, "failed to record log: "+err.Error())
+	if !isViolationFeeLog(params.Other) && finalizeInFlightLog(c, log) {
+		createdAt = log.CreatedAt
+	} else {
+		err := createLog(log)
+		if err != nil {
+			logger.LogError(c, "failed to record log: "+err.Error())
+		}
 	}
-	if common.DataExportEnabled {
+	if consumeLogEnabled && common.DataExportEnabled {
 		LogQuotaData(QuotaDataLogParams{
 			UserID:    userId,
 			Username:  username,
@@ -761,4 +772,241 @@ func DeleteOldLog(ctx context.Context, targetTimestamp int64, limit int) (int64,
 	}
 
 	return total, nil
+}
+
+func InFlightUsageLogAllowed() bool {
+	return common.LogConsumeEnabled && common.InFlightUsageLogEnabled
+}
+
+func InFlightUsageLogSupported() bool {
+	return !common.UsingLogDatabase(common.DatabaseTypeClickHouse)
+}
+
+type RecordPendingLogParams struct {
+	ChannelId int
+	ModelName string
+	TokenName string
+	TokenId   int
+	IsStream  bool
+	Group     string
+	Content   string
+	Other     map[string]interface{}
+}
+
+func RecordPendingLog(c *gin.Context, userId int, params RecordPendingLogParams) {
+	if c == nil || !InFlightUsageLogAllowed() || !InFlightUsageLogSupported() {
+		return
+	}
+	if common.GetContextKeyInt(c, constant.ContextKeyPendingLogId) > 0 {
+		return
+	}
+
+	username := c.GetString("username")
+	requestId := c.GetString(common.RequestIdKey)
+	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
+	otherStr := common.MapToJsonStr(params.Other)
+
+	needRecordIp := false
+	if settingMap, err := GetUserSetting(userId, false); err == nil {
+		if settingMap.RecordIpLog {
+			needRecordIp = true
+		}
+	}
+
+	content := params.Content
+	if content == "" {
+		content = "request in progress"
+	}
+
+	log := &Log{
+		UserId:    userId,
+		Username:  username,
+		CreatedAt: common.GetTimestamp(),
+		Type:      LogTypePending,
+		Content:   content,
+		TokenName: params.TokenName,
+		ModelName: params.ModelName,
+		ChannelId: params.ChannelId,
+		TokenId:   params.TokenId,
+		IsStream:  params.IsStream,
+		Group:     params.Group,
+		Ip: func() string {
+			if needRecordIp {
+				return c.ClientIP()
+			}
+			return ""
+		}(),
+		RequestId:         requestId,
+		UpstreamRequestId: upstreamRequestId,
+		Other:             otherStr,
+	}
+	if err := createLog(log); err != nil {
+		logger.LogError(c, "failed to record pending log: "+err.Error())
+		return
+	}
+	if log.Id > 0 {
+		common.SetContextKey(c, constant.ContextKeyPendingLogId, log.Id)
+	}
+}
+
+func TouchPendingLogChannel(c *gin.Context, channelId int) {
+	if c == nil || channelId <= 0 || !InFlightUsageLogSupported() {
+		return
+	}
+	pendingId := common.GetContextKeyInt(c, constant.ContextKeyPendingLogId)
+	if pendingId <= 0 {
+		return
+	}
+	if err := LOG_DB.Model(&Log{}).
+		Where("id = ? AND type = ?", pendingId, LogTypePending).
+		Update("channel_id", channelId).Error; err != nil {
+		logger.LogError(c, "failed to touch pending log channel: "+err.Error())
+	}
+}
+
+func isViolationFeeLog(other map[string]interface{}) bool {
+	if other == nil {
+		return false
+	}
+	violationFee, _ := other["violation_fee"].(bool)
+	return violationFee
+}
+
+func isIntermediateRetryLog(other map[string]interface{}) bool {
+	if other == nil {
+		return false
+	}
+	intermediateRetry, _ := other["intermediate_retry"].(bool)
+	return intermediateRetry
+}
+
+func finalizeInFlightLog(c *gin.Context, terminal *Log) bool {
+	if c == nil || terminal == nil || !InFlightUsageLogSupported() {
+		return false
+	}
+
+	pendingId := common.GetContextKeyInt(c, constant.ContextKeyPendingLogId)
+	if pendingId <= 0 && !InFlightUsageLogAllowed() {
+		return false
+	}
+	requestId := terminal.RequestId
+	if requestId == "" {
+		requestId = c.GetString(common.RequestIdKey)
+	}
+
+	var pending Log
+	tx := LOG_DB.Model(&Log{}).Where("type = ?", LogTypePending)
+	if pendingId > 0 {
+		tx = tx.Where("id = ?", pendingId)
+	} else if requestId != "" && terminal.UserId > 0 {
+		tx = tx.Where("request_id = ? AND user_id = ?", requestId, terminal.UserId)
+	} else {
+		return false
+	}
+
+	if err := tx.Order("id desc").First(&pending).Error; err != nil {
+		return false
+	}
+
+	useTime := terminal.UseTime
+	if useTime <= 0 && pending.CreatedAt > 0 {
+		elapsed := int(common.GetTimestamp() - pending.CreatedAt)
+		if elapsed > 0 {
+			useTime = elapsed
+		}
+	}
+
+	updates := map[string]interface{}{
+		"type":                terminal.Type,
+		"content":             terminal.Content,
+		"prompt_tokens":       terminal.PromptTokens,
+		"completion_tokens":   terminal.CompletionTokens,
+		"token_name":          terminal.TokenName,
+		"model_name":          terminal.ModelName,
+		"quota":               terminal.Quota,
+		"channel_id":          terminal.ChannelId,
+		"token_id":            terminal.TokenId,
+		"use_time":            useTime,
+		"is_stream":           terminal.IsStream,
+		"upstream_request_id": terminal.UpstreamRequestId,
+		"other":               terminal.Other,
+		"group":               terminal.Group,
+	}
+	if terminal.Ip != "" {
+		updates["ip"] = terminal.Ip
+	}
+	if terminal.Username != "" {
+		updates["username"] = terminal.Username
+	}
+
+	result := LOG_DB.Model(&Log{}).Where("id = ? AND type = ?", pending.Id, LogTypePending).Updates(updates)
+	if result.Error != nil {
+		logger.LogError(c, "failed to finalize pending log: "+result.Error.Error())
+		return false
+	}
+	if result.RowsAffected != 1 {
+		logger.LogError(c, "failed to finalize pending log: pending row changed before terminal update")
+		return false
+	}
+
+	terminal.Id = pending.Id
+	terminal.CreatedAt = pending.CreatedAt
+	terminal.UseTime = useTime
+	common.SetContextKey(c, constant.ContextKeyPendingLogId, 0)
+	return true
+}
+
+func FinalizeStaleInFlightLogs(ctx context.Context, olderThanSeconds int64, limit int) (int64, error) {
+	if !InFlightUsageLogSupported() {
+		return 0, nil
+	}
+	if olderThanSeconds <= 0 {
+		olderThanSeconds = int64(common.InFlightUsageLogStaleSeconds)
+	}
+	if limit <= 0 {
+		limit = 200
+	}
+	cutoff := common.GetTimestamp() - olderThanSeconds
+
+	var rows []*Log
+	if err := LOG_DB.WithContext(ctx).
+		Where("type = ? AND created_at < ?", LogTypePending, cutoff).
+		Order("id asc").
+		Limit(limit).
+		Find(&rows).Error; err != nil {
+		return 0, err
+	}
+	if len(rows) == 0 {
+		return 0, nil
+	}
+
+	var finalized int64
+	now := common.GetTimestamp()
+	for _, row := range rows {
+		useTime := int(now - row.CreatedAt)
+		if useTime < 0 {
+			useTime = 0
+		}
+		otherMap, _ := common.StrToMap(row.Other)
+		if otherMap == nil {
+			otherMap = map[string]interface{}{}
+		}
+		otherMap["stale_finalized"] = true
+		otherMap["stale_threshold_seconds"] = olderThanSeconds
+		updates := map[string]interface{}{
+			"type":     LogTypeError,
+			"content":  "request abandoned or timed out before completion",
+			"quota":    0,
+			"use_time": useTime,
+			"other":    common.MapToJsonStr(otherMap),
+		}
+		res := LOG_DB.WithContext(ctx).Model(&Log{}).
+			Where("id = ? AND type = ?", row.Id, LogTypePending).
+			Updates(updates)
+		if res.Error != nil {
+			return finalized, res.Error
+		}
+		finalized += res.RowsAffected
+	}
+	return finalized, nil
 }

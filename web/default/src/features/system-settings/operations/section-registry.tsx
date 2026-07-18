@@ -98,6 +98,11 @@ const OPERATIONS_SECTIONS = [
     build: (settings: OperationsSettings) => (
       <LogSettingsSection
         defaultEnabled={Boolean(settings.LogConsumeEnabled)}
+        defaultInFlightEnabled={
+          settings.InFlightUsageLogEnabled === undefined
+            ? true
+            : Boolean(settings.InFlightUsageLogEnabled)
+        }
       />
     ),
   },

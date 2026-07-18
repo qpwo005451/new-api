@@ -133,6 +133,12 @@ function renderType(type, t) {
           {t('退款')}
         </Tag>
       );
+    case 8:
+      return (
+        <Tag color='amber' shape='circle'>
+          {t('进行中')}
+        </Tag>
+      );
     default:
       return (
         <Tag color='grey' shape='circle'>
@@ -144,10 +150,7 @@ function renderType(type, t) {
 
 function buildStreamStatusTooltip(ss, t) {
   if (!ss) return null;
-  const lines = [
-    t('流状态') + '：' + t('异常'),
-    (ss.end_reason || 'unknown'),
-  ];
+  const lines = [t('流状态') + '：' + t('异常'), ss.end_reason || 'unknown'];
   if (ss.error_count > 0) {
     lines.push(`${t('软错误')}: ${ss.error_count}`);
   }
@@ -185,11 +188,7 @@ function renderIsStream(bool, t, streamStatus) {
                 userSelect: 'none',
               }}
             >
-              <CircleAlert
-                size={14}
-                strokeWidth={2.5}
-                color='currentColor'
-              />
+              <CircleAlert size={14} strokeWidth={2.5} color='currentColor' />
             </span>
           </Tooltip>
         )}
@@ -461,7 +460,11 @@ function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
     };
   }
 
-  const summaryOpts = { ...other, displayMode: billingDisplayMode, outputMode: 'segments' };
+  const summaryOpts = {
+    ...other,
+    displayMode: billingDisplayMode,
+    outputMode: 'segments',
+  };
 
   if (other?.billing_mode === 'tiered_expr') {
     return { segments: renderTieredModelPriceSimple(summaryOpts) };
@@ -522,7 +525,8 @@ export const getLogsColumns = ({
           (record.type === 0 ||
             record.type === 2 ||
             record.type === 5 ||
-            record.type === 6) ? (
+            record.type === 6 ||
+            record.type === 8) ? (
           <Space>
             <span style={{ position: 'relative', display: 'inline-block' }}>
               <Tooltip content={record.channel_name || t('未知渠道')}>
@@ -616,7 +620,8 @@ export const getLogsColumns = ({
         return record.type === 0 ||
           record.type === 2 ||
           record.type === 5 ||
-          record.type === 6 ? (
+          record.type === 6 ||
+          record.type === 8 ? (
           <div>
             <Tag
               color='grey'
@@ -643,7 +648,8 @@ export const getLogsColumns = ({
           record.type === 0 ||
           record.type === 2 ||
           record.type === 5 ||
-          record.type === 6
+          record.type === 6 ||
+          record.type === 8
         ) {
           if (record.group) {
             return <>{renderGroup(record.group)}</>;
@@ -687,7 +693,8 @@ export const getLogsColumns = ({
         return record.type === 0 ||
           record.type === 2 ||
           record.type === 5 ||
-          record.type === 6 ? (
+          record.type === 6 ||
+          record.type === 8 ? (
           <>{renderModelName(record, copyText, t)}</>
         ) : (
           <></>
@@ -699,7 +706,7 @@ export const getLogsColumns = ({
       title: t('用时/首字'),
       dataIndex: 'use_time',
       render: (text, record, index) => {
-        if (!(record.type === 2 || record.type === 5)) {
+        if (!(record.type === 2 || record.type === 5 || record.type === 8)) {
           return <></>;
         }
         if (record.is_stream) {
@@ -757,7 +764,8 @@ export const getLogsColumns = ({
         return record.type === 0 ||
           record.type === 2 ||
           record.type === 5 ||
-          record.type === 6 ? (
+          record.type === 6 ||
+          record.type === 8 ? (
           <div
             style={{
               display: 'inline-flex',
@@ -794,7 +802,8 @@ export const getLogsColumns = ({
           (record.type === 0 ||
             record.type === 2 ||
             record.type === 5 ||
-            record.type === 6) ? (
+            record.type === 6 ||
+            record.type === 8) ? (
           <>{<span> {text} </span>}</>
         ) : (
           <></>
@@ -811,7 +820,8 @@ export const getLogsColumns = ({
             record.type === 0 ||
             record.type === 2 ||
             record.type === 5 ||
-            record.type === 6
+            record.type === 6 ||
+            record.type === 8
           )
         ) {
           return <></>;
@@ -874,7 +884,7 @@ export const getLogsColumns = ({
       title: t('重试'),
       dataIndex: 'retry',
       render: (text, record, index) => {
-        if (!(record.type === 2 || record.type === 5)) {
+        if (!(record.type === 2 || record.type === 5 || record.type === 8)) {
           return <></>;
         }
         let content = t('渠道') + `：${record.channel}`;

@@ -60,6 +60,7 @@ export const LOG_TYPE_ENUM = {
   ERROR: 5,
   REFUND: 6,
   LOGIN: 7,
+  PENDING: 8,
 } as const
 
 /**
@@ -98,6 +99,7 @@ export const LOG_TYPES = [
   { value: 5, label: 'Error', variant: 'destructive' },
   { value: 6, label: 'Refund', variant: 'info' },
   { value: 7, label: 'Login', variant: 'info' },
+  { value: 8, label: 'In Progress', variant: 'warning' },
 ] as const
 
 /**
@@ -352,9 +354,9 @@ export const LOG_CATEGORY_LABELS: Record<LogCategory, string> = {
 /**
  * Log types that are displayable (have detailed info)
  */
-export const DISPLAYABLE_LOG_TYPES = [0, 2, 5, 6] as const
+export const DISPLAYABLE_LOG_TYPES = [0, 2, 5, 6, 8] as const
 
 /**
  * Log types that show timing info
  */
-export const TIMING_LOG_TYPES = [2, 5] as const
+export const TIMING_LOG_TYPES = [2, 5, 8] as const

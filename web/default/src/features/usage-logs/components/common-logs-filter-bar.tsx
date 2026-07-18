@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useQueryClient, useIsFetching } from '@tanstack/react-query'
 import { useNavigate, getRouteApi } from '@tanstack/react-router'
 import type { Table } from '@tanstack/react-table'
-import { Eye, EyeOff } from 'lucide-react'
+import { Eye, EyeOff, RefreshCw } from 'lucide-react'
 import { useState, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -108,11 +108,15 @@ function buildSearchSourceKey(values: {
 
 interface CommonLogsFilterBarProps<TData> {
   table: Table<TData>
+  autoRefresh?: boolean
+  onAutoRefreshChange?: (value: boolean) => void
 }
 
 export function CommonLogsFilterBar<TData>(
   props: CommonLogsFilterBarProps<TData>
 ) {
+  const autoRefresh = props.autoRefresh ?? false
+  const onAutoRefreshChange = props.onAutoRefreshChange
   const { t } = useTranslation()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -290,6 +294,32 @@ export function CommonLogsFilterBar<TData>(
     </Tooltip>
   )
 
+  const autoRefreshToggle =
+    onAutoRefreshChange == null ? null : (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant={autoRefresh ? 'secondary' : 'ghost'}
+              size='icon-sm'
+              onClick={() => onAutoRefreshChange(!autoRefresh)}
+              aria-label={
+                autoRefresh
+                  ? t('Disable auto refresh')
+                  : t('Enable auto refresh')
+              }
+              className='text-muted-foreground hover:text-foreground'
+            />
+          }
+        >
+          <RefreshCw />
+        </TooltipTrigger>
+        <TooltipContent>
+          {autoRefresh ? t('Auto refresh on (3s)') : t('Auto refresh off')}
+        </TooltipContent>
+      </Tooltip>
+    )
+
   const dateRangeFilter = (
     <LogsFilterField wide>
       <CompactDateTimeRangePicker
@@ -414,7 +444,12 @@ export function CommonLogsFilterBar<TData>(
     <LogsFilterToolbar
       table={props.table}
       stats={statsBar}
-      actionStart={sensitiveToggle}
+      actionStart={
+        <>
+          {autoRefreshToggle}
+          {sensitiveToggle}
+        </>
+      }
       primaryFilters={
         <>
           {dateRangeFilter}

@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import type { ColumnDef } from '@tanstack/react-table'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -126,6 +126,9 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   })
 
   const [autoRefresh, setAutoRefresh] = useState(false)
+  const [pendingNowSeconds, setPendingNowSeconds] = useState(() =>
+    Math.floor(Date.now() / 1000)
+  )
 
   const { data, isLoading, isFetching } = useQuery({
     queryKey: [
@@ -138,7 +141,14 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
       searchParams,
       t,
     ],
-    refetchInterval: autoRefresh && logCategory === 'common' ? 3000 : false,
+    refetchInterval: (query) => {
+      if (logCategory !== 'common') return false
+      const currentItems = query.state.data?.items ?? []
+      const hasPendingItem = currentItems.some(
+        (log) => (log as Record<string, unknown>).type === LOG_TYPE_ENUM.PENDING
+      )
+      return autoRefresh || hasPendingItem ? 3000 : false
+    },
     queryFn: async () => {
       const result = await fetchLogsByCategory({
         logCategory,
@@ -165,7 +175,25 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   })
 
   const logs = data?.items || []
-  const columns = useColumnsByCategory(logCategory, isAdmin)
+  const isCommon = logCategory === 'common'
+  const hasPendingLogs =
+    isCommon &&
+    logs.some(
+      (log) => (log as Record<string, unknown>).type === LOG_TYPE_ENUM.PENDING
+    )
+
+  useEffect(() => {
+    if (!hasPendingLogs) return
+
+    setPendingNowSeconds(Math.floor(Date.now() / 1000))
+    const intervalId = window.setInterval(() => {
+      setPendingNowSeconds(Math.floor(Date.now() / 1000))
+    }, 1000)
+
+    return () => window.clearInterval(intervalId)
+  }, [hasPendingLogs])
+
+  const columns = useColumnsByCategory(logCategory, isAdmin, pendingNowSeconds)
   const isLoadingData = isLoading || (isFetching && !data)
 
   const { table } = useDataTable({
@@ -185,8 +213,6 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     totalCount: data?.total || 0,
     ensurePageInRange,
   })
-
-  const isCommon = logCategory === 'common'
 
   return (
     <DataTablePage

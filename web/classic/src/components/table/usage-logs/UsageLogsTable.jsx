@@ -29,6 +29,7 @@ import { getLogsColumns } from './UsageLogsColumnDefs';
 const LogsTable = (logsData) => {
   const {
     logs,
+    pendingNowSeconds,
     expandData,
     loading,
     activePage,
@@ -58,6 +59,7 @@ const LogsTable = (logsData) => {
       openChannelAffinityUsageCacheModal,
       isAdminUser,
       billingDisplayMode,
+      pendingNowSeconds,
     });
   }, [
     t,
@@ -67,6 +69,7 @@ const LogsTable = (logsData) => {
     openChannelAffinityUsageCacheModal,
     isAdminUser,
     billingDisplayMode,
+    pendingNowSeconds,
   ]);
 
   // Filter columns based on visibility settings

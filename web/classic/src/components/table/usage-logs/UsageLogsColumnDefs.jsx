@@ -229,6 +229,13 @@ function renderUseTime(type, t) {
   }
 }
 
+function getDisplayUseTime(record, pendingNowSeconds) {
+  if (record.type !== 8) {
+    return record.use_time;
+  }
+  return Math.max(0, pendingNowSeconds - record.created_at);
+}
+
 function renderFirstUseTime(type, t) {
   let time = parseFloat(type) / 1000.0;
   time = time.toFixed(1);
@@ -432,6 +439,17 @@ function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
     };
   }
 
+  if (record.type === 8) {
+    return {
+      segments: [
+        { text: t('进行中'), tone: 'primary' },
+        other?.request_path
+          ? { text: other.request_path, tone: 'secondary' }
+          : null,
+      ].filter(Boolean),
+    };
+  }
+
   if (other == null || record.type !== 2) {
     return null;
   }
@@ -485,6 +503,7 @@ export const getLogsColumns = ({
   openChannelAffinityUsageCacheModal,
   isAdminUser,
   billingDisplayMode = 'price',
+  pendingNowSeconds = Math.floor(Date.now() / 1000),
 }) => {
   return [
     {
@@ -503,6 +522,15 @@ export const getLogsColumns = ({
         let affinity = null;
         let showMarker = false;
         let other = getLogOther(record.other);
+        if (record.type === 8 && parseInt(text) <= 0) {
+          return isAdminUser ? (
+            <Tag color='orange' shape='circle'>
+              {t('等待中')}
+            </Tag>
+          ) : (
+            <></>
+          );
+        }
         if (other?.admin_info) {
           let adminInfo = other.admin_info;
           if (adminInfo?.is_multi_key) {
@@ -709,13 +737,20 @@ export const getLogsColumns = ({
         if (!(record.type === 2 || record.type === 5 || record.type === 8)) {
           return <></>;
         }
+        const displayUseTime = getDisplayUseTime(record, pendingNowSeconds);
         if (record.is_stream) {
           let other = getLogOther(record.other);
           return (
             <>
               <Space>
-                {renderUseTime(text, t)}
-                {renderFirstUseTime(other?.frt, t)}
+                {renderUseTime(displayUseTime, t)}
+                {record.type === 8 && !other?.frt ? (
+                  <Tag color='grey' shape='circle'>
+                    {t('等待中')}
+                  </Tag>
+                ) : (
+                  renderFirstUseTime(other?.frt, t)
+                )}
                 {renderIsStream(record.is_stream, t, other?.stream_status)}
               </Space>
             </>
@@ -724,7 +759,7 @@ export const getLogsColumns = ({
           return (
             <>
               <Space>
-                {renderUseTime(text, t)}
+                {renderUseTime(displayUseTime, t)}
                 {renderIsStream(record.is_stream, t)}
               </Space>
             </>
@@ -827,6 +862,13 @@ export const getLogsColumns = ({
           return <></>;
         }
         const other = getLogOther(record.other);
+        if (record.type === 8) {
+          return (
+            <Tag color='orange' shape='circle'>
+              {t('进行中')}
+            </Tag>
+          );
+        }
         const isSubscription = other?.billing_source === 'subscription';
         if (isSubscription) {
           // Subscription billed: show only tag (no $0), but keep tooltip for equivalent cost.
@@ -858,6 +900,7 @@ export const getLogsColumns = ({
         const showIp =
           (record.type === 2 ||
             record.type === 5 ||
+            record.type === 8 ||
             (isAdminUser && record.type === 1)) &&
           text;
         return showIp ? (

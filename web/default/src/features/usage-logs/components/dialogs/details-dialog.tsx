@@ -403,6 +403,7 @@ function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
 interface DetailsDialogProps {
   log: UsageLog
   isAdmin: boolean
+  displayUseTime?: number
   open: boolean
   onOpenChange: (open: boolean) => void
 }
@@ -433,6 +434,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
     !!other?.expr_b64
   const hasAudioTokens = other?.ws || other?.audio
   const showTiming = isTimingLogType(props.log.type)
+  const displayUseTime = props.displayUseTime ?? props.log.use_time
   const showAdminIp =
     !!props.log.ip && (showTiming || (props.isAdmin && isTopup))
   const adminInfo = other?.admin_info
@@ -634,7 +636,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
             />
           )}
 
-          {showTiming && props.log.use_time > 0 && (
+          {showTiming && displayUseTime > 0 && (
             <DetailRow
               label={t('Response Time')}
               value={
@@ -642,11 +644,11 @@ export function DetailsDialog(props: DetailsDialogProps) {
                   <StatusBadge
                     appearance='plain'
                     variant={getResponseTimeColor(
-                      props.log.use_time,
+                      displayUseTime,
                       props.log.completion_tokens
                     )}
                   >
-                    {formatUseTime(props.log.use_time)}
+                    {formatUseTime(displayUseTime)}
                   </StatusBadge>
                   {props.log.is_stream &&
                     other?.frt != null &&

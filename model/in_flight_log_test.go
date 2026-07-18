@@ -116,6 +116,26 @@ func TestRecordPendingAndFinalizeToError(t *testing.T) {
 	assert.Contains(t, row.Content, "upstream failed")
 }
 
+func TestPendingLogSupportsDeferredChannelSelection(t *testing.T) {
+	setupInFlightLogTestDB(t)
+	c := newTestGinContext("req-deferred-channel", 12)
+	RecordPendingLog(c, 12, RecordPendingLogParams{
+		ModelName: "m",
+		TokenName: "t",
+		TokenId:   1,
+	})
+	pendingID := common.GetContextKeyInt(c, constant.ContextKeyPendingLogId)
+	require.Greater(t, pendingID, 0)
+
+	var row Log
+	require.NoError(t, LOG_DB.First(&row, pendingID).Error)
+	assert.Equal(t, 0, row.ChannelId)
+
+	TouchPendingLogChannel(c, 4)
+	require.NoError(t, LOG_DB.First(&row, pendingID).Error)
+	assert.Equal(t, 4, row.ChannelId)
+}
+
 func TestViolationFeeDoesNotFinalizePendingRequest(t *testing.T) {
 	setupInFlightLogTestDB(t)
 	c := newTestGinContext("req-violation-fee", 9)

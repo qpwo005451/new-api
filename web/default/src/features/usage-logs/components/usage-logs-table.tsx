@@ -130,7 +130,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     Math.floor(Date.now() / 1000)
   )
 
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: [
       'logs',
       logCategory,
@@ -194,7 +194,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   }, [hasPendingLogs])
 
   const columns = useColumnsByCategory(logCategory, isAdmin, pendingNowSeconds)
-  const isLoadingData = isLoading || (isFetching && !data)
+  const isLoadingData = isLoading
 
   const { table } = useDataTable({
     data: logs as Record<string, unknown>[],
@@ -206,6 +206,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     ),
     pagination,
     enableRowSelection: false,
+    getRowId: (row) => String(row.id),
     onPaginationChange,
     onColumnFiltersChange,
     manualPagination: true,
@@ -220,7 +221,6 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
       columns={columns as ColumnDef<Record<string, unknown>>[]}
       tableLabel={t('Usage Logs')}
       isLoading={isLoadingData}
-      isFetching={isFetching}
       emptyTitle={t('No Logs Found')}
       emptyDescription={t(
         'No usage logs available. Logs will appear here once API calls are made.'

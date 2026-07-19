@@ -33,7 +33,10 @@ func InitChannelCache() {
 	newChannel2advancedCustomConfig := make(map[int]*dto.AdvancedCustomConfig)
 	newChannel2balanceProtection := make(map[int]*ChannelBalanceProtection)
 	var channels []*Channel
-	DB.Find(&channels)
+	if err := DB.Find(&channels).Error; err != nil {
+		common.SysError(fmt.Sprintf("failed to load channels for cache refresh; keeping previous snapshot: %v", err))
+		return
+	}
 	for _, channel := range channels {
 		newChannelId2channel[channel.Id] = channel
 		if channel.Type == constant.ChannelTypeAdvancedCustom {
@@ -43,14 +46,17 @@ func InitChannelCache() {
 		}
 	}
 	var abilities []*Ability
-	DB.Find(&abilities)
+	if err := DB.Find(&abilities).Error; err != nil {
+		common.SysError(fmt.Sprintf("failed to load channel abilities for cache refresh; keeping previous snapshot: %v", err))
+		return
+	}
 	protections, err := GetAllChannelBalanceProtections()
 	if err != nil {
-		common.SysLog(fmt.Sprintf("failed to load channel balance protections: %v", err))
-	} else {
-		for _, protection := range protections {
-			newChannel2balanceProtection[protection.ChannelId] = protection
-		}
+		common.SysError(fmt.Sprintf("failed to load channel balance protections for cache refresh; keeping previous snapshot: %v", err))
+		return
+	}
+	for _, protection := range protections {
+		newChannel2balanceProtection[protection.ChannelId] = protection
 	}
 	groups := make(map[string]bool)
 	for _, ability := range abilities {

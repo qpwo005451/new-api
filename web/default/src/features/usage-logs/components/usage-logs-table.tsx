@@ -16,13 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import type { ColumnDef } from '@tanstack/react-table'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import {
   DataTablePage,
   DataTableRow,
@@ -32,16 +33,19 @@ import { useIsAdmin } from '@/hooks/use-admin'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 import { cn } from '@/lib/utils'
 
+import { cancelInFlightLog } from '../api'
 import {
   DEFAULT_LOGS_DATA,
   LOG_TYPE_ALL_VALUE,
   LOG_TYPE_ENUM,
 } from '../constants'
+import type { UsageLog } from '../data/schema'
 import { useColumnsByCategory } from '../lib/columns'
 import { parseLogOther } from '../lib/format'
 import { fetchLogsByCategory } from '../lib/utils'
 import type { LogCategory } from '../types'
 import { CommonLogsFilterBar } from './common-logs-filter-bar'
+import { DetailsDialog } from './dialogs/details-dialog'
 import { TaskLogsFilterBar } from './task-logs-filter-bar'
 import { UsageLogsMobileList } from './usage-logs-mobile-card'
 
@@ -80,6 +84,7 @@ interface UsageLogsTableProps {
 
 export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
   const isAdmin = useIsAdmin()
   const searchParams = route.useSearch()
 
@@ -126,9 +131,10 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   })
 
   const [autoRefresh, setAutoRefresh] = useState(false)
-  const [pendingNowSeconds, setPendingNowSeconds] = useState(() =>
-    Math.floor(Date.now() / 1000)
-  )
+  const [selectedLogId, setSelectedLogId] = useState<number | null>(null)
+  const [selectedLogSnapshot, setSelectedLogSnapshot] =
+    useState<UsageLog | null>(null)
+  const [cancelTarget, setCancelTarget] = useState<UsageLog | null>(null)
 
   const { data, isLoading } = useQuery({
     queryKey: [
@@ -141,14 +147,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
       searchParams,
       t,
     ],
-    refetchInterval: (query) => {
-      if (logCategory !== 'common') return false
-      const currentItems = query.state.data?.items ?? []
-      const hasPendingItem = currentItems.some(
-        (log) => (log as Record<string, unknown>).type === LOG_TYPE_ENUM.PENDING
-      )
-      return autoRefresh || hasPendingItem ? 3000 : false
-    },
+    refetchInterval: logCategory === 'common' && autoRefresh ? 3000 : false,
     queryFn: async () => {
       const result = await fetchLogsByCategory({
         logCategory,
@@ -176,25 +175,48 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
 
   const logs = data?.items || []
   const isCommon = logCategory === 'common'
-  const hasPendingLogs =
-    isCommon &&
-    logs.some(
-      (log) => (log as Record<string, unknown>).type === LOG_TYPE_ENUM.PENDING
-    )
+
+  const liveSelectedLog =
+    selectedLogId == null
+      ? null
+      : ((logs as UsageLog[]).find((log) => log.id === selectedLogId) ?? null)
+  const selectedLog = liveSelectedLog ?? selectedLogSnapshot
 
   useEffect(() => {
-    if (!hasPendingLogs) return
+    if (liveSelectedLog) {
+      setSelectedLogSnapshot(liveSelectedLog)
+    }
+  }, [liveSelectedLog])
 
-    setPendingNowSeconds(Math.floor(Date.now() / 1000))
-    const intervalId = window.setInterval(() => {
-      setPendingNowSeconds(Math.floor(Date.now() / 1000))
-    }, 1000)
-
-    return () => window.clearInterval(intervalId)
-  }, [hasPendingLogs])
-
-  const columns = useColumnsByCategory(logCategory, isAdmin, pendingNowSeconds)
+  const handleViewDetails = useCallback((log: UsageLog) => {
+    setSelectedLogId(log.id)
+    setSelectedLogSnapshot(log)
+  }, [])
+  const handleCancelRequest = useCallback((log: UsageLog) => {
+    setCancelTarget(log)
+  }, [])
+  const commonColumnActions = useMemo(
+    () => ({
+      onViewDetails: handleViewDetails,
+      onCancelRequest: handleCancelRequest,
+    }),
+    [handleCancelRequest, handleViewDetails]
+  )
+  const columns = useColumnsByCategory(
+    logCategory,
+    isAdmin,
+    commonColumnActions
+  )
   const isLoadingData = isLoading
+
+  const cancelMutation = useMutation({
+    mutationFn: (logId: number) => cancelInFlightLog(logId),
+    onSuccess: () => {
+      toast.success(t('Cancellation requested; the client can retry shortly'))
+      setCancelTarget(null)
+      queryClient.invalidateQueries({ queryKey: ['logs'] })
+    },
+  })
 
   const { table } = useDataTable({
     data: logs as Record<string, unknown>[],
@@ -216,72 +238,107 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   })
 
   return (
-    <DataTablePage
-      table={table}
-      columns={columns as ColumnDef<Record<string, unknown>>[]}
-      tableLabel={t('Usage Logs')}
-      isLoading={isLoadingData}
-      emptyTitle={t('No Logs Found')}
-      emptyDescription={t(
-        'No usage logs available. Logs will appear here once API calls are made.'
-      )}
-      skeletonKeyPrefix='usage-log-skeleton'
-      applyHeaderSize
-      tableClassName={cn(
-        '[&_[data-slot=table]]:text-[13px] [&_[data-slot=table]_td]:text-[13px] [&_[data-slot=table]_td_*]:text-[13px] [&_[data-slot=table]_th]:text-[13px] [&_[data-slot=table]_th_*]:text-[13px]'
-      )}
-      mobile={
-        <UsageLogsMobileList
-          table={table}
-          isLoading={isLoadingData}
-          getRowClassName={(row) => {
-            if (!isCommon || !isAdmin) return undefined
+    <>
+      <DataTablePage
+        table={table}
+        columns={columns as ColumnDef<Record<string, unknown>>[]}
+        tableLabel={t('Usage Logs')}
+        isLoading={isLoadingData}
+        emptyTitle={t('No Logs Found')}
+        emptyDescription={t(
+          'No usage logs available. Logs will appear here once API calls are made.'
+        )}
+        skeletonKeyPrefix='usage-log-skeleton'
+        applyHeaderSize
+        tableClassName={cn(
+          '[&_[data-slot=table]]:text-[13px] [&_[data-slot=table]_td]:text-[13px] [&_[data-slot=table]_td_*]:text-[13px] [&_[data-slot=table]_th]:text-[13px] [&_[data-slot=table]_th_*]:text-[13px]'
+        )}
+        mobile={
+          <UsageLogsMobileList
+            table={table}
+            isLoading={isLoadingData}
+            getRowClassName={(row) => {
+              if (!isCommon || !isAdmin) return undefined
+              const other = parseLogOther(
+                ((row.original as Record<string, unknown>).other as string) ??
+                  ''
+              )
+              return other?.admin_info?.quota_saturation
+                ? quotaSaturationRowTint
+                : undefined
+            }}
+          />
+        }
+        toolbar={
+          isCommon ? (
+            <CommonLogsFilterBar
+              table={table}
+              autoRefresh={autoRefresh}
+              onAutoRefreshChange={setAutoRefresh}
+            />
+          ) : (
+            <TaskLogsFilterBar table={table} logCategory={logCategory} />
+          )
+        }
+        renderRow={(row, helpers) => {
+          const logType = (row.original as Record<string, unknown>).type as
+            | number
+            | undefined
+          let tintClass =
+            isCommon && logType != null ? (logTypeRowTint[logType] ?? '') : ''
+          if (isCommon && isAdmin) {
             const other = parseLogOther(
               ((row.original as Record<string, unknown>).other as string) ?? ''
             )
-            return other?.admin_info?.quota_saturation
-              ? quotaSaturationRowTint
-              : undefined
+            if (other?.admin_info?.quota_saturation) {
+              tintClass = quotaSaturationRowTint
+            }
+          }
+
+          return (
+            <DataTableRow
+              key={row.id}
+              row={row}
+              className={cn('transition-colors', tintClass)}
+              getColumnClassName={(columnId) =>
+                helpers.getCellClassName(columnId, isCommon ? 'py-2' : 'py-3.5')
+              }
+            />
+          )
+        }}
+      />
+      {isCommon && selectedLog && (
+        <DetailsDialog
+          log={selectedLog}
+          isAdmin={isAdmin}
+          open={selectedLogId != null}
+          onOpenChange={(open) => {
+            if (open) return
+            setSelectedLogId(null)
+            setSelectedLogSnapshot(null)
           }}
         />
-      }
-      toolbar={
-        isCommon ? (
-          <CommonLogsFilterBar
-            table={table}
-            autoRefresh={autoRefresh}
-            onAutoRefreshChange={setAutoRefresh}
-          />
-        ) : (
-          <TaskLogsFilterBar table={table} logCategory={logCategory} />
-        )
-      }
-      renderRow={(row, helpers) => {
-        const logType = (row.original as Record<string, unknown>).type as
-          | number
-          | undefined
-        let tintClass =
-          isCommon && logType != null ? (logTypeRowTint[logType] ?? '') : ''
-        if (isCommon && isAdmin) {
-          const other = parseLogOther(
-            ((row.original as Record<string, unknown>).other as string) ?? ''
-          )
-          if (other?.admin_info?.quota_saturation) {
-            tintClass = quotaSaturationRowTint
+      )}
+      <ConfirmDialog
+        open={cancelTarget != null}
+        onOpenChange={(open) => {
+          if (!open && !cancelMutation.isPending) {
+            setCancelTarget(null)
           }
-        }
-
-        return (
-          <DataTableRow
-            key={row.id}
-            row={row}
-            className={cn('transition-colors', tintClass)}
-            getColumnClassName={(columnId) =>
-              helpers.getCellClassName(columnId, isCommon ? 'py-2' : 'py-3.5')
-            }
-          />
-        )
-      }}
-    />
+        }}
+        title={t('Cancel in-flight request?')}
+        desc={t(
+          'The upstream call will be stopped and the client will receive a retryable response when possible.'
+        )}
+        confirmText={t('Cancel request')}
+        destructive
+        isLoading={cancelMutation.isPending}
+        handleConfirm={() => {
+          if (cancelTarget) {
+            cancelMutation.mutate(cancelTarget.id)
+          }
+        }}
+      />
+    </>
   )
 }

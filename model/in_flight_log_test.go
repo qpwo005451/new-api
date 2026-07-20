@@ -136,6 +136,25 @@ func TestPendingLogSupportsDeferredChannelSelection(t *testing.T) {
 	assert.Equal(t, 4, row.ChannelId)
 }
 
+func TestGetPendingLogByIdOnlyReturnsPendingRows(t *testing.T) {
+	setupInFlightLogTestDB(t)
+	pending := &Log{
+		UserId:    1,
+		CreatedAt: common.GetTimestamp(),
+		Type:      LogTypePending,
+		Content:   "request in progress",
+	}
+	require.NoError(t, LOG_DB.Create(pending).Error)
+
+	found, err := GetPendingLogById(pending.Id)
+	require.NoError(t, err)
+	assert.Equal(t, pending.Id, found.Id)
+
+	require.NoError(t, LOG_DB.Model(&Log{}).Where("id = ?", pending.Id).Update("type", LogTypeError).Error)
+	_, err = GetPendingLogById(pending.Id)
+	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+}
+
 func TestViolationFeeDoesNotFinalizePendingRequest(t *testing.T) {
 	setupInFlightLogTestDB(t)
 	c := newTestGinContext("req-violation-fee", 9)

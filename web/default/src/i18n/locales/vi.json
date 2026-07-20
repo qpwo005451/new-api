@@ -5141,6 +5141,11 @@
     "Send one administrator notification per transition.": "Gửi một thông báo quản trị viên cho mỗi lần chuyển trạng thái.",
     "This channel type does not support balance protection.": "Loại kênh này không hỗ trợ bảo vệ số dư.",
     "Trigger balance must not be negative": "Ngưỡng bảo vệ không được là số âm",
-    "{{count}} free model(s) configured": "Đã cấu hình {{count}} mô hình miễn phí"
+    "{{count}} free model(s) configured": "Đã cấu hình {{count}} mô hình miễn phí",
+    "Cancel in-flight request": "Hủy yêu cầu đang xử lý",
+    "Cancellation requested; the client can retry shortly": "Đã yêu cầu hủy; máy khách có thể sớm thử lại",
+    "Cancel in-flight request?": "Hủy yêu cầu đang xử lý?",
+    "The upstream call will be stopped and the client will receive a retryable response when possible.": "Lệnh gọi thượng nguồn sẽ bị dừng và máy khách sẽ nhận phản hồi có thể thử lại khi có thể.",
+    "Cancel request": "Hủy yêu cầu"
   }
 }

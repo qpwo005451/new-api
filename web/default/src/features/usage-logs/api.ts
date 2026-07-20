@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
 
-import { buildQueryParams } from './lib/utils'
+import { buildQueryParams } from './lib/query-params'
 import type {
   GetLogsParams,
   GetLogsResponse,
@@ -83,6 +83,15 @@ export const getLogStats = (params: GetLogStatsParams = {}) =>
 export const getUserLogStats = (
   params: Omit<GetLogStatsParams, 'username' | 'channel'> = {}
 ) => fetchLogStats('/api/log', params, false)
+
+export async function cancelInFlightLog(logId: number): Promise<{
+  success: boolean
+  message?: string
+  data?: { retry_after: number }
+}> {
+  const res = await api.post(`/api/log/${logId}/cancel`)
+  return res.data
+}
 
 export async function getUserInfo(
   userId: number

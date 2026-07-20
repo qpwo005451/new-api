@@ -16,11 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+/* eslint-disable react/only-export-components */
 import type { ColumnDef } from '@tanstack/react-table'
-import { CircleAlert, GitBranch, Sparkles } from 'lucide-react'
-import { useState } from 'react'
+import type { TFunction } from 'i18next'
+import { CircleAlert, GitBranch, Sparkles, X } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { Button } from '@/components/design-system/button'
 import { CopyableStatusBadge, StatusBadge } from '@/components/status-badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import {
@@ -63,9 +66,13 @@ import {
   isPerCallBilling,
 } from '../../lib/utils'
 import type { LogOtherData } from '../../types'
-import { DetailsDialog } from '../dialogs/details-dialog'
 import { ModelBadge } from '../model-badge'
 import { useUsageLogsContext } from '../usage-logs-provider'
+
+export interface CommonLogsColumnActions {
+  onViewDetails: (log: UsageLog) => void
+  onCancelRequest: (log: UsageLog) => void
+}
 
 interface DetailSegment {
   text: string
@@ -76,6 +83,96 @@ interface DetailSegment {
 function getDisplayUseTime(log: UsageLog, pendingNowSeconds: number): number {
   if (log.type !== LOG_TYPE_ENUM.PENDING) return log.use_time
   return Math.max(0, pendingNowSeconds - log.created_at)
+}
+
+function TimingCell(props: { log: UsageLog }) {
+  const { t } = useTranslation()
+  const [pendingNowSeconds, setPendingNowSeconds] = useState(() =>
+    Math.floor(Date.now() / 1000)
+  )
+  const isPending = props.log.type === LOG_TYPE_ENUM.PENDING
+
+  useEffect(() => {
+    if (!isPending) return
+
+    setPendingNowSeconds(Math.floor(Date.now() / 1000))
+    const intervalId = window.setInterval(() => {
+      setPendingNowSeconds(Math.floor(Date.now() / 1000))
+    }, 1000)
+    return () => window.clearInterval(intervalId)
+  }, [isPending])
+
+  const useTime = getDisplayUseTime(props.log, pendingNowSeconds)
+  const other = parseLogOther(props.log.other)
+  const frt = other?.frt
+  const tokensPerSecond =
+    useTime > 0 && props.log.completion_tokens > 0
+      ? props.log.completion_tokens / useTime
+      : null
+  const timeVariant = getResponseTimeColor(useTime, props.log.completion_tokens)
+  const frtVariant = frt ? getFirstResponseTimeColor(frt / 1000) : 'neutral'
+
+  return (
+    <div className='flex flex-col gap-1'>
+      <div className='flex items-center gap-1.5'>
+        <StatusBadge variant={timeVariant} size='sm' className='tabular-nums'>
+          {formatUseTime(useTime)}
+        </StatusBadge>
+        {props.log.is_stream &&
+          (frt != null && frt > 0 ? (
+            <StatusBadge
+              variant={frtVariant}
+              size='sm'
+              className='tabular-nums'
+            >
+              {formatUseTime(frt / 1000)}
+            </StatusBadge>
+          ) : (
+            <StatusBadge variant='neutral' size='sm' className='tabular-nums'>
+              {isPending ? t('Waiting') : 'N/A'}
+            </StatusBadge>
+          ))}
+      </div>
+      <div className='flex items-center gap-1 text-xs leading-none'>
+        <span className='text-muted-foreground/60 text-xs leading-none'>
+          {props.log.is_stream ? t('Stream') : t('Non-stream')}
+          {tokensPerSecond != null && (
+            <>
+              {' · '}
+              <span className='tabular-nums'>
+                {Math.round(tokensPerSecond)}
+              </span>
+              {' t/s'}
+            </>
+          )}
+        </span>
+        {props.log.is_stream &&
+          other?.stream_status &&
+          other.stream_status.status !== 'ok' && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger
+                  render={<CircleAlert className='text-destructive size-3' />}
+                />
+                <TooltipContent>
+                  <div className='space-y-0.5 text-xs'>
+                    <p>
+                      {t('Stream Status')}: {t('Error')}
+                    </p>
+                    <p>{other.stream_status.end_reason || 'unknown'}</p>
+                    {(other.stream_status.error_count ?? 0) > 0 && (
+                      <p>
+                        {t('Soft Errors')}: {other.stream_status.error_count}
+                      </p>
+                    )}
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+      </div>
+    </div>
+  )
 }
 
 function formatRatioCompact(ratio: number | undefined): string {
@@ -302,12 +399,12 @@ function buildTypeDetailSegments(
   return segments
 }
 
-export function useCommonLogsColumns(
+function buildCommonLogsColumns(
   isAdmin: boolean,
-  pendingNowSeconds: number
+  actions: CommonLogsColumnActions,
+  t: TFunction,
+  groupRatios: ReturnType<typeof useGroupRatios>
 ): ColumnDef<UsageLog>[] {
-  const { t } = useTranslation()
-  const groupRatios = useGroupRatios()
   const columns: ColumnDef<UsageLog>[] = [
     {
       accessorKey: 'created_at',
@@ -680,91 +777,7 @@ export function useCommonLogsColumns(
       cell: ({ row }) => {
         const log = row.original
         if (!isTimingLogType(log.type)) return null
-
-        const useTime = getDisplayUseTime(log, pendingNowSeconds)
-        const other = parseLogOther(log.other)
-        const frt = other?.frt
-        const tokensPerSecond =
-          useTime > 0 && log.completion_tokens > 0
-            ? log.completion_tokens / useTime
-            : null
-        const timeVariant = getResponseTimeColor(useTime, log.completion_tokens)
-        const frtVariant = frt
-          ? getFirstResponseTimeColor(frt / 1000)
-          : 'neutral'
-
-        return (
-          <div className='flex flex-col gap-1'>
-            <div className='flex items-center gap-1.5'>
-              <StatusBadge
-                variant={timeVariant}
-                size='sm'
-                className='tabular-nums'
-              >
-                {formatUseTime(useTime)}
-              </StatusBadge>
-              {log.is_stream &&
-                (frt != null && frt > 0 ? (
-                  <StatusBadge
-                    variant={frtVariant}
-                    size='sm'
-                    className='tabular-nums'
-                  >
-                    {formatUseTime(frt / 1000)}
-                  </StatusBadge>
-                ) : (
-                  <StatusBadge
-                    variant='neutral'
-                    size='sm'
-                    className='tabular-nums'
-                  >
-                    {log.type === LOG_TYPE_ENUM.PENDING ? t('Waiting') : 'N/A'}
-                  </StatusBadge>
-                ))}
-            </div>
-            <div className='flex items-center gap-1 text-xs leading-none'>
-              <span className='text-muted-foreground/60 text-xs leading-none'>
-                {log.is_stream ? t('Stream') : t('Non-stream')}
-                {tokensPerSecond != null && (
-                  <>
-                    {' · '}
-                    <span className='tabular-nums'>
-                      {Math.round(tokensPerSecond)}
-                    </span>
-                    {' t/s'}
-                  </>
-                )}
-              </span>
-              {log.is_stream &&
-                other?.stream_status &&
-                other.stream_status.status !== 'ok' && (
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <CircleAlert className='text-destructive size-3' />
-                        }
-                      />
-                      <TooltipContent>
-                        <div className='space-y-0.5 text-xs'>
-                          <p>
-                            {t('Stream Status')}: {t('Error')}
-                          </p>
-                          <p>{other.stream_status.end_reason || 'unknown'}</p>
-                          {(other.stream_status.error_count ?? 0) > 0 && (
-                            <p>
-                              {t('Soft Errors')}:{' '}
-                              {other.stream_status.error_count}
-                            </p>
-                          )}
-                        </div>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                )}
-            </div>
-          </div>
-        )
+        return <TimingCell log={log} />
       },
       meta: {
         cardRole: 'primary',
@@ -882,11 +895,9 @@ export function useCommonLogsColumns(
       accessorKey: 'content',
       header: t('Details'),
       cell: function DetailsCell({ row }) {
-        const [dialogOpen, setDialogOpen] = useState(false)
         const log = row.original
         const other = parseLogOther(log.other)
         const ip = log.ip.trim()
-        const displayUseTime = getDisplayUseTime(log, pendingNowSeconds)
 
         const segments = buildDetailSegments(log, other, t, isAdmin)
         const primary = segments[0]
@@ -927,11 +938,11 @@ export function useCommonLogsColumns(
         }
 
         return (
-          <>
+          <div className='flex items-center gap-1'>
             <button
               type='button'
-              className='group flex max-w-[200px] flex-col gap-0.5 text-left text-xs'
-              onClick={() => setDialogOpen(true)}
+              className='group flex max-w-[200px] min-w-0 flex-1 flex-col gap-0.5 text-left text-xs'
+              onClick={() => actions.onViewDetails(log)}
               title={t('Click to view full details')}
             >
               {detailsContent}
@@ -941,14 +952,32 @@ export function useCommonLogsColumns(
                 </span>
               )}
             </button>
-            <DetailsDialog
-              log={log}
-              isAdmin={isAdmin}
-              displayUseTime={displayUseTime}
-              open={dialogOpen}
-              onOpenChange={setDialogOpen}
-            />
-          </>
+            {isAdmin && log.type === LOG_TYPE_ENUM.PENDING && (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant='ghost'
+                        size='icon-xs'
+                        className='text-muted-foreground hover:text-destructive shrink-0'
+                        aria-label={t('Cancel in-flight request')}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          actions.onCancelRequest(log)
+                        }}
+                      />
+                    }
+                  >
+                    <X />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {t('Cancel in-flight request')}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+          </div>
         )
       },
       size: 180,
@@ -965,4 +994,16 @@ export function useCommonLogsColumns(
   )
 
   return columns
+}
+
+export function useCommonLogsColumns(
+  isAdmin: boolean,
+  actions: CommonLogsColumnActions
+): ColumnDef<UsageLog>[] {
+  const { t } = useTranslation()
+  const groupRatios = useGroupRatios()
+  return useMemo(
+    () => buildCommonLogsColumns(isAdmin, actions, t, groupRatios),
+    [actions, groupRatios, isAdmin, t]
+  )
 }

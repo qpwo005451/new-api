@@ -1,13 +1,16 @@
 package controller
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func GetAllLogs(c *gin.Context) {
@@ -148,6 +151,43 @@ func GetLogsSelfStat(c *gin.Context) {
 		},
 	})
 	return
+}
+
+func CancelInFlightLog(c *gin.Context) {
+	logId, err := strconv.Atoi(c.Param("id"))
+	if err != nil || logId <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "invalid log id",
+		})
+		return
+	}
+
+	if _, err = model.GetPendingLogById(logId); err != nil {
+		status := http.StatusInternalServerError
+		message := err.Error()
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			status = http.StatusConflict
+			message = "request is no longer pending"
+		}
+		c.JSON(status, gin.H{
+			"success": false,
+			"message": message,
+		})
+		return
+	}
+
+	if !service.CancelInFlightRequest(logId) {
+		c.JSON(http.StatusConflict, gin.H{
+			"success": false,
+			"message": "request is not active on this instance",
+		})
+		return
+	}
+
+	common.ApiSuccess(c, gin.H{
+		"retry_after": 1,
+	})
 }
 
 // DeleteHistoryLogs is the legacy synchronous log cleanup endpoint (DELETE /api/log/).

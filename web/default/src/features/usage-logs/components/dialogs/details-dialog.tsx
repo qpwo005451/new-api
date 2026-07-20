@@ -31,6 +31,7 @@ import {
   Info,
   LogIn,
 } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/design-system/button'
@@ -43,6 +44,7 @@ import { formatBillingCurrencyFromUSD } from '@/lib/currency'
 import { formatLogQuota, formatTokens, formatUseTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
+import { LOG_TYPE_ENUM } from '../../constants'
 import type { UsageLog } from '../../data/schema'
 import {
   parseLogOther,
@@ -403,13 +405,15 @@ function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
 interface DetailsDialogProps {
   log: UsageLog
   isAdmin: boolean
-  displayUseTime?: number
   open: boolean
   onOpenChange: (open: boolean) => void
 }
 
 export function DetailsDialog(props: DetailsDialogProps) {
   const { t } = useTranslation()
+  const [pendingNowSeconds, setPendingNowSeconds] = useState(() =>
+    Math.floor(Date.now() / 1000)
+  )
   const { copiedText, copyToClipboard } = useCopyToClipboard({ notify: false })
   const details = props.log.content ?? ''
   const other = parseLogOther(props.log.other)
@@ -434,7 +438,10 @@ export function DetailsDialog(props: DetailsDialogProps) {
     !!other?.expr_b64
   const hasAudioTokens = other?.ws || other?.audio
   const showTiming = isTimingLogType(props.log.type)
-  const displayUseTime = props.displayUseTime ?? props.log.use_time
+  const isPending = props.log.type === LOG_TYPE_ENUM.PENDING
+  const displayUseTime = isPending
+    ? Math.max(0, pendingNowSeconds - props.log.created_at)
+    : props.log.use_time
   const showAdminIp =
     !!props.log.ip && (showTiming || (props.isAdmin && isTopup))
   const adminInfo = other?.admin_info
@@ -543,6 +550,16 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const useChannel = other?.admin_info?.use_channel
   const channelChain =
     useChannel && useChannel.length > 0 ? useChannel.join(' → ') : undefined
+
+  useEffect(() => {
+    if (!props.open || !isPending) return
+
+    setPendingNowSeconds(Math.floor(Date.now() / 1000))
+    const intervalId = window.setInterval(() => {
+      setPendingNowSeconds(Math.floor(Date.now() / 1000))
+    }, 1000)
+    return () => window.clearInterval(intervalId)
+  }, [isPending, props.open])
 
   return (
     <Dialog

@@ -5141,6 +5141,11 @@
     "Send one administrator notification per transition.": "每次状态切换只发送一条管理员通知。",
     "This channel type does not support balance protection.": "该渠道类型不支持余额保护。",
     "Trigger balance must not be negative": "保护阈值不能为负数",
-    "{{count}} free model(s) configured": "已配置 {{count}} 个免费模型"
+    "{{count}} free model(s) configured": "已配置 {{count}} 个免费模型",
+    "Cancel in-flight request": "中止进行中的请求",
+    "Cancellation requested; the client can retry shortly": "已请求中止；客户端可稍后重试",
+    "Cancel in-flight request?": "中止这个进行中的请求？",
+    "The upstream call will be stopped and the client will receive a retryable response when possible.": "系统将停止上游调用，并尽可能向客户端返回可重试响应。",
+    "Cancel request": "中止请求"
   }
 }

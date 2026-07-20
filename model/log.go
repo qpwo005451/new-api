@@ -864,6 +864,17 @@ func TouchPendingLogChannel(c *gin.Context, channelId int) {
 	}
 }
 
+func GetPendingLogById(id int) (*Log, error) {
+	if id <= 0 || !InFlightUsageLogSupported() {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var log Log
+	if err := LOG_DB.Where("id = ? AND type = ?", id, LogTypePending).First(&log).Error; err != nil {
+		return nil, err
+	}
+	return &log, nil
+}
+
 func isViolationFeeLog(other map[string]interface{}) bool {
 	if other == nil {
 		return false

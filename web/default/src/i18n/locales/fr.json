@@ -5141,6 +5141,11 @@
     "Send one administrator notification per transition.": "Envoyer une notification administrateur par transition.",
     "This channel type does not support balance protection.": "Ce type de canal ne prend pas en charge la protection du solde.",
     "Trigger balance must not be negative": "Le seuil de protection ne peut pas être négatif",
-    "{{count}} free model(s) configured": "{{count}} modèle(s) gratuit(s) configuré(s)"
+    "{{count}} free model(s) configured": "{{count}} modèle(s) gratuit(s) configuré(s)",
+    "Cancel in-flight request": "Annuler la requête en cours",
+    "Cancellation requested; the client can retry shortly": "Annulation demandée ; le client pourra réessayer sous peu",
+    "Cancel in-flight request?": "Annuler la requête en cours ?",
+    "The upstream call will be stopped and the client will receive a retryable response when possible.": "L’appel en amont sera arrêté et le client recevra si possible une réponse permettant de réessayer.",
+    "Cancel request": "Annuler la requête"
   }
 }

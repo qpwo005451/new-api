@@ -5141,6 +5141,11 @@
     "Send one administrator notification per transition.": "Send one administrator notification per transition.",
     "This channel type does not support balance protection.": "This channel type does not support balance protection.",
     "Trigger balance must not be negative": "Trigger balance must not be negative",
-    "{{count}} free model(s) configured": "{{count}} free model(s) configured"
+    "{{count}} free model(s) configured": "{{count}} free model(s) configured",
+    "Cancel in-flight request": "Cancel in-flight request",
+    "Cancellation requested; the client can retry shortly": "Cancellation requested; the client can retry shortly",
+    "Cancel in-flight request?": "Cancel in-flight request?",
+    "The upstream call will be stopped and the client will receive a retryable response when possible.": "The upstream call will be stopped and the client will receive a retryable response when possible.",
+    "Cancel request": "Cancel request"
   }
 }

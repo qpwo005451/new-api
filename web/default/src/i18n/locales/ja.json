@@ -5141,6 +5141,11 @@
     "Send one administrator notification per transition.": "状態変更ごとに管理者通知を1件送信します。",
     "This channel type does not support balance protection.": "このチャネル種別は残高保護に対応していません。",
     "Trigger balance must not be negative": "保護しきい値は負の値にできません",
-    "{{count}} free model(s) configured": "無料モデルを {{count}} 件設定済み"
+    "{{count}} free model(s) configured": "無料モデルを {{count}} 件設定済み",
+    "Cancel in-flight request": "進行中のリクエストを中止",
+    "Cancellation requested; the client can retry shortly": "中止を要求しました。クライアントはまもなく再試行できます",
+    "Cancel in-flight request?": "進行中のリクエストを中止しますか？",
+    "The upstream call will be stopped and the client will receive a retryable response when possible.": "上流呼び出しを停止し、可能な場合はクライアントへ再試行可能な応答を返します。",
+    "Cancel request": "リクエストを中止"
   }
 }

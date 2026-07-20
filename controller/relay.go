@@ -90,6 +90,18 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if newAPIError != nil {
 			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
+			if newAPIError.GetErrorCode() == types.ErrorCodeRequestCancelled {
+				c.Header("Retry-After", "1")
+				if c.Writer.Written() {
+					if common.GetContextKeyBool(c, constant.ContextKeyIsStream) {
+						writeRetryableCancellationStream(c, relayFormat, newAPIError)
+					}
+					return
+				}
+				c.Writer.Header().Del("Transfer-Encoding")
+				c.Writer.Header().Del("X-Accel-Buffering")
+				c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+			}
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:
 				helper.WssError(c, ws, newAPIError.ToOpenAIError())
@@ -180,6 +192,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				"request_path": c.Request.URL.Path,
 			},
 		})
+		pendingLogId := common.GetContextKeyInt(c, constant.ContextKeyPendingLogId)
+		if pendingLogId > 0 {
+			service.RegisterInFlightRequest(c, pendingLogId)
+			defer service.UnregisterInFlightRequest(pendingLogId)
+		}
 	}
 
 	defer func() {
@@ -204,6 +221,24 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.LastError = nil
 
 	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+		if service.IsInFlightRequestCancelled(c) {
+			newAPIError = service.NewInFlightRequestCancelledError()
+			relayInfo.LastError = newAPIError
+			processChannelError(
+				c,
+				*types.NewChannelError(
+					c.GetInt("channel_id"),
+					c.GetInt("channel_type"),
+					c.GetString("channel_name"),
+					common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey),
+					common.GetContextKeyString(c, constant.ContextKeyChannelKey),
+					c.GetBool("auto_ban"),
+				),
+				newAPIError,
+				false,
+			)
+			break
+		}
 		relayInfo.RetryIndex = retryParam.GetRetry()
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
 		if channelErr != nil {
@@ -237,6 +272,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			newAPIError = relayHandler(c, relayInfo)
 		}
 
+		if service.IsInFlightRequestCancelled(c) {
+			newAPIError = service.NewInFlightRequestCancelledError()
+		}
 		if newAPIError == nil {
 			relayInfo.LastError = nil
 			return
@@ -248,6 +286,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		willRetry := shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())
 		if willRetry {
 			willRetry = waitTransientRetryBackoff(c, newAPIError.StatusCode, retryParam.GetRetry())
+		}
+		if service.IsInFlightRequestCancelled(c) {
+			newAPIError = service.NewInFlightRequestCancelledError()
+			relayInfo.LastError = newAPIError
+			willRetry = false
 		}
 		processChannelError(
 			c,
@@ -402,31 +445,36 @@ func waitTransientRetryBackoff(c *gin.Context, statusCode int, retryIndex int) b
 	select {
 	case <-timer.C:
 		return true
-	case <-c.Request.Context().Done():
+	case <-service.RelayRequestContext(c).Done():
 		return false
 	}
 }
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, intermediateRetry bool) {
-	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.Error())))
-	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
-	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
-	protectionActivated := false
-	if isBalanceExhaustionError(err) {
-		channel, channelErr := model.CacheGetChannel(channelError.ChannelId)
-		if channelErr == nil && activateBalanceProtectionForChannel(channel, err.ErrorWithStatusCode()) {
-			protectionActivated = true
+	requestCancelled := err.GetErrorCode() == types.ErrorCodeRequestCancelled
+	if requestCancelled {
+		logger.LogWarn(c, fmt.Sprintf("request cancelled by administrator (channel #%d)", channelError.ChannelId))
+	} else {
+		logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.Error())))
+		// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
+		// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
+		protectionActivated := false
+		if isBalanceExhaustionError(err) {
+			channel, channelErr := model.CacheGetChannel(channelError.ChannelId)
+			if channelErr == nil && activateBalanceProtectionForChannel(channel, err.ErrorWithStatusCode()) {
+				protectionActivated = true
+				gopool.Go(func() {
+					if _, checkErr := checkChannelBalanceWithProtection(channel); checkErr != nil {
+						common.SysLog(fmt.Sprintf("balance protection follow-up check failed: channel_id=%d error=%v", channel.Id, checkErr))
+					}
+				})
+			}
+		}
+		if !protectionActivated && service.ShouldDisableChannel(err) && channelError.AutoBan {
 			gopool.Go(func() {
-				if _, checkErr := checkChannelBalanceWithProtection(channel); checkErr != nil {
-					common.SysLog(fmt.Sprintf("balance protection follow-up check failed: channel_id=%d error=%v", channel.Id, checkErr))
-				}
+				service.DisableChannel(channelError, err.ErrorWithStatusCode())
 			})
 		}
-	}
-	if !protectionActivated && service.ShouldDisableChannel(err) && channelError.AutoBan {
-		gopool.Go(func() {
-			service.DisableChannel(channelError, err.ErrorWithStatusCode())
-		})
 	}
 
 	if (constant.ErrorLogEnabled && types.IsRecordErrorLog(err)) ||
@@ -451,6 +499,9 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		if intermediateRetry {
 			other["intermediate_retry"] = true
 		}
+		if requestCancelled {
+			other["cancelled_by_admin"] = true
+		}
 		adminInfo := make(map[string]interface{})
 		adminInfo["use_channel"] = c.GetStringSlice("use_channel")
 		isMultiKey := common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey)
@@ -468,6 +519,49 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
 	}
 
+}
+
+func writeRetryableCancellationStream(c *gin.Context, relayFormat types.RelayFormat, newAPIError *types.NewAPIError) {
+	if c == nil || c.Writer == nil || newAPIError == nil {
+		return
+	}
+
+	openAIError := newAPIError.ToOpenAIError()
+	var payload any
+	switch relayFormat {
+	case types.RelayFormatClaude:
+		payload = gin.H{
+			"type":        "error",
+			"error":       newAPIError.ToClaudeError(),
+			"retry_after": 1,
+		}
+	case types.RelayFormatOpenAIResponses:
+		payload = gin.H{
+			"type":        "error",
+			"code":        openAIError.Code,
+			"message":     openAIError.Message,
+			"param":       openAIError.Param,
+			"retry_after": 1,
+		}
+	default:
+		payload = gin.H{
+			"error":       openAIError,
+			"retry_after": 1,
+		}
+	}
+
+	data, err := common.Marshal(payload)
+	if err != nil {
+		logger.LogError(c, "failed to marshal retryable cancellation stream event: "+err.Error())
+		return
+	}
+	helper.ExtendWriteDeadline(c)
+	if relayFormat == types.RelayFormatClaude || relayFormat == types.RelayFormatOpenAIResponses {
+		_, _ = fmt.Fprintf(c.Writer, "event: error\ndata: %s\n\n", data)
+	} else {
+		_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", data)
+	}
+	c.Writer.Flush()
 }
 
 func RelayMidjourney(c *gin.Context) {

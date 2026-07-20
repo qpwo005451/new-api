@@ -5141,6 +5141,11 @@
     "Send one administrator notification per transition.": "Отправлять одно уведомление администратору при каждом изменении состояния.",
     "This channel type does not support balance protection.": "Этот тип канала не поддерживает защиту баланса.",
     "Trigger balance must not be negative": "Порог защиты не может быть отрицательным",
-    "{{count}} free model(s) configured": "Настроено бесплатных моделей: {{count}}"
+    "{{count}} free model(s) configured": "Настроено бесплатных моделей: {{count}}",
+    "Cancel in-flight request": "Отменить выполняющийся запрос",
+    "Cancellation requested; the client can retry shortly": "Запрошена отмена; клиент вскоре сможет повторить запрос",
+    "Cancel in-flight request?": "Отменить выполняющийся запрос?",
+    "The upstream call will be stopped and the client will receive a retryable response when possible.": "Вызов вышестоящего сервиса будет остановлен, а клиент по возможности получит ответ, допускающий повтор.",
+    "Cancel request": "Отменить запрос"
   }
 }

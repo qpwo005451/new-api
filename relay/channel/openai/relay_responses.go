@@ -82,6 +82,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	responseID := helper.GetResponseID(c)
 	firstOutputSeen := false
 	toolOutputIndex := 0
+	terminalEventSeen := false
+	var streamErr *types.NewAPIError
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 
@@ -149,7 +151,35 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		}
 		sendResponsesStreamData(c, streamResponse, data)
 		switch streamResponse.Type {
-		case "response.completed":
+		case "error":
+			if streamResponse.Message == "" {
+				return
+			}
+			streamErr = types.WithOpenAIError(types.OpenAIError{
+				Message: streamResponse.Message,
+				Type:    "upstream_error",
+				Code:    streamResponse.Code,
+				Param:   streamResponse.Param,
+			}, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+			sr.Error(streamErr)
+		case "response.failed", "response.error":
+			if streamErr == nil && streamResponse.Response != nil {
+				if oaiErr := streamResponse.Response.GetOpenAIError(); oaiErr != nil && oaiErr.Message != "" {
+					streamErr = types.WithOpenAIError(*oaiErr, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+				}
+			}
+			if streamErr == nil {
+				streamErr = types.NewOpenAIError(
+					fmt.Errorf("responses stream error: %s", streamResponse.Type),
+					types.ErrorCodeBadResponse,
+					http.StatusBadGateway,
+					types.ErrOptionWithSkipRetry(),
+				)
+			}
+			sr.Stop(streamErr)
+			return
+		case "response.completed", "response.done", "response.incomplete":
+			terminalEventSeen = true
 			if streamResponse.Response != nil {
 				if streamResponse.Response.Usage != nil {
 					if streamResponse.Response.Usage.InputTokens != 0 {
@@ -192,6 +222,22 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			}
 		}
 	})
+
+	if streamErr != nil {
+		return usage, streamErr
+	}
+	if !terminalEventSeen {
+		streamErr = types.NewOpenAIError(
+			fmt.Errorf("responses stream ended before response.completed"),
+			types.ErrorCodeBadResponse,
+			http.StatusBadGateway,
+			types.ErrOptionWithSkipRetry(),
+		)
+		if info.StreamStatus != nil {
+			info.StreamStatus.RecordError(streamErr.Error())
+		}
+		return usage, streamErr
+	}
 
 	if usage.CompletionTokens == 0 {
 		// 计算输出文本的 token 数量

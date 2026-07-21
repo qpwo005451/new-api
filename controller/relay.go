@@ -247,6 +247,29 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 
+		inputTransientRetryTarget := isInputTransientRetryTarget(channel, relayInfo.OriginModelName)
+		if inputTransientRetryTarget {
+			waited, waitErr := inputTransientRetryGateFor(channel.Id).wait(service.RelayRequestContext(c))
+			if waitErr != nil {
+				if service.IsInFlightRequestCancelled(c) {
+					newAPIError = service.NewInFlightRequestCancelledError()
+				} else {
+					newAPIError = types.NewErrorWithStatusCode(waitErr, types.ErrorCodeDoRequestFailed, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
+				}
+				relayInfo.LastError = newAPIError
+				processChannelError(
+					c,
+					*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
+					newAPIError,
+					false,
+				)
+				break
+			}
+			if waited > 0 {
+				logger.LogInfo(c, fmt.Sprintf("Input transient retry gate waited %s (channel #%d, model %s)", waited.Round(time.Millisecond), channel.Id, relayInfo.OriginModelName))
+			}
+		}
+
 		addUsedChannel(c, channel.Id)
 		model.TouchPendingLogChannel(c, channel.Id)
 		bodyStorage, bodyErr := common.GetBodyStorage(c)
@@ -283,9 +306,20 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
 
+		inputTransientCooldown := time.Duration(0)
+		if inputTransientRetryTarget && isInputTransientRetryError(newAPIError) {
+			inputTransientCooldown = inputTransientRetryCooldown(retryParam.GetRetry())
+			inputTransientRetryGateFor(channel.Id).setCooldown(time.Now(), inputTransientCooldown)
+			logger.LogInfo(c, fmt.Sprintf("Input transient retry cooldown %s (channel #%d, model %s, status %d)", inputTransientCooldown, channel.Id, relayInfo.OriginModelName, newAPIError.StatusCode))
+		}
+
 		willRetry := shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())
 		if willRetry {
-			willRetry = waitTransientRetryBackoff(c, newAPIError.StatusCode, retryParam.GetRetry())
+			if inputTransientCooldown == 0 {
+				willRetry = waitTransientRetryBackoff(c, newAPIError.StatusCode, retryParam.GetRetry())
+			}
+		} else if inputTransientCooldown > 0 {
+			c.Header("Retry-After", fmt.Sprintf("%d", inputTransientRetryGateFor(channel.Id).retryAfterSeconds(time.Now())))
 		}
 		if service.IsInFlightRequestCancelled(c) {
 			newAPIError = service.NewInFlightRequestCancelledError()

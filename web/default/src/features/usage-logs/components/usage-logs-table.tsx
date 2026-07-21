@@ -130,7 +130,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     ],
   })
 
-  const [autoRefresh, setAutoRefresh] = useState(false)
+  const [autoRefresh, setAutoRefresh] = useState(true)
   const [selectedLogId, setSelectedLogId] = useState<number | null>(null)
   const [selectedLogSnapshot, setSelectedLogSnapshot] =
     useState<UsageLog | null>(null)

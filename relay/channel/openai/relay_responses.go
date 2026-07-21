@@ -35,6 +35,11 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
 
+	if normalizedResponseBody, normalized := normalizeGrok45ResponsesToolArguments(responseBody, info); normalized {
+		responseBody = normalizedResponseBody
+		logger.LogWarn(c, "normalized integral decimal in Grok 4.5 shell_command timeout_ms")
+	}
+
 	if responsesResponse.HasImageGenerationCall() {
 		c.Set("image_generation_call", true)
 		c.Set("image_generation_call_quality", responsesResponse.GetQuality())
@@ -84,6 +89,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	toolOutputIndex := 0
 	terminalEventSeen := false
 	var streamErr *types.NewAPIError
+	grok45ToolArgumentNormalizer := newGrok45ToolArgumentStreamNormalizer(info)
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 
@@ -149,7 +155,19 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 				return
 			}
 		}
-		sendResponsesStreamData(c, streamResponse, data)
+
+		streamEvents, normalized, err := grok45ToolArgumentNormalizer.transform(streamResponse, data)
+		if err != nil {
+			logger.LogError(c, "failed to normalize Grok 4.5 function call arguments: "+err.Error())
+			streamEvents = []grok45ResponsesStreamEvent{{response: streamResponse, data: data}}
+		}
+		if normalized {
+			logger.LogWarn(c, "normalized integral decimal in Grok 4.5 shell_command timeout_ms")
+		}
+		for _, streamEvent := range streamEvents {
+			sendResponsesStreamData(c, streamEvent.response, streamEvent.data)
+		}
+
 		switch streamResponse.Type {
 		case "error":
 			if streamResponse.Message == "" {

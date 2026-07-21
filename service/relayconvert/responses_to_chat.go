@@ -150,6 +150,9 @@ func UsageFromResponsesUsage(src *dto.Usage) *dto.Usage {
 	}
 	if src.InputTokensDetails != nil {
 		usage.PromptTokensDetails.CachedTokens = src.InputTokensDetails.CachedTokens
+		usage.PromptTokensDetails.CachedCreationTokens = src.InputTokensDetails.CachedCreationTokens
+		usage.PromptTokensDetails.CacheWriteTokens = src.InputTokensDetails.CacheWriteTokens
+		usage.PromptTokensDetails.TextTokens = src.InputTokensDetails.TextTokens
 		usage.PromptTokensDetails.ImageTokens = src.InputTokensDetails.ImageTokens
 		usage.PromptTokensDetails.AudioTokens = src.InputTokensDetails.AudioTokens
 	}
@@ -471,6 +474,23 @@ func (s *ResponsesToChatStreamState) ensureToolForEvent(event *dto.ResponsesStre
 	}
 
 	tool := s.toolByKey[key]
+	if tool == nil {
+		if itemID := responseStreamEventItemID(event); itemID != "" {
+			if existingKey := s.itemIDToKey[itemID]; existingKey != "" {
+				tool = s.toolByKey[existingKey]
+			}
+		}
+		if tool == nil {
+			if callID := strings.TrimSpace(event.Item.CallId); callID != "" {
+				if existingKey := s.callIDToKey[callID]; existingKey != "" {
+					tool = s.toolByKey[existingKey]
+				}
+			}
+		}
+		if tool != nil {
+			s.toolByKey[key] = tool
+		}
+	}
 	if tool == nil {
 		tool = &responsesStreamTool{Key: key, Index: s.nextToolIndex}
 		s.nextToolIndex++

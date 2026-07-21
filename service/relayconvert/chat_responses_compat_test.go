@@ -319,6 +319,64 @@ func TestResponsesStreamEventToChatChunksUsesTerminalDoneOutput(t *testing.T) {
 	assert.Equal(t, "tool_calls", *chunks[3].Choices[0].FinishReason)
 }
 
+func TestResponsesStreamEventToChatChunksDoesNotResendToolOnTerminalOutput(t *testing.T) {
+	state := newTestResponsesStreamState()
+	outputIndex := 0
+
+	var chunks []dto.ChatCompletionsStreamResponse
+	chunks = append(chunks, mustStreamChunks(t, state, &dto.ResponsesStreamResponse{Type: responsesEventCreated})...)
+	chunks = append(chunks, mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type:        responsesEventOutputItemAdded,
+		OutputIndex: &outputIndex,
+		Item: &dto.ResponsesOutput{
+			Type:   responsesOutputTypeFunctionCall,
+			ID:     "fc_1",
+			CallId: "call_1",
+			Name:   "lookup",
+		},
+	})...)
+	chunks = append(chunks, mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type:        responsesEventFunctionArgsDelta,
+		OutputIndex: &outputIndex,
+		Delta:       `{"q":"x"}`,
+	})...)
+	chunks = append(chunks, mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type: responsesEventCompleted,
+		Response: &dto.OpenAIResponsesResponse{
+			Status: []byte(`"completed"`),
+			Output: []dto.ResponsesOutput{
+				{
+					Type:      responsesOutputTypeFunctionCall,
+					ID:        "fc_1",
+					CallId:    "call_1",
+					Name:      "lookup",
+					Arguments: []byte(`{"q":"x"}`),
+				},
+			},
+		},
+	})...)
+
+	totalArgs := ""
+	toolIndexes := map[int]bool{}
+	var finishReason string
+	for _, chunk := range chunks {
+		for _, choice := range chunk.Choices {
+			for _, tc := range choice.Delta.ToolCalls {
+				require.NotNil(t, tc.Index)
+				toolIndexes[*tc.Index] = true
+				totalArgs += tc.Function.Arguments
+			}
+			if choice.FinishReason != nil {
+				finishReason = *choice.FinishReason
+			}
+		}
+	}
+
+	assert.Equal(t, map[int]bool{0: true}, toolIndexes)
+	assert.Equal(t, `{"q":"x"}`, totalArgs)
+	assert.Equal(t, "tool_calls", finishReason)
+}
+
 func TestFinalizeResponsesToChatStreamFlushesPendingDeltaOnlyArguments(t *testing.T) {
 	state := newTestResponsesStreamState()
 	outputIndex := 2
@@ -534,6 +592,24 @@ func TestChatCompletionsStreamToResponsesEventsAggregatesUsageAndToolArgs(t *tes
 	require.Len(t, events[9].Payload.Response.Output, 2)
 	assert.Equal(t, "hello", events[9].Payload.Response.Output[0].Content[0].Text)
 	assert.Equal(t, `"{\"q\":\"x\"}"`, string(events[9].Payload.Response.Output[1].Arguments))
+}
+
+func TestUsageConversionsPreserveNativeCacheWriteTokens(t *testing.T) {
+	chatUsage := &dto.Usage{
+		PromptTokens:     100,
+		CompletionTokens: 10,
+		TotalTokens:      110,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CacheWriteTokens: 80,
+		},
+	}
+
+	responsesUsage := UsageFromChatUsage(chatUsage)
+	require.NotNil(t, responsesUsage.InputTokensDetails)
+	require.Equal(t, 80, responsesUsage.InputTokensDetails.CacheWriteTokens)
+
+	roundTrip := UsageFromResponsesUsage(responsesUsage)
+	require.Equal(t, 80, roundTrip.PromptTokensDetails.CacheWriteTokens)
 }
 
 func assistantMessageWithTool(content string, id string, name string, args string) dto.Message {

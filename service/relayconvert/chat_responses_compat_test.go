@@ -594,6 +594,24 @@ func TestChatCompletionsStreamToResponsesEventsAggregatesUsageAndToolArgs(t *tes
 	assert.Equal(t, `"{\"q\":\"x\"}"`, string(events[9].Payload.Response.Output[1].Arguments))
 }
 
+func TestUsageConversionsPreserveNativeCacheWriteTokens(t *testing.T) {
+	chatUsage := &dto.Usage{
+		PromptTokens:     100,
+		CompletionTokens: 10,
+		TotalTokens:      110,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CacheWriteTokens: 80,
+		},
+	}
+
+	responsesUsage := UsageFromChatUsage(chatUsage)
+	require.NotNil(t, responsesUsage.InputTokensDetails)
+	require.Equal(t, 80, responsesUsage.InputTokensDetails.CacheWriteTokens)
+
+	roundTrip := UsageFromResponsesUsage(responsesUsage)
+	require.Equal(t, 80, roundTrip.PromptTokensDetails.CacheWriteTokens)
+}
+
 func assistantMessageWithTool(content string, id string, name string, args string) dto.Message {
 	msg := dto.Message{Role: "assistant", Content: content}
 	msg.SetToolCalls([]dto.ToolCallRequest{

@@ -198,7 +198,7 @@ func TestOaiResponsesHandlerNormalizesGrok45ShellCommandTimeout(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	t.Cleanup(func() { gin.SetMode(oldMode) })
 
-	body := `{"id":"resp_1","model":"grok-4.5","output":[{"type":"function_call","id":"fc_1","status":"completed","call_id":"call_1","name":"shell_command","arguments":"{\"command\":\"echo ok\",\"timeout_ms\":60000.0}"}],"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}`
+	body := `{"id":"resp_1","model":"grok-4.5","output":[{"type":"function_call","id":"fc_1","status":"completed","call_id":"call_1","name":"shell_command","arguments":"{\"command\":\"echo ok\",\"timeout_ms\":60000.0}"}],"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5,"input_tokens_details":{"cache_write_tokens":2}}}`
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
@@ -213,6 +213,7 @@ func TestOaiResponsesHandlerNormalizesGrok45ShellCommandTimeout(t *testing.T) {
 	require.NotNil(t, usage)
 	require.Nil(t, responseErr)
 	require.Equal(t, 5, usage.TotalTokens)
+	require.Equal(t, 2, usage.PromptTokensDetails.CacheWriteTokens)
 	require.NotContains(t, recorder.Body.String(), "60000.0")
 	require.Contains(t, recorder.Body.String(), `\"timeout_ms\":60000`)
 }

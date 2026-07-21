@@ -209,6 +209,57 @@ func TestCalculateTextQuotaSummaryHandlesLegacyClaudeDerivedOpenAIUsage(t *testi
 	require.Equal(t, 1624, summary.Quota)
 }
 
+func TestCalculateTextQuotaSummaryBillsOpenAICacheWriteTokens(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	relayInfo := &relaycommon.RelayInfo{
+		RelayFormat:     types.RelayFormatOpenAI,
+		OriginModelName: "gpt-5.6-sol",
+		PriceData: types.PriceData{
+			ModelRatio:         1,
+			CompletionRatio:    2,
+			CacheRatio:         0.1,
+			CacheCreationRatio: 1.25,
+			GroupRatioInfo:     types.GroupRatioInfo{GroupRatio: 1},
+		},
+		StartTime: time.Now(),
+	}
+
+	t.Run("uncached remainder stays positive", func(t *testing.T) {
+		usage := &dto.Usage{
+			PromptTokens:     1473,
+			CompletionTokens: 19,
+			PromptTokensDetails: dto.InputTokenDetails{
+				CacheWriteTokens: 1470,
+			},
+		}
+
+		summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+		require.Equal(t, 1470, summary.CacheCreationTokens)
+		require.Equal(t, 1879, summary.Quota)
+	})
+
+	t.Run("overlapping prefixes clamp the remainder to zero", func(t *testing.T) {
+		usage := &dto.Usage{
+			PromptTokens:     3619,
+			CompletionTokens: 36,
+			PromptTokensDetails: dto.InputTokenDetails{
+				CachedTokens:     2921,
+				CacheWriteTokens: 3616,
+			},
+		}
+
+		summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+		require.Equal(t, 3619, summary.PromptTokens)
+		require.Equal(t, 3616, summary.CacheCreationTokens)
+		require.Equal(t, 4884, summary.Quota)
+	})
+}
+
 func TestCalculateTextQuotaSummarySeparatesOpenRouterCacheReadFromPromptBilling(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()

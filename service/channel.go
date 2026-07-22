@@ -78,7 +78,35 @@ func MultiKeyRecoveryIntervalMinutes() int {
 }
 
 func ShouldTrackMultiKeyFailure(err *types.NewAPIError) bool {
-	return MultiKeyFailureThreshold() > 0 && shouldDisableChannelByError(err)
+	if MultiKeyFailureThreshold() < 1 || err == nil {
+		return false
+	}
+	if types.IsChannelError(err) {
+		return true
+	}
+	if types.IsSkipRetryError(err) {
+		return false
+	}
+
+	switch err.StatusCode {
+	case 401, 403, 408, 429:
+		return true
+	}
+	if err.StatusCode >= 500 && err.StatusCode <= 599 {
+		return true
+	}
+
+	lowerMessage := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"api key not valid",
+		"invalid api key",
+		"invalid_api_key",
+	} {
+		if strings.Contains(lowerMessage, marker) {
+			return true
+		}
+	}
+	return shouldDisableChannelByError(err)
 }
 
 func ShouldDisableChannel(err *types.NewAPIError) bool {

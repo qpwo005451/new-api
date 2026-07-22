@@ -48,6 +48,26 @@ func TestShouldTrackMultiKeyFailureClassifiesKeyHealthErrors(t *testing.T) {
 			expected: false,
 		},
 		{
+			name: "upstream skip retry server error",
+			err: types.NewOpenAIError(
+				errors.New("upstream unavailable"),
+				"mock_upstream_unavailable",
+				http.StatusInternalServerError,
+				types.ErrOptionWithSkipRetry(),
+			),
+			expected: true,
+		},
+		{
+			name: "local channel override error",
+			err: types.NewOpenAIError(
+				errors.New("invalid channel override"),
+				types.ErrorCodeChannelParamOverrideInvalid,
+				http.StatusInternalServerError,
+				types.ErrOptionWithSkipRetry(),
+			),
+			expected: false,
+		},
+		{
 			name:     "nil error",
 			err:      nil,
 			expected: false,

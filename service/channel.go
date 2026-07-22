@@ -81,11 +81,32 @@ func ShouldTrackMultiKeyFailure(err *types.NewAPIError) bool {
 	if MultiKeyFailureThreshold() < 1 || err == nil {
 		return false
 	}
+
+	switch err.GetErrorCode() {
+	case types.ErrorCodeInvalidRequest,
+		types.ErrorCodeSensitiveWordsDetected,
+		types.ErrorCodeViolationFeeGrokCSAM,
+		types.ErrorCodeRequestCancelled,
+		types.ErrorCodeCountTokenFailed,
+		types.ErrorCodeModelPriceError,
+		types.ErrorCodeInvalidApiType,
+		types.ErrorCodeJsonMarshalFailed,
+		types.ErrorCodeGetChannelFailed,
+		types.ErrorCodeGenRelayInfoFailed,
+		types.ErrorCodeChannelParamOverrideInvalid,
+		types.ErrorCodeChannelHeaderOverrideInvalid,
+		types.ErrorCodeChannelModelMappedError,
+		types.ErrorCodeReadRequestBodyFailed,
+		types.ErrorCodeConvertRequestFailed,
+		types.ErrorCodeAccessDenied,
+		types.ErrorCodeBadRequestBody,
+		types.ErrorCodePromptBlocked,
+		types.ErrorCodeInsufficientUserQuota,
+		types.ErrorCodePreConsumeTokenQuotaFailed:
+		return false
+	}
 	if types.IsChannelError(err) {
 		return true
-	}
-	if types.IsSkipRetryError(err) {
-		return false
 	}
 
 	switch err.StatusCode {

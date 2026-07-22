@@ -2,11 +2,35 @@ package controller
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestGetChannelPreservesPinnedMultiKeyMetadata(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("channel_id", 31)
+	ctx.Set("channel_type", 1)
+	ctx.Set("channel_name", "multi-key")
+	ctx.Set("auto_ban", true)
+	common.SetContextKey(ctx, constant.ContextKeyChannelIsMultiKey, true)
+
+	channel, err := getChannel(ctx, &relaycommon.RelayInfo{}, &service.RetryParam{})
+
+	require.Nil(t, err)
+	require.NotNil(t, channel)
+	assert.True(t, channel.ChannelInfo.IsMultiKey)
+	assert.True(t, channel.GetAutoBan())
+}
 
 func TestTransientRetryBackoff(t *testing.T) {
 	tests := []struct {

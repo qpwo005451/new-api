@@ -399,9 +399,12 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 			autoBanInt = 0
 		}
 		return &model.Channel{
-			Id:      c.GetInt("channel_id"),
-			Type:    c.GetInt("channel_type"),
-			Name:    c.GetString("channel_name"),
+			Id:   c.GetInt("channel_id"),
+			Type: c.GetInt("channel_type"),
+			Name: c.GetString("channel_name"),
+			ChannelInfo: model.ChannelInfo{
+				IsMultiKey: common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey),
+			},
 			AutoBan: &autoBanInt,
 		}, nil
 	}

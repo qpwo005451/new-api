@@ -66,6 +66,7 @@ func parseStatusFilter(statusParam string) int {
 
 func clearChannelInfo(channel *model.Channel) {
 	if channel.ChannelInfo.IsMultiKey {
+		channel.ChannelInfo.MultiKeyFailureCount = nil
 		channel.ChannelInfo.MultiKeyDisabledReason = nil
 		channel.ChannelInfo.MultiKeyDisabledTime = nil
 	}
@@ -1460,6 +1461,7 @@ type MultiKeyStatusResponse struct {
 type KeyStatus struct {
 	Index        int    `json:"index"`
 	Status       int    `json:"status"` // 1: enabled, 2: disabled
+	FailureCount int    `json:"failure_count,omitempty"`
 	DisabledTime int64  `json:"disabled_time,omitempty"`
 	Reason       string `json:"reason,omitempty"`
 	KeyPreview   string `json:"key_preview"` // first 10 chars of key for identification
@@ -1533,6 +1535,7 @@ func ManageMultiKeys(c *gin.Context) {
 			status := 1 // default enabled
 			var disabledTime int64
 			var reason string
+			var failureCount int
 
 			if channel.ChannelInfo.MultiKeyStatusList != nil {
 				if s, exists := channel.ChannelInfo.MultiKeyStatusList[i]; exists {
@@ -1558,6 +1561,9 @@ func ManageMultiKeys(c *gin.Context) {
 					reason = channel.ChannelInfo.MultiKeyDisabledReason[i]
 				}
 			}
+			if channel.ChannelInfo.MultiKeyFailureCount != nil {
+				failureCount = channel.ChannelInfo.MultiKeyFailureCount[i]
+			}
 
 			// Create key preview (first 10 chars)
 			keyPreview := key
@@ -1568,6 +1574,7 @@ func ManageMultiKeys(c *gin.Context) {
 			allKeyStatusList = append(allKeyStatusList, KeyStatus{
 				Index:        i,
 				Status:       status,
+				FailureCount: failureCount,
 				DisabledTime: disabledTime,
 				Reason:       reason,
 				KeyPreview:   keyPreview,
@@ -1696,6 +1703,9 @@ func ManageMultiKeys(c *gin.Context) {
 		if channel.ChannelInfo.MultiKeyDisabledReason != nil {
 			delete(channel.ChannelInfo.MultiKeyDisabledReason, keyIndex)
 		}
+		if channel.ChannelInfo.MultiKeyFailureCount != nil {
+			delete(channel.ChannelInfo.MultiKeyFailureCount, keyIndex)
+		}
 
 		err = channel.Update()
 		if err != nil {
@@ -1720,6 +1730,7 @@ func ManageMultiKeys(c *gin.Context) {
 		channel.ChannelInfo.MultiKeyStatusList = make(map[int]int)
 		channel.ChannelInfo.MultiKeyDisabledTime = make(map[int]int64)
 		channel.ChannelInfo.MultiKeyDisabledReason = make(map[int]string)
+		channel.ChannelInfo.MultiKeyFailureCount = make(map[int]int)
 
 		err = channel.Update()
 		if err != nil {
@@ -1804,6 +1815,7 @@ func ManageMultiKeys(c *gin.Context) {
 		var newStatusList = make(map[int]int)
 		var newDisabledTime = make(map[int]int64)
 		var newDisabledReason = make(map[int]string)
+		var newFailureCount = make(map[int]int)
 
 		newIndex := 0
 		for i, key := range keys {
@@ -1830,6 +1842,11 @@ func ManageMultiKeys(c *gin.Context) {
 					newDisabledReason[newIndex] = r
 				}
 			}
+			if channel.ChannelInfo.MultiKeyFailureCount != nil {
+				if count, exists := channel.ChannelInfo.MultiKeyFailureCount[i]; exists {
+					newFailureCount[newIndex] = count
+				}
+			}
 			newIndex++
 		}
 
@@ -1847,6 +1864,7 @@ func ManageMultiKeys(c *gin.Context) {
 		channel.ChannelInfo.MultiKeyStatusList = newStatusList
 		channel.ChannelInfo.MultiKeyDisabledTime = newDisabledTime
 		channel.ChannelInfo.MultiKeyDisabledReason = newDisabledReason
+		channel.ChannelInfo.MultiKeyFailureCount = newFailureCount
 
 		err = channel.Update()
 		if err != nil {
@@ -1868,6 +1886,7 @@ func ManageMultiKeys(c *gin.Context) {
 		var newStatusList = make(map[int]int)
 		var newDisabledTime = make(map[int]int64)
 		var newDisabledReason = make(map[int]string)
+		var newFailureCount = make(map[int]int)
 
 		newIndex := 0
 		for i, key := range keys {
@@ -1897,6 +1916,11 @@ func ManageMultiKeys(c *gin.Context) {
 						}
 					}
 				}
+				if channel.ChannelInfo.MultiKeyFailureCount != nil {
+					if count, exists := channel.ChannelInfo.MultiKeyFailureCount[i]; exists {
+						newFailureCount[newIndex] = count
+					}
+				}
 				newIndex++
 			}
 		}
@@ -1915,6 +1939,7 @@ func ManageMultiKeys(c *gin.Context) {
 		channel.ChannelInfo.MultiKeyStatusList = newStatusList
 		channel.ChannelInfo.MultiKeyDisabledTime = newDisabledTime
 		channel.ChannelInfo.MultiKeyDisabledReason = newDisabledReason
+		channel.ChannelInfo.MultiKeyFailureCount = newFailureCount
 
 		err = channel.Update()
 		if err != nil {

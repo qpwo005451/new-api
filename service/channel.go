@@ -25,6 +25,25 @@ func DisableChannel(channelError types.ChannelError, reason string) {
 		return
 	}
 
+	if channelError.IsMultiKey && channelError.UsingKey != "" {
+		threshold := MultiKeyFailureThreshold()
+		if threshold > 0 {
+			result, err := model.RecordMultiKeyFailure(channelError.ChannelId, channelError.UsingKey, threshold, reason)
+			if err != nil {
+				common.SysError(fmt.Sprintf("failed to record multi-key failure: channel_id=%d, error=%v", channelError.ChannelId, err))
+				return
+			}
+			if !result.KeyAutoDisabled {
+				common.SysLog(fmt.Sprintf("通道「%s」（#%d）密钥失败计数 %d/%d，暂不禁用", channelError.ChannelName, channelError.ChannelId, result.FailureCount, threshold))
+				return
+			}
+			subject := fmt.Sprintf("通道「%s」（#%d）密钥已被自动禁用", channelError.ChannelName, channelError.ChannelId)
+			content := fmt.Sprintf("通道「%s」（#%d）密钥连续失败 %d 次，原因：%s", channelError.ChannelName, channelError.ChannelId, result.FailureCount, reason)
+			NotifyRootUser(formatNotifyType(channelError.ChannelId, common.ChannelStatusAutoDisabled), subject, content)
+			return
+		}
+	}
+
 	success := model.UpdateChannelStatus(channelError.ChannelId, channelError.UsingKey, common.ChannelStatusAutoDisabled, reason)
 	if success {
 		subject := fmt.Sprintf("通道「%s」（#%d）已被禁用", channelError.ChannelName, channelError.ChannelId)
@@ -42,10 +61,34 @@ func EnableChannel(channelId int, usingKey string, channelName string) {
 	}
 }
 
+func MultiKeyFailureThreshold() int {
+	threshold := common.GetEnvOrDefault("MULTI_KEY_FAILURE_THRESHOLD", 0)
+	if threshold < 1 {
+		return 0
+	}
+	return threshold
+}
+
+func MultiKeyRecoveryIntervalMinutes() int {
+	minutes := common.GetEnvOrDefault("MULTI_KEY_RECOVERY_INTERVAL_MINUTES", 0)
+	if minutes < 1 {
+		return 0
+	}
+	return minutes
+}
+
+func ShouldTrackMultiKeyFailure(err *types.NewAPIError) bool {
+	return MultiKeyFailureThreshold() > 0 && shouldDisableChannelByError(err)
+}
+
 func ShouldDisableChannel(err *types.NewAPIError) bool {
 	if !common.AutomaticDisableChannelEnabled {
 		return false
 	}
+	return shouldDisableChannelByError(err)
+}
+
+func shouldDisableChannelByError(err *types.NewAPIError) bool {
 	if err == nil {
 		return false
 	}

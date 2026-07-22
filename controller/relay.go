@@ -504,7 +504,8 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 				})
 			}
 		}
-		if !protectionActivated && service.ShouldDisableChannel(err) && channelError.AutoBan {
+		shouldTrackMultiKeyFailure := channelError.IsMultiKey && service.ShouldTrackMultiKeyFailure(err)
+		if !protectionActivated && channelError.AutoBan && (shouldTrackMultiKeyFailure || service.ShouldDisableChannel(err)) {
 			gopool.Go(func() {
 				service.DisableChannel(channelError, err.ErrorWithStatusCode())
 			})

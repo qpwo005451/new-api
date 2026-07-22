@@ -26,6 +26,7 @@ export const channelInfoSchema = z.object({
   is_multi_key: z.boolean().default(false),
   multi_key_size: z.number().default(0),
   multi_key_status_list: z.record(z.string(), z.number()).optional(),
+  multi_key_failure_count: z.record(z.string(), z.number()).optional(),
   multi_key_disabled_reason: z.record(z.string(), z.string()).optional(),
   multi_key_disabled_time: z.record(z.string(), z.number()).optional(),
   multi_key_polling_index: z.number().default(0),

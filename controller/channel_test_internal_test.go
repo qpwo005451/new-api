@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -82,6 +83,32 @@ func TestResolveChannelTestUserIDUsesRequestUser(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, 2, userID)
+}
+
+func TestRecoverableMultiKeyIndexesOnlyReturnsExpiredAutoDisabledKeys(t *testing.T) {
+	now := int64(1_700_000_000)
+	channel := &model.Channel{
+		Status: common.ChannelStatusEnabled,
+		Key:    "recover\nmanual\nrecent",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey: true,
+			MultiKeyStatusList: map[int]int{
+				0: common.ChannelStatusAutoDisabled,
+				1: common.ChannelStatusManuallyDisabled,
+				2: common.ChannelStatusAutoDisabled,
+			},
+			MultiKeyDisabledTime: map[int]int64{
+				0: now - 3600,
+				1: now - 7200,
+				2: now - 30,
+			},
+		},
+	}
+
+	assert.Equal(t, []int{0}, recoverableMultiKeyIndexes(channel, now, 60))
+
+	channel.Status = common.ChannelStatusManuallyDisabled
+	assert.Empty(t, recoverableMultiKeyIndexes(channel, now, 60))
 }
 
 func TestSelectChannelsForAutomaticTestPassiveRecoveryOnlyUsesAutoDisabled(t *testing.T) {

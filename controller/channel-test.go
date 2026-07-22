@@ -900,6 +900,97 @@ type channelTestSummary struct {
 	Enabled   int `json:"enabled"`
 }
 
+type multiKeyRecoverySummary struct {
+	Tested    int `json:"tested"`
+	Recovered int `json:"recovered"`
+	Failed    int `json:"failed"`
+}
+
+type multiKeyRecoveryCandidate struct {
+	channel *model.Channel
+	key     string
+}
+
+func recoverableMultiKeyIndexes(channel *model.Channel, now int64, recoveryIntervalSeconds int64) []int {
+	if channel == nil || !channel.ChannelInfo.IsMultiKey ||
+		channel.Status == common.ChannelStatusManuallyDisabled || recoveryIntervalSeconds < 1 {
+		return nil
+	}
+
+	keys := channel.GetKeys()
+	indexes := make([]int, 0)
+	for index := range keys {
+		if channel.ChannelInfo.MultiKeyStatusList[index] != common.ChannelStatusAutoDisabled {
+			continue
+		}
+		disabledAt := channel.ChannelInfo.MultiKeyDisabledTime[index]
+		if disabledAt == 0 || now-disabledAt < recoveryIntervalSeconds {
+			continue
+		}
+		indexes = append(indexes, index)
+	}
+	return indexes
+}
+
+func runMultiKeyRecoveryTask(ctx context.Context, recoveryIntervalMinutes int, report func(processed, total int)) (multiKeyRecoverySummary, error) {
+	if recoveryIntervalMinutes < 1 {
+		return multiKeyRecoverySummary{}, nil
+	}
+
+	testUserID, err := resolveChannelTestUserID(nil)
+	if err != nil {
+		return multiKeyRecoverySummary{}, err
+	}
+	channels, err := model.GetAllChannels(0, 0, true, false)
+	if err != nil {
+		return multiKeyRecoverySummary{}, err
+	}
+
+	now := common.GetTimestamp()
+	intervalSeconds := int64(recoveryIntervalMinutes * 60)
+	candidates := make([]multiKeyRecoveryCandidate, 0)
+	for _, channel := range channels {
+		for _, index := range recoverableMultiKeyIndexes(channel, now, intervalSeconds) {
+			candidates = append(candidates, multiKeyRecoveryCandidate{
+				channel: channel,
+				key:     channel.GetKeys()[index],
+			})
+		}
+	}
+
+	summary := multiKeyRecoverySummary{}
+	for index, candidate := range candidates {
+		if ctx != nil && ctx.Err() != nil {
+			break
+		}
+		if report != nil {
+			report(index, len(candidates))
+		}
+
+		probe := *candidate.channel
+		probe.Key = candidate.key
+		probe.Keys = nil
+		probe.Status = common.ChannelStatusEnabled
+		probe.ChannelInfo = model.ChannelInfo{}
+		result := testChannel(ctx, &probe, testUserID, "", "", shouldUseStreamForAutomaticChannelTest(&probe))
+		summary.Tested++
+		if result.localErr != nil || result.newAPIError != nil {
+			summary.Failed++
+			continue
+		}
+
+		if model.UpdateChannelStatus(candidate.channel.Id, candidate.key, common.ChannelStatusEnabled, "scheduled multi-key recovery succeeded") {
+			summary.Recovered++
+		} else {
+			summary.Failed++
+		}
+	}
+	if report != nil && (ctx == nil || ctx.Err() == nil) {
+		report(len(candidates), len(candidates))
+	}
+	return summary, nil
+}
+
 // performChannelTests runs the channel test loop synchronously, honoring ctx
 // cancellation so a system-task runner that loses its lease stops promptly. When
 // report is non-nil it is called after each channel with (processed, total) so

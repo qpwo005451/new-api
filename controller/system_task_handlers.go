@@ -19,6 +19,7 @@ import (
 // service.StartSystemTaskRunner.
 func RegisterScheduledSystemTasks() {
 	service.RegisterSystemTaskHandler(channelTestHandler{})
+	service.RegisterSystemTaskHandler(multiKeyRecoveryHandler{})
 	service.RegisterSystemTaskHandler(modelUpdateHandler{})
 	service.RegisterSystemTaskHandler(balanceProtectionHandler{})
 	service.RegisterSystemTaskHandler(midjourneyPollHandler{})
@@ -84,6 +85,29 @@ func (channelTestHandler) Run(ctx context.Context, task *model.SystemTask, runne
 		return
 	}
 	summary, err := runChannelTestTask(ctx, payload.Mode, payload.Notify, service.NewSystemTaskProgressReporter(task, runnerID))
+	if err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
+		return
+	}
+	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, summary, nil)
+}
+
+type multiKeyRecoveryHandler struct{}
+
+func (multiKeyRecoveryHandler) Type() string { return model.SystemTaskTypeMultiKeyRecovery }
+
+func (multiKeyRecoveryHandler) Enabled() bool {
+	return service.MultiKeyRecoveryIntervalMinutes() > 0
+}
+
+func (multiKeyRecoveryHandler) Interval() time.Duration {
+	return time.Duration(service.MultiKeyRecoveryIntervalMinutes()) * time.Minute
+}
+
+func (multiKeyRecoveryHandler) NewPayload() any { return nil }
+
+func (multiKeyRecoveryHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	summary, err := runMultiKeyRecoveryTask(ctx, service.MultiKeyRecoveryIntervalMinutes(), service.NewSystemTaskProgressReporter(task, runnerID))
 	if err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
 		return

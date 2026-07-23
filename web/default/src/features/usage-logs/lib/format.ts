@@ -250,6 +250,15 @@ export function hasAnyCacheTokens(
   )
 }
 
+export function formatCacheTokenCount(tokens: number): string {
+  if (tokens < 10_000) return tokens.toLocaleString()
+
+  const divisor = tokens >= 1_000_000 ? 1_000_000 : 1_000
+  const suffix = divisor === 1_000_000 ? 'M' : 'K'
+  const compact = (tokens / divisor).toFixed(1).replace(/\.0$/, '')
+  return `${compact}${suffix}`
+}
+
 export function getTieredBillingSummary(
   other: LogOtherData | null
 ): TieredBillingSummary | null {

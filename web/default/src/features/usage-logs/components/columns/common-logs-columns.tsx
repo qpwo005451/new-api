@@ -51,6 +51,7 @@ import { LOG_TYPE_ALL_VALUE, LOG_TYPE_ENUM } from '../../constants'
 import type { UsageLog } from '../../data/schema'
 import {
   formatModelName,
+  formatCacheTokenCount,
   getFirstResponseTimeColor,
   getResponseTimeColor,
   getTieredBillingSummary,
@@ -819,12 +820,12 @@ function buildCommonLogsColumns(
               <div className='flex items-center gap-1 text-xs'>
                 {cacheReadTokens > 0 && (
                   <span className='text-muted-foreground/60'>
-                    {t('Cache')}↓ {cacheReadTokens.toLocaleString()}
+                    {t('Cache')}↓ {formatCacheTokenCount(cacheReadTokens)}
                   </span>
                 )}
                 {cacheWriteTokens > 0 && (
                   <span className='text-muted-foreground/60'>
-                    ↑ {cacheWriteTokens.toLocaleString()}
+                    ↑ {formatCacheTokenCount(cacheWriteTokens)}
                   </span>
                 )}
               </div>

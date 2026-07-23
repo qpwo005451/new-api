@@ -4,9 +4,44 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestChannelInfoScanSupportsSQLiteTextAndEmptyValues(t *testing.T) {
+	tests := []struct {
+		name string
+		value any
+		want ChannelInfo
+	}{
+		{name: "database null", value: nil},
+		{name: "empty bytes", value: []byte{}},
+		{name: "whitespace string", value: "  \n\t"},
+		{name: "json null", value: []byte("null")},
+		{
+			name:  "valid json text",
+			value: `{"is_multi_key":true,"multi_key_size":2,"multi_key_mode":"polling"}`,
+			want: ChannelInfo{
+				IsMultiKey:   true,
+				MultiKeySize: 2,
+				MultiKeyMode: constant.MultiKeyModePolling,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := ChannelInfo{
+				IsMultiKey:   true,
+				MultiKeySize: 2,
+			}
+
+			require.NoError(t, info.Scan(tt.value))
+			assert.Equal(t, tt.want, info)
+		})
+	}
+}
 
 func TestRecordMultiKeyFailureUsesThresholdAndEnableClearsState(t *testing.T) {
 	setupChannelCacheTestDB(t)

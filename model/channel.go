@@ -1,6 +1,7 @@
 package model
 
 import (
+	"bytes"
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
@@ -171,7 +172,25 @@ func (c ChannelInfo) Value() (driver.Value, error) {
 
 // Scan implements sql.Scanner interface
 func (c *ChannelInfo) Scan(value interface{}) error {
-	bytesValue, _ := value.([]byte)
+	*c = ChannelInfo{}
+	if value == nil {
+		return nil
+	}
+
+	var bytesValue []byte
+	switch typedValue := value.(type) {
+	case []byte:
+		bytesValue = typedValue
+	case string:
+		bytesValue = []byte(typedValue)
+	default:
+		return fmt.Errorf("unsupported channel_info value type %T", value)
+	}
+
+	bytesValue = bytes.TrimSpace(bytesValue)
+	if len(bytesValue) == 0 || bytes.Equal(bytesValue, []byte("null")) {
+		return nil
+	}
 	return common.Unmarshal(bytesValue, c)
 }
 

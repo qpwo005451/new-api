@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -105,4 +106,60 @@ func TestInitChannelCacheKeepsPreviousBalanceProtectionWhenProtectionReadFails(t
 	cached, err = GetRandomSatisfiedChannel("svip", "paid-model", 0, "")
 	require.NoError(t, err)
 	assert.Nil(t, cached)
+}
+
+func TestGetRandomSatisfiedChannelSinglePassPriorityFallback(t *testing.T) {
+	setupChannelCacheTestDB(t)
+
+	setting := operation_setting.GetModelRetryPolicySetting()
+	previousModels := append([]string(nil), setting.SinglePassPriorityModels...)
+	setting.SinglePassPriorityModels = []string{"single-pass-model"}
+	t.Cleanup(func() {
+		setting.SinglePassPriorityModels = previousModels
+	})
+
+	for _, priority := range []int64{300, 200, 100} {
+		channel := &Channel{
+			Name:     "priority-channel",
+			Status:   common.ChannelStatusEnabled,
+			Models:   "single-pass-model,ordinary-model",
+			Group:    "svip",
+			Priority: &priority,
+		}
+		require.NoError(t, DB.Create(channel).Error)
+		for _, modelName := range []string{"single-pass-model", "ordinary-model"} {
+			require.NoError(t, DB.Create(&Ability{
+				Group:     "svip",
+				Model:     modelName,
+				ChannelId: channel.Id,
+				Enabled:   true,
+				Priority:  &priority,
+			}).Error)
+		}
+	}
+
+	for _, memoryCacheEnabled := range []bool{true, false} {
+		t.Run(map[bool]string{true: "memory cache", false: "database"}[memoryCacheEnabled], func(t *testing.T) {
+			common.MemoryCacheEnabled = memoryCacheEnabled
+			if memoryCacheEnabled {
+				InitChannelCache()
+			}
+
+			for retry, wantPriority := range []int64{300, 200, 100} {
+				channel, err := GetRandomSatisfiedChannel("svip", "single-pass-model", retry, "")
+				require.NoError(t, err)
+				require.NotNil(t, channel)
+				assert.Equal(t, wantPriority, channel.GetPriority())
+			}
+
+			channel, err := GetRandomSatisfiedChannel("svip", "single-pass-model", 3, "")
+			require.ErrorIs(t, err, ErrPriorityFallbackExhausted)
+			assert.Nil(t, channel)
+
+			channel, err = GetRandomSatisfiedChannel("svip", "ordinary-model", 3, "")
+			require.NoError(t, err)
+			require.NotNil(t, channel)
+			assert.Equal(t, int64(100), channel.GetPriority())
+		})
+	}
 }

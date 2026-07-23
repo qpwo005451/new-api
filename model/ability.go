@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/samber/lo"
 	"gorm.io/gorm"
@@ -29,6 +30,8 @@ type AbilityWithChannel struct {
 	Ability
 	ChannelType int `json:"channel_type"`
 }
+
+var ErrPriorityFallbackExhausted = errors.New("channel priority fallback exhausted")
 
 func GetAllEnableAbilityWithChannels() ([]AbilityWithChannel, error) {
 	var abilities []AbilityWithChannel
@@ -82,6 +85,9 @@ func getPriority(group string, model string, retry int) (int, error) {
 	// 确定要使用的优先级
 	var priorityToUse int
 	if retry >= len(priorities) {
+		if operation_setting.UseSinglePassPriorityFallback(model) {
+			return 0, ErrPriorityFallbackExhausted
+		}
 		// 如果重试次数大于优先级数，则使用最小的优先级
 		priorityToUse = priorities[len(priorities)-1]
 	} else {

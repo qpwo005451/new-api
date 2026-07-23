@@ -124,12 +124,20 @@ type OpenRouterCreditResponse struct {
 }
 
 type Sub2APIUsageResponse struct {
-	Mode      string   `json:"mode"`
-	IsValid   bool     `json:"isValid"`
-	Remaining *float64 `json:"remaining"`
-	Balance   *float64 `json:"balance"`
-	Unit      string   `json:"unit"`
-	Quota     *struct {
+	Mode         string   `json:"mode"`
+	IsValid      bool     `json:"isValid"`
+	Remaining    *float64 `json:"remaining"`
+	Balance      *float64 `json:"balance"`
+	Unit         string   `json:"unit"`
+	Subscription *struct {
+		DailyLimitUSD   *float64 `json:"daily_limit_usd"`
+		DailyUsageUSD   *float64 `json:"daily_usage_usd"`
+		WeeklyLimitUSD  *float64 `json:"weekly_limit_usd"`
+		WeeklyUsageUSD  *float64 `json:"weekly_usage_usd"`
+		MonthlyLimitUSD *float64 `json:"monthly_limit_usd"`
+		MonthlyUsageUSD *float64 `json:"monthly_usage_usd"`
+	} `json:"subscription"`
+	Quota *struct {
 		Remaining *float64 `json:"remaining"`
 		Unit      string   `json:"unit"`
 	} `json:"quota"`
@@ -389,6 +397,40 @@ func parseSub2APIUsageBalance(body []byte) (float64, error) {
 	}
 	if !strings.EqualFold(unit, "USD") {
 		return 0, fmt.Errorf("sub2api uses unsupported unit: %s", unit)
+	}
+
+	if response.Mode == "unrestricted" && response.Subscription != nil {
+		effectiveRemaining := math.Inf(1)
+		hasSubscriptionLimit := false
+		windows := []struct {
+			name  string
+			limit *float64
+			usage *float64
+		}{
+			{name: "daily", limit: response.Subscription.DailyLimitUSD, usage: response.Subscription.DailyUsageUSD},
+			{name: "weekly", limit: response.Subscription.WeeklyLimitUSD, usage: response.Subscription.WeeklyUsageUSD},
+			{name: "monthly", limit: response.Subscription.MonthlyLimitUSD, usage: response.Subscription.MonthlyUsageUSD},
+		}
+		for _, window := range windows {
+			if window.limit == nil || *window.limit == 0 {
+				continue
+			}
+			if math.IsNaN(*window.limit) || math.IsInf(*window.limit, 0) || *window.limit < 0 {
+				return 0, fmt.Errorf("sub2api subscription %s limit must be a non-negative finite number", window.name)
+			}
+			if window.usage == nil {
+				return 0, fmt.Errorf("sub2api subscription %s usage is missing", window.name)
+			}
+			if math.IsNaN(*window.usage) || math.IsInf(*window.usage, 0) || *window.usage < 0 {
+				return 0, fmt.Errorf("sub2api subscription %s usage must be a non-negative finite number", window.name)
+			}
+			remaining := max(*window.limit-*window.usage, 0)
+			effectiveRemaining = min(effectiveRemaining, remaining)
+			hasSubscriptionLimit = true
+		}
+		if hasSubscriptionLimit {
+			return effectiveRemaining, nil
+		}
 	}
 
 	balance := response.Remaining

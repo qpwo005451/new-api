@@ -126,6 +126,21 @@ func TestParseSub2APIUsageBalance(t *testing.T) {
 			want: 12.5,
 		},
 		{
+			name: "subscription daily reset overrides stale top-level remaining",
+			body: `{"mode":"unrestricted","isValid":true,"remaining":1.5,"unit":"USD","subscription":{"daily_limit_usd":300,"daily_usage_usd":0,"weekly_limit_usd":0,"weekly_usage_usd":298.5,"monthly_limit_usd":0,"monthly_usage_usd":298.5}}`,
+			want: 300,
+		},
+		{
+			name: "subscription uses tightest active limit",
+			body: `{"mode":"unrestricted","isValid":true,"remaining":250,"unit":"USD","subscription":{"daily_limit_usd":300,"daily_usage_usd":25,"weekly_limit_usd":500,"weekly_usage_usd":490,"monthly_limit_usd":0,"monthly_usage_usd":515}}`,
+			want: 10,
+		},
+		{
+			name: "subscription overuse clamps remaining to zero",
+			body: `{"mode":"unrestricted","isValid":true,"remaining":20,"unit":"USD","subscription":{"daily_limit_usd":300,"daily_usage_usd":301}}`,
+			want: 0,
+		},
+		{
 			name: "key quota",
 			body: `{"mode":"quota_limited","isValid":true,"quota":{"limit":100,"used":25,"remaining":75,"unit":"USD"},"remaining":75,"unit":"USD"}`,
 			want: 75,
@@ -169,6 +184,16 @@ func TestParseSub2APIUsageBalance(t *testing.T) {
 			name:    "missing balance",
 			body:    `{"mode":"unrestricted","isValid":true,"unit":"USD"}`,
 			wantErr: "missing remaining balance",
+		},
+		{
+			name:    "subscription active limit requires usage",
+			body:    `{"mode":"unrestricted","isValid":true,"remaining":12.5,"unit":"USD","subscription":{"daily_limit_usd":300}}`,
+			wantErr: "daily usage is missing",
+		},
+		{
+			name:    "subscription usage must be finite",
+			body:    `{"mode":"unrestricted","isValid":true,"remaining":12.5,"unit":"USD","subscription":{"daily_limit_usd":300,"daily_usage_usd":1e999}}`,
+			wantErr: "cannot unmarshal",
 		},
 		{
 			name:    "malformed JSON",

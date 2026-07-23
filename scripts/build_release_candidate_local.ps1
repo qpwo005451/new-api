@@ -6,7 +6,9 @@ param(
 
     [string]$ReleaseTag = 'HEAD',
 
-    [switch]$KeepCache
+    [switch]$KeepCache,
+
+    [switch]$PurgeBuildCache
 )
 
 $ErrorActionPreference = 'Stop'
@@ -25,7 +27,8 @@ $bun = Join-Path $toolchainRoot 'bun\bun.exe'
 $buildScript = Join-Path $scriptRoot 'build_release_candidate.sh'
 $releasesRoot = [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'releases'))
 $releaseRoot = [System.IO.Path]::GetFullPath((Join-Path $releasesRoot $ReleaseId))
-$cacheRoot = [System.IO.Path]::GetFullPath((Join-Path $toolchainRoot 'cache'))
+$releaseCacheRoot = [System.IO.Path]::GetFullPath((Join-Path $toolchainRoot 'release-cache'))
+$legacyCacheRoot = [System.IO.Path]::GetFullPath((Join-Path $toolchainRoot 'cache'))
 
 function Assert-ChildPath {
     param(
@@ -45,9 +48,42 @@ function Assert-ChildPath {
     }
 }
 
+function Remove-DirectoryWithRetry {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Parent,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Description
+    )
+
+    Assert-ChildPath -Parent $Parent -Child $Path
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        if (-not (Test-Path -LiteralPath $Path)) {
+            return
+        }
+        try {
+            Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue
+        } catch {
+            # A real filesystem failure is confirmed below from the root path.
+        }
+        if (-not (Test-Path -LiteralPath $Path)) {
+            return
+        }
+        if ($attempt -eq 3) {
+            throw "Failed to remove $Description after $attempt attempts: $Path"
+        }
+        Start-Sleep -Seconds 1
+    }
+}
+
 Assert-ChildPath -Parent $repoRoot -Child $toolchainRoot
 Assert-ChildPath -Parent $releasesRoot -Child $releaseRoot
-Assert-ChildPath -Parent $toolchainRoot -Child $cacheRoot
+Assert-ChildPath -Parent $toolchainRoot -Child $releaseCacheRoot
+Assert-ChildPath -Parent $toolchainRoot -Child $legacyCacheRoot
 
 foreach ($requiredPath in @($bash, $fileBin, $go, $bun, $buildScript)) {
     if (-not (Test-Path -LiteralPath $requiredPath)) {
@@ -55,17 +91,56 @@ foreach ($requiredPath in @($bash, $fileBin, $go, $bun, $buildScript)) {
     }
 }
 
-New-Item -ItemType Directory -Force -Path $cacheRoot | Out-Null
+$goVersionLines = & $go version
+$goVersionExitCode = $LASTEXITCODE
+$goVersionOutput = (($goVersionLines | Select-Object -First 1) | Out-String).Trim()
+if ($goVersionExitCode -ne 0 -or -not $goVersionOutput) {
+    throw "Failed to determine local Go version from $go"
+}
+$bunVersionLines = & $bun --version
+$bunVersionExitCode = $LASTEXITCODE
+$bunVersionOutput = (($bunVersionLines | Select-Object -First 1) | Out-String).Trim()
+if ($bunVersionExitCode -ne 0 -or -not $bunVersionOutput) {
+    throw "Failed to determine local Bun version from $bun"
+}
+
+$goVersionKey = ($goVersionOutput -replace '[^A-Za-z0-9._-]', '_')
+$bunVersionKey = ($bunVersionOutput -replace '[^A-Za-z0-9._-]', '_')
+if (-not $goVersionKey -or -not $bunVersionKey) {
+    throw 'Local tool versions did not produce valid cache keys'
+}
+
+$goCacheRoot = Join-Path $releaseCacheRoot "go\$goVersionKey-linux-amd64-cgo0"
+$bunCacheRoot = Join-Path $releaseCacheRoot "bun\$bunVersionKey"
+$frontendCacheRoot = Join-Path $releaseCacheRoot 'frontend'
+foreach ($cachePath in @($goCacheRoot, $bunCacheRoot, $frontendCacheRoot)) {
+    Assert-ChildPath -Parent $toolchainRoot -Child $cachePath
+}
+
+if ($PurgeBuildCache) {
+    foreach ($cachePath in @($releaseCacheRoot, $legacyCacheRoot)) {
+        if (Test-Path -LiteralPath $cachePath) {
+            Remove-DirectoryWithRetry -Parent $toolchainRoot -Path $cachePath -Description 'local release build cache'
+        }
+    }
+}
+
+if ($KeepCache) {
+    Write-Warning '-KeepCache is no longer needed; versioned release build caches persist by default.'
+}
+
+New-Item -ItemType Directory -Force -Path $goCacheRoot, $bunCacheRoot, $frontendCacheRoot | Out-Null
 
 $env:GO_BIN = $go.Replace('\', '/')
 $env:BUN_BIN = $bun.Replace('\', '/')
 $env:GOOS = 'linux'
 $env:GOARCH = 'amd64'
 $env:CGO_ENABLED = '0'
-$env:GOMODCACHE = (Join-Path $cacheRoot 'go-mod').Replace('\', '/')
-$env:GOCACHE = (Join-Path $cacheRoot 'go-build').Replace('\', '/')
-$env:GOPATH = (Join-Path $cacheRoot 'go-path').Replace('\', '/')
-$env:BUN_INSTALL_CACHE_DIR = (Join-Path $cacheRoot 'bun').Replace('\', '/')
+$env:GOMODCACHE = (Join-Path $goCacheRoot 'mod').Replace('\', '/')
+$env:GOCACHE = (Join-Path $goCacheRoot 'build').Replace('\', '/')
+$env:GOPATH = (Join-Path $goCacheRoot 'path').Replace('\', '/')
+$env:BUN_INSTALL_CACHE_DIR = $bunCacheRoot.Replace('\', '/')
+$env:FRONTEND_CACHE_ROOT = $frontendCacheRoot.Replace('\', '/')
 
 $escapedBuildScript = $buildScript.Replace("'", "'\''")
 $unixBuildScript = (& $bash -lc "cygpath -u '$escapedBuildScript'").Trim()
@@ -105,9 +180,6 @@ try {
 }
 finally {
     if (-not $buildSucceeded -and (Test-Path -LiteralPath $releaseRoot)) {
-        Remove-Item -LiteralPath $releaseRoot -Recurse -Force
-    }
-    if (-not $KeepCache -and (Test-Path -LiteralPath $cacheRoot)) {
-        Remove-Item -LiteralPath $cacheRoot -Recurse -Force
+        Remove-DirectoryWithRetry -Parent $releasesRoot -Path $releaseRoot -Description 'failed release candidate directory'
     }
 }

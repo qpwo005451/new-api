@@ -7,10 +7,13 @@ $buildScript = Join-Path $scriptRoot 'build_release_candidate_local.ps1'
 $releaseId = "test-local-cleanup-$PID"
 $releaseRoot = Join-Path $repoRoot "releases\$releaseId"
 $sourceRoot = Join-Path $releaseRoot 'src'
-$cacheRoot = Join-Path $repoRoot '.local-tools\cache'
+$toolchainRoot = Join-Path ([System.IO.Path]::GetTempPath()) "newapi-local-release-test-$PID"
+$releaseCacheRoot = Join-Path $toolchainRoot 'release-cache'
+$legacyCacheRoot = Join-Path $toolchainRoot 'cache'
 $goCacheRoot = Join-Path $repoRoot '.gocache'
 $frontendDistRoot = Join-Path $repoRoot 'web\default\dist'
 $frontendModulesRoot = Join-Path $repoRoot 'web\node_modules'
+$previousToolchainRoot = $env:LOCAL_TOOLCHAIN_ROOT
 
 function Assert-True {
     param(
@@ -27,6 +30,7 @@ function Assert-True {
 }
 
 try {
+    $env:LOCAL_TOOLCHAIN_ROOT = $toolchainRoot
     foreach ($path in @($cleanupScript, $buildScript)) {
         $tokens = $null
         $errors = $null
@@ -41,7 +45,8 @@ try {
     New-Item -ItemType Directory -Force -Path `
         (Join-Path $releaseRoot 'bin'), `
         (Join-Path $releaseRoot 'runtime\logs'), `
-        $cacheRoot, `
+        $releaseCacheRoot, `
+        $legacyCacheRoot, `
         $goCacheRoot, `
         $frontendDistRoot, `
         $frontendModulesRoot | Out-Null
@@ -52,7 +57,8 @@ try {
     Set-Content -LiteralPath (Join-Path $releaseRoot 'bin\new-api') -Value 'candidate'
     Set-Content -LiteralPath (Join-Path $releaseRoot 'manifest.env') -Value "RELEASE_ID=$releaseId"
     Set-Content -LiteralPath (Join-Path $releaseRoot 'runtime\candidate.log') -Value 'log'
-    Set-Content -LiteralPath (Join-Path $cacheRoot 'cache.marker') -Value 'cache'
+    Set-Content -LiteralPath (Join-Path $releaseCacheRoot 'cache.marker') -Value 'cache'
+    Set-Content -LiteralPath (Join-Path $legacyCacheRoot 'cache.marker') -Value 'legacy-cache'
     Set-Content -LiteralPath (Join-Path $goCacheRoot 'cache.marker') -Value 'cache'
     Set-Content -LiteralPath (Join-Path $frontendDistRoot 'dist.marker') -Value 'dist'
     Set-Content -LiteralPath (Join-Path $frontendModulesRoot 'modules.marker') -Value 'modules'
@@ -62,7 +68,8 @@ try {
     Assert-True (Test-Path -LiteralPath (Join-Path $releaseRoot 'manifest.env')) 'KeepCandidate removed the manifest'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $releaseRoot 'src'))) 'KeepCandidate left the source directory'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $releaseRoot 'runtime'))) 'KeepCandidate left runtime files'
-    Assert-True (-not (Test-Path -LiteralPath $cacheRoot)) 'Cleanup left the local build cache'
+    Assert-True (Test-Path -LiteralPath $releaseCacheRoot) 'Cleanup removed the persistent release build cache'
+    Assert-True (Test-Path -LiteralPath $legacyCacheRoot) 'Cleanup removed the legacy build cache without an explicit purge'
     Assert-True (-not (Test-Path -LiteralPath $goCacheRoot)) 'Cleanup left the Go build cache'
     Assert-True (-not (Test-Path -LiteralPath $frontendDistRoot)) 'Cleanup left frontend dist files'
     Assert-True (-not (Test-Path -LiteralPath $frontendModulesRoot)) 'Cleanup left frontend dependencies'
@@ -71,6 +78,10 @@ try {
 
     & $cleanupScript -ReleaseId $releaseId
     Assert-True (-not (Test-Path -LiteralPath $releaseRoot)) 'Cleanup left the local release directory'
+
+    & $cleanupScript -ReleaseId $releaseId -PurgeBuildCache
+    Assert-True (-not (Test-Path -LiteralPath $releaseCacheRoot)) 'PurgeBuildCache left the persistent release build cache'
+    Assert-True (-not (Test-Path -LiteralPath $legacyCacheRoot)) 'PurgeBuildCache left the legacy build cache'
 
     $invalidRejected = $false
     try {
@@ -88,10 +99,15 @@ finally {
     if (Test-Path -LiteralPath $releaseRoot) {
         Remove-Item -LiteralPath $releaseRoot -Recurse -Force
     }
-    foreach ($path in @($cacheRoot, $goCacheRoot, $frontendDistRoot, $frontendModulesRoot)) {
+    foreach ($path in @($toolchainRoot, $goCacheRoot, $frontendDistRoot, $frontendModulesRoot)) {
         if (Test-Path -LiteralPath $path) {
             Remove-Item -LiteralPath $path -Recurse -Force
         }
+    }
+    if ($null -eq $previousToolchainRoot) {
+        Remove-Item Env:\LOCAL_TOOLCHAIN_ROOT -ErrorAction SilentlyContinue
+    } else {
+        $env:LOCAL_TOOLCHAIN_ROOT = $previousToolchainRoot
     }
 }
 

@@ -24,7 +24,9 @@ stage_release_root=""
 symlink_release_root=""
 build_release_root=""
 build_release_src=""
+cached_build_release_root=""
 failed_build_release_root=""
+frontend_cache_root=""
 cutover_release_root=""
 finalize_release_root=""
 cleanup() {
@@ -47,8 +49,14 @@ cleanup() {
   if [ -n "$build_release_root" ]; then
     rm -rf "$build_release_root"
   fi
+  if [ -n "$cached_build_release_root" ]; then
+    rm -rf "$cached_build_release_root"
+  fi
   if [ -n "$failed_build_release_root" ]; then
     rm -rf "$failed_build_release_root"
+  fi
+  if [ -n "$frontend_cache_root" ]; then
+    rm -rf "$frontend_cache_root"
   fi
   if [ -n "$cutover_release_root" ]; then
     rm -rf "$cutover_release_root"
@@ -106,6 +114,9 @@ assert_contains "$script_dir/build_release_candidate.sh" "realpath -m"
 assert_contains "$script_dir/build_release_candidate.sh" "build_embed_assets"
 assert_contains "$script_dir/build_release_candidate.sh" "install --frozen-lockfile"
 assert_contains "$script_dir/build_release_candidate.sh" "cleanup_source_worktree_on_exit"
+assert_contains "$script_dir/build_release_candidate.sh" "FRONTEND_CACHE_ROOT"
+assert_contains "$script_dir/build_release_candidate.sh" "FRONTEND_CACHE_HIT"
+assert_contains "$script_dir/build_release_candidate.sh" "store_embed_assets_in_cache"
 assert_not_contains "$script_dir/build_release_candidate.sh" "SOURCE_APP_ROOT"
 assert_not_contains "$script_dir/build_release_candidate.sh" "sync_embed_assets"
 
@@ -155,6 +166,9 @@ mkdir -p "$fake_bin"
 build_release_id="test-helper-build-$$"
 build_release_root="$repo_root/releases/$build_release_id"
 build_release_src="$build_release_root/src"
+cached_build_release_id="test-helper-build-cache-hit-$$"
+cached_build_release_root="$repo_root/releases/$cached_build_release_id"
+frontend_cache_root="$tmp_root/frontend-cache"
 fake_bun_log="$tmp_root/fake-bun.log"
 fake_go_log="$tmp_root/fake-go.log"
 
@@ -165,6 +179,9 @@ set -euo pipefail
 printf '%s|%s\n' "$PWD" "$*" >>"$FAKE_BUN_LOG"
 
 case "${1:-}:${2:-}" in
+  --version:)
+    printf '1.3.14-test\n'
+    ;;
   install:--frozen-lockfile)
     exit 0
     ;;
@@ -226,15 +243,36 @@ FAKE_BUN_LOG="$fake_bun_log" \
 FAKE_GO_LOG="$fake_go_log" \
 BUN_BIN="$fake_bin/bun" \
 GO_BIN="$fake_bin/go" \
+FRONTEND_CACHE_ROOT="$frontend_cache_root" \
 "$script_dir/build_release_candidate.sh" "$build_release_id" HEAD >/dev/null
 
 [ ! -e "$build_release_src" ] || fail "release source worktree was not removed after build"
 grep -Fxq "BUN_BIN=$fake_bin/bun" "$build_release_root/manifest.env" || fail "release manifest did not record the bun binary"
 expected_web_lock_sha="$(sha256sum "$repo_root/web/bun.lock" | awk '{print $1}')"
 grep -Fxq "WEB_LOCK_SHA256=$expected_web_lock_sha" "$build_release_root/manifest.env" || fail "release manifest did not record the frontend lockfile"
+frontend_cache_key="$(sed -n 's/^FRONTEND_CACHE_KEY=//p' "$build_release_root/manifest.env")"
+[ -n "$frontend_cache_key" ] || fail "release manifest did not record the frontend cache key"
+grep -Fxq "FRONTEND_CACHE_HIT=0" "$build_release_root/manifest.env" || fail "first release build unexpectedly hit the frontend cache"
 grep -Fq "install --frozen-lockfile" "$fake_bun_log" || fail "release build did not install locked frontend dependencies"
 [ "$(grep -Fc "run build" "$fake_bun_log")" -eq 2 ] || fail "release build did not build both frontend themes"
 grep -Fq "build " "$fake_go_log" || fail "release build did not invoke Go"
+
+: >"$fake_bun_log"
+: >"$fake_go_log"
+FAKE_BUN_LOG="$fake_bun_log" \
+FAKE_GO_LOG="$fake_go_log" \
+BUN_BIN="$fake_bin/bun" \
+GO_BIN="$fake_bin/go" \
+FRONTEND_CACHE_ROOT="$frontend_cache_root" \
+"$script_dir/build_release_candidate.sh" "$cached_build_release_id" HEAD >/dev/null
+
+cached_frontend_cache_key="$(sed -n 's/^FRONTEND_CACHE_KEY=//p' "$cached_build_release_root/manifest.env")"
+[ "$cached_frontend_cache_key" = "$frontend_cache_key" ] || fail "same frontend source did not reuse the cache key"
+grep -Fxq "FRONTEND_CACHE_HIT=1" "$cached_build_release_root/manifest.env" || fail "second release build did not hit the frontend cache"
+if grep -Fq "install --frozen-lockfile" "$fake_bun_log" || grep -Fq "run build" "$fake_bun_log"; then
+  fail "frontend cache hit still ran Bun install or theme builds"
+fi
+grep -Fq "build " "$fake_go_log" || fail "frontend cache hit skipped the Go build"
 
 failed_build_release_id="test-helper-build-failure-$$"
 failed_build_release_root="$repo_root/releases/$failed_build_release_id"
@@ -244,6 +282,7 @@ FAKE_GO_LOG="$fake_go_log" \
 FAIL_BUN_BUILD="1" \
 BUN_BIN="$fake_bin/bun" \
 GO_BIN="$fake_bin/go" \
+FRONTEND_CACHE_ROOT="$tmp_root/frontend-cache-failure" \
 "$script_dir/build_release_candidate.sh" "$failed_build_release_id" HEAD >/dev/null 2>&1
 failed_build_exit="$?"
 set -e

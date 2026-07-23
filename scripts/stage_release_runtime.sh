@@ -107,7 +107,7 @@ fi
 
 cp "$source_env" "$copied_env"
 rm -f "$log_path" "$env_path" "$db_path" "$schema_before" "$schema_after" "$schema_changed_flag"
-sqlite3 "$source_db" ".backup '$db_path'"
+sqlite3 "$source_db" ".timeout 5000" ".backup '$db_path'"
 sqlite3 "$db_path" '.schema' | sha256sum | awk '{print $1}' > "$schema_before"
 
 python3 - "$source_env" "$env_path" "$db_path" <<'PY'

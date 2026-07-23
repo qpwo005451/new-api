@@ -101,12 +101,16 @@ esac
 curl_fast=(curl --connect-timeout 3 --max-time 8 -fsS)
 curl_slow=(curl --connect-timeout 3 --max-time 30 -fsS)
 
+read_smoke_token() {
+  sqlite3 -cmd ".timeout 5000" -noheader -batch "$db_path" "$1"
+}
+
 "${curl_fast[@]}" "$base_url/" >/dev/null
 "${curl_fast[@]}" "$base_url/api/status" >/dev/null
 
-token="$(sqlite3 -noheader -batch "$db_path" "select key from tokens where status = 1 order by id limit 1;" || true)"
+token="$(read_smoke_token "select key from tokens where status = 1 order by id limit 1;" || true)"
 if [ -z "$token" ]; then
-  token="$(sqlite3 -noheader -batch "$db_path" "select key from tokens order by id limit 1;" || true)"
+  token="$(read_smoke_token "select key from tokens order by id limit 1;" || true)"
 fi
 [ -n "$token" ] || fail "missing token in smoke database"
 

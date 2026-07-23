@@ -139,6 +139,7 @@ assert_contains "$script_dir/smoke_release.sh" "/v1/responses"
 assert_contains "$script_dir/smoke_release.sh" "MODELS_JSON"
 assert_contains "$script_dir/smoke_release.sh" "validate_release_id"
 assert_contains "$script_dir/smoke_release.sh" "realpath -m"
+assert_contains "$script_dir/smoke_release.sh" ".timeout 5000"
 assert_not_contains "$script_dir/smoke_release.sh" "printf '%s' \"\$models_json\" | python3"
 assert_not_contains "$script_dir/smoke_release.sh" "printf '%s' \"\$models_json\" | model_present"
 

@@ -18,8 +18,7 @@ func (modelMonitorHandler) Type() string {
 }
 
 func (modelMonitorHandler) Enabled() bool {
-	setting := operation_setting.GetModelMonitorSetting()
-	return setting.Enabled && setting.AutoProbeEnabled
+	return operation_setting.GetModelMonitorSetting().Enabled
 }
 
 func (modelMonitorHandler) Interval() time.Duration {
@@ -45,6 +44,14 @@ func (modelMonitorHandler) Run(ctx context.Context, task *model.SystemTask, runn
 	payload := modelMonitorTaskPayload{}
 	if err := task.DecodePayload(&payload); err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
+		return
+	}
+	if !payload.Manual && !operation_setting.GetModelMonitorSetting().AutoProbeEnabled {
+		if err := service.MaintainModelMonitorAggregates(common.GetTimestamp()); err != nil {
+			finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
+			return
+		}
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, modelMonitorTaskSummary{}, nil)
 		return
 	}
 
@@ -145,6 +152,9 @@ func runModelMonitorTask(ctx context.Context, report func(processed, total int))
 	summary.SkippedPaths = len(scheduleResult.Skipped)
 	if len(paths) == 0 && report != nil {
 		report(0, 0)
+	}
+	if err := service.MaintainModelMonitorAggregates(common.GetTimestamp()); err != nil {
+		return summary, err
 	}
 	return summary, nil
 }

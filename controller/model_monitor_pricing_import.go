@@ -13,18 +13,7 @@ import (
 )
 
 func ImportModelMonitorPricingSnapshot(c *gin.Context) {
-	userID, ok := c.Get("id")
-	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "authentication is required"})
-		return
-	}
-	user, err := model.GetUserById(userID.(int), false)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "authentication is required"})
-		return
-	}
-	if user.Role < common.RoleAdminUser && !operation_setting.IsModelMonitorPricingImportUser(user.Id) {
-		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "pricing import permission is required"})
+	if !authorizeModelMonitorImport(c) {
 		return
 	}
 
@@ -33,10 +22,47 @@ func ImportModelMonitorPricingSnapshot(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid model monitor pricing payload"})
 		return
 	}
-	result, err := service.ImportNewAPIModelMonitorPricing(request)
+	result, err := service.ImportModelMonitorPricing(request)
+	if err != nil {
+		service.RecordModelMonitorPricingSyncFailure(request.SiteName, err)
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
+}
+
+func ImportModelMonitorActualCosts(c *gin.Context) {
+	if !authorizeModelMonitorImport(c) {
+		return
+	}
+
+	var request dto.ModelMonitorActualCostImportRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid model monitor actual cost payload"})
+		return
+	}
+	result, err := service.ImportModelMonitorActualCosts(request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
+}
+
+func authorizeModelMonitorImport(c *gin.Context) bool {
+	userID, ok := c.Get("id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "authentication is required"})
+		return false
+	}
+	user, err := model.GetUserById(userID.(int), false)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "authentication is required"})
+		return false
+	}
+	if user.Role < common.RoleAdminUser && !operation_setting.IsModelMonitorPricingImportUser(user.Id) {
+		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "pricing import permission is required"})
+		return false
+	}
+	return true
 }

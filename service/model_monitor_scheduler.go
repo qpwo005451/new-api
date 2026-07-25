@@ -22,6 +22,7 @@ type ModelMonitorProbeSchedulerConfig struct {
 	SiteMinInterval   time.Duration
 	BackoffBase       time.Duration
 	BackoffMax        time.Duration
+	Now               func() time.Time
 }
 
 type ModelMonitorProbeCandidate struct {
@@ -61,6 +62,9 @@ func NewModelMonitorProbeScheduler(config ModelMonitorProbeSchedulerConfig) *Mod
 	}
 	if config.BackoffMax < config.BackoffBase {
 		config.BackoffMax = modelMonitorProbeDefaultBackoffMax
+	}
+	if config.Now == nil {
+		config.Now = time.Now
 	}
 	return &ModelMonitorProbeScheduler{config: config}
 }
@@ -103,7 +107,7 @@ func (scheduler *ModelMonitorProbeScheduler) Run(ctx context.Context, candidates
 		ctx = context.Background()
 	}
 
-	now := time.Now()
+	now := scheduler.config.Now()
 	siteCandidates := make(map[int64][]ModelMonitorProbeCandidate)
 	siteOrder := make([]int64, 0)
 	siteNextStart := make(map[int64]time.Time)
@@ -135,7 +139,7 @@ func (scheduler *ModelMonitorProbeScheduler) Run(ctx context.Context, candidates
 		go func() {
 			defer workers.Done()
 			for _, candidate := range candidatesForSite {
-				if delay := time.Until(nextStart); delay > 0 {
+				if delay := nextStart.Sub(scheduler.config.Now()); delay > 0 {
 					timer := time.NewTimer(delay)
 					select {
 					case <-ctx.Done():
@@ -150,7 +154,7 @@ func (scheduler *ModelMonitorProbeScheduler) Run(ctx context.Context, candidates
 					return
 				case globalSlots <- struct{}{}:
 				}
-				startedAt := time.Now()
+				startedAt := scheduler.config.Now()
 				resultMutex.Lock()
 				result.Executed = append(result.Executed, candidate)
 				resultMutex.Unlock()

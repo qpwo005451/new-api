@@ -303,6 +303,7 @@ func migrateDB() error {
 		&ModelMonitorTarget{},
 		&ModelMonitorPriceSnapshot{},
 		&ModelMonitorObservation{},
+		&ModelMonitorAggregateHourly{},
 		&CasbinRule{},
 		&AuthzRole{},
 	)
@@ -363,6 +364,7 @@ func migrateDBFast() error {
 		{&ModelMonitorTarget{}, "ModelMonitorTarget"},
 		{&ModelMonitorPriceSnapshot{}, "ModelMonitorPriceSnapshot"},
 		{&ModelMonitorObservation{}, "ModelMonitorObservation"},
+		{&ModelMonitorAggregateHourly{}, "ModelMonitorAggregateHourly"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))

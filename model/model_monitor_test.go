@@ -74,6 +74,74 @@ func TestModelMonitorAggregateTreatsExpiredUnknownAsLimited(t *testing.T) {
 	assert.Equal(t, ModelMonitorSiteHealthDegraded, summary.Health)
 }
 
+func TestModelMonitorAggregateAppliesPathHysteresis(t *testing.T) {
+	targets := []ModelMonitorTarget{
+		{ID: 1, SiteID: 1, ModelName: "gpt-5", Weight: 5, Enabled: true},
+	}
+	base := []ModelMonitorObservation{
+		{
+			SiteID: 1, TargetID: 1, ChannelID: 10, ModelName: "gpt-5",
+			Status: ModelMonitorStatusAvailable, FailureType: ModelMonitorFailureTypeNone, ObservedAt: 100,
+		},
+	}
+
+	oneFailure := append(append([]ModelMonitorObservation{}, base...), ModelMonitorObservation{
+		SiteID: 1, TargetID: 1, ChannelID: 10, ModelName: "gpt-5",
+		Status: ModelMonitorStatusUnavailable, FailureType: ModelMonitorFailureTypeTimeout, ObservedAt: 200,
+	})
+	summary := BuildModelMonitorSiteSummary(targets, oneFailure, 250, 300)
+	require.Len(t, summary.Models, 1)
+	assert.Equal(t, ModelMonitorStatusAvailable, summary.Models[0].Status)
+
+	threeFailures := append(oneFailure,
+		ModelMonitorObservation{
+			SiteID: 1, TargetID: 1, ChannelID: 10, ModelName: "gpt-5",
+			Status: ModelMonitorStatusUnavailable, FailureType: ModelMonitorFailureTypeConnection, ObservedAt: 300,
+		},
+		ModelMonitorObservation{
+			SiteID: 1, TargetID: 1, ChannelID: 10, ModelName: "gpt-5",
+			Status: ModelMonitorStatusUnavailable, FailureType: ModelMonitorFailureTypeUpstreamServer, ObservedAt: 400,
+		},
+	)
+	summary = BuildModelMonitorSiteSummary(targets, threeFailures, 450, 300)
+	assert.Equal(t, ModelMonitorStatusUnavailable, summary.Models[0].Status)
+
+	oneRecovery := append(threeFailures, ModelMonitorObservation{
+		SiteID: 1, TargetID: 1, ChannelID: 10, ModelName: "gpt-5",
+		Status: ModelMonitorStatusAvailable, FailureType: ModelMonitorFailureTypeNone, ObservedAt: 500,
+	})
+	summary = BuildModelMonitorSiteSummary(targets, oneRecovery, 550, 300)
+	assert.Equal(t, ModelMonitorStatusUnavailable, summary.Models[0].Status)
+
+	twoRecoveries := append(oneRecovery, ModelMonitorObservation{
+		SiteID: 1, TargetID: 1, ChannelID: 10, ModelName: "gpt-5",
+		Status: ModelMonitorStatusAvailable, FailureType: ModelMonitorFailureTypeNone, ObservedAt: 600,
+	})
+	summary = BuildModelMonitorSiteSummary(targets, twoRecoveries, 650, 300)
+	assert.Equal(t, ModelMonitorStatusAvailable, summary.Models[0].Status)
+}
+
+func TestModelMonitorAggregateDerivesLimitedImmediatelyPerPath(t *testing.T) {
+	targets := []ModelMonitorTarget{
+		{ID: 1, SiteID: 1, ModelName: "gpt-5", Weight: 5, Enabled: true},
+	}
+	observations := []ModelMonitorObservation{
+		{
+			SiteID: 1, TargetID: 1, ChannelID: 10, ModelName: "gpt-5",
+			Status: ModelMonitorStatusAvailable, FailureType: ModelMonitorFailureTypeNone, ObservedAt: 100,
+		},
+		{
+			SiteID: 1, TargetID: 1, ChannelID: 10, ModelName: "gpt-5",
+			Status: ModelMonitorStatusLimited, FailureType: ModelMonitorFailureTypeRateLimited, ObservedAt: 200,
+		},
+	}
+
+	summary := BuildModelMonitorSiteSummary(targets, observations, 250, 300)
+	require.Len(t, summary.Models, 1)
+	assert.Equal(t, ModelMonitorStatusLimited, summary.Models[0].Status)
+	assert.Equal(t, 50, summary.Score)
+}
+
 func TestModelMonitorObservationKeepsPriceSnapshotReference(t *testing.T) {
 	setupModelMonitorTestDB(t)
 

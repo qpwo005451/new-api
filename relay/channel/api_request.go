@@ -515,8 +515,13 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		return nil, errors.New("resp is nil")
 	}
 
-	if upID := resp.Header.Get(common2.RequestIdKey); upID != "" {
+	upID := strings.TrimSpace(resp.Header.Get(common2.RequestIdKey))
+	if upID == "" {
+		upID = strings.TrimSpace(resp.Header.Get("X-Request-ID"))
+	}
+	if upID != "" {
 		c.Set(common2.UpstreamRequestIdKey, upID)
+		info.UpstreamRequestId = upID
 	}
 
 	_ = req.Body.Close()

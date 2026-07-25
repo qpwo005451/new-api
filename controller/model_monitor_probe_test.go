@@ -18,8 +18,12 @@ import (
 func TestModelMonitorProbeRecordsFirstResponseAndTotalDuration(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/v1/chat/completions", r.URL.Path)
+		assert.NotEmpty(t, r.Header.Get("X-Request-ID"))
+		w.Header().Set("X-Request-ID", r.Header.Get("X-Request-ID"))
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":3,\"prompt_tokens_details\":{\"cached_tokens\":4,\"cached_creation_tokens\":2},\"cost\":0.0042}}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	t.Cleanup(server.Close)
 
@@ -28,6 +32,13 @@ func TestModelMonitorProbeRecordsFirstResponseAndTotalDuration(t *testing.T) {
 	assert.Equal(t, model.ModelMonitorObservationSourceActive, observation.Source)
 	assert.Equal(t, model.ModelMonitorStatusAvailable, observation.Status)
 	assert.Equal(t, model.ModelMonitorFailureTypeNone, observation.FailureType)
+	assert.NotEmpty(t, observation.UpstreamRequestID)
+	assert.Equal(t, 12, observation.PromptTokens)
+	assert.Equal(t, 3, observation.CompletionTokens)
+	assert.Equal(t, 4, observation.CacheReadTokens)
+	assert.Equal(t, 2, observation.CacheCreationTokens)
+	assert.EqualValues(t, 4200, observation.CostMicrousd)
+	assert.Equal(t, model.ModelMonitorCostKindActualUpstream, observation.CostKind)
 	require.NotNil(t, observation.FirstResponseMS)
 	assert.GreaterOrEqual(t, *observation.FirstResponseMS, int64(0))
 	assert.GreaterOrEqual(t, observation.TotalDurationMS, *observation.FirstResponseMS)

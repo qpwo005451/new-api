@@ -35,7 +35,27 @@ const (
 
 	ModelMonitorPriceSourceUpstreamCatalog = "upstream_catalog"
 
-	ModelMonitorCostKindUnknown = "unknown"
+	ModelMonitorPricingSyncStatusUnknown = "unknown"
+	ModelMonitorPricingSyncStatusOK      = "ok"
+	ModelMonitorPricingSyncStatusError   = "error"
+
+	ModelMonitorCostKindUnknown                  = "unknown"
+	ModelMonitorCostKindEstimatedUpstreamPricing = "estimated_upstream_pricing"
+	ModelMonitorCostKindActualUpstream           = "actual_upstream"
+
+	ModelMonitorModelFamilyGPT      = "gpt"
+	ModelMonitorModelFamilyGrok     = "grok"
+	ModelMonitorModelFamilyClaude   = "claude"
+	ModelMonitorModelFamilyGemini   = "gemini"
+	ModelMonitorModelFamilyDeepSeek = "deepseek"
+	ModelMonitorModelFamilyOther    = "other"
+
+	ModelMonitorModalityText  = "text"
+	ModelMonitorModalityImage = "image"
+
+	ModelMonitorBillingClassPaid    = "paid"
+	ModelMonitorBillingClassFree    = "free"
+	ModelMonitorBillingClassUnknown = "unknown"
 
 	ModelMonitorSiteHealthNormal      = "normal"
 	ModelMonitorSiteHealthDegraded    = "degraded"
@@ -44,12 +64,16 @@ const (
 )
 
 type ModelMonitorSite struct {
-	ID        int64  `json:"id" gorm:"primaryKey"`
-	Name      string `json:"name" gorm:"type:varchar(128);not null;uniqueIndex:uk_model_monitor_site_name"`
-	SiteType  string `json:"site_type" gorm:"type:varchar(32);not null;index"`
-	Enabled   bool   `json:"enabled"`
-	CreatedAt int64  `json:"created_at" gorm:"bigint;index"`
-	UpdatedAt int64  `json:"updated_at" gorm:"bigint"`
+	ID                int64  `json:"id" gorm:"primaryKey"`
+	Name              string `json:"name" gorm:"type:varchar(128);not null;uniqueIndex:uk_model_monitor_site_name"`
+	SiteType          string `json:"site_type" gorm:"type:varchar(32);not null;index"`
+	PricingGroup      string `json:"pricing_group" gorm:"type:varchar(64)"`
+	PricingSyncStatus string `json:"pricing_sync_status" gorm:"type:varchar(32)"`
+	PricingSyncError  string `json:"pricing_sync_error,omitempty" gorm:"type:text"`
+	PricingSyncedAt   int64  `json:"pricing_synced_at" gorm:"bigint"`
+	Enabled           bool   `json:"enabled"`
+	CreatedAt         int64  `json:"created_at" gorm:"bigint;index"`
+	UpdatedAt         int64  `json:"updated_at" gorm:"bigint"`
 }
 
 type ModelMonitorSiteChannel struct {
@@ -71,36 +95,65 @@ type ModelMonitorTarget struct {
 }
 
 type ModelMonitorPriceSnapshot struct {
-	ID          int64  `json:"id" gorm:"primaryKey"`
-	SiteID      int64  `json:"site_id" gorm:"not null;index:idx_model_monitor_price_site_model_time,priority:1"`
-	ModelName   string `json:"model_name" gorm:"type:varchar(255);not null;index:idx_model_monitor_price_site_model_time,priority:2"`
-	Source      string `json:"source" gorm:"type:varchar(64);not null"`
-	Version     string `json:"version" gorm:"type:varchar(128)"`
-	PricingData string `json:"pricing_data" gorm:"type:text;not null"`
-	CapturedAt  int64  `json:"captured_at" gorm:"bigint;index:idx_model_monitor_price_site_model_time,priority:3"`
-	CreatedAt   int64  `json:"created_at" gorm:"bigint;index"`
+	ID           int64  `json:"id" gorm:"primaryKey"`
+	SiteID       int64  `json:"site_id" gorm:"not null;index:idx_model_monitor_price_site_model_time,priority:1"`
+	ModelName    string `json:"model_name" gorm:"type:varchar(255);not null;index:idx_model_monitor_price_site_model_time,priority:2"`
+	Source       string `json:"source" gorm:"type:varchar(64);not null"`
+	Version      string `json:"version" gorm:"type:varchar(128)"`
+	ModelFamily  string `json:"model_family" gorm:"type:varchar(32);index"`
+	Modality     string `json:"modality" gorm:"type:varchar(32);index"`
+	BillingClass string `json:"billing_class" gorm:"type:varchar(32);index"`
+	PricingData  string `json:"pricing_data" gorm:"type:text;not null"`
+	CapturedAt   int64  `json:"captured_at" gorm:"bigint;index:idx_model_monitor_price_site_model_time,priority:3"`
+	CreatedAt    int64  `json:"created_at" gorm:"bigint;index"`
 }
 
 type ModelMonitorObservation struct {
-	ID                int64  `json:"id" gorm:"primaryKey"`
-	SiteID            int64  `json:"site_id" gorm:"not null;index:idx_model_monitor_observation_site_model_time,priority:1"`
-	ChannelID         int    `json:"channel_id" gorm:"not null;index:idx_model_monitor_observation_channel_time,priority:1"`
-	TargetID          int64  `json:"target_id" gorm:"index"`
-	ModelName         string `json:"model_name" gorm:"type:varchar(255);not null;index:idx_model_monitor_observation_site_model_time,priority:2"`
-	UpstreamModelName string `json:"upstream_model_name" gorm:"type:varchar(255)"`
-	Status            string `json:"status" gorm:"type:varchar(32);not null;index"`
-	Source            string `json:"source" gorm:"type:varchar(32);not null;index"`
-	FailureType       string `json:"failure_type" gorm:"type:varchar(64)"`
-	ErrorSummary      string `json:"error_summary" gorm:"type:text"`
-	FirstResponseMS   *int64 `json:"first_response_ms"`
-	TotalDurationMS   int64  `json:"total_duration_ms" gorm:"bigint"`
-	PromptTokens      int    `json:"prompt_tokens"`
-	CompletionTokens  int    `json:"completion_tokens"`
-	PriceSnapshotID   int64  `json:"price_snapshot_id" gorm:"index"`
-	CostMicrousd      int64  `json:"cost_microusd" gorm:"bigint"`
-	CostKind          string `json:"cost_kind" gorm:"type:varchar(32)"`
-	ObservedAt        int64  `json:"observed_at" gorm:"bigint;not null;index:idx_model_monitor_observation_site_model_time,priority:3;index:idx_model_monitor_observation_channel_time,priority:2"`
-	CreatedAt         int64  `json:"created_at" gorm:"bigint;index"`
+	ID                  int64  `json:"id" gorm:"primaryKey"`
+	SiteID              int64  `json:"site_id" gorm:"not null;index:idx_model_monitor_observation_site_model_time,priority:1"`
+	ChannelID           int    `json:"channel_id" gorm:"not null;index:idx_model_monitor_observation_channel_time,priority:1"`
+	TargetID            int64  `json:"target_id" gorm:"index"`
+	ModelName           string `json:"model_name" gorm:"type:varchar(255);not null;index:idx_model_monitor_observation_site_model_time,priority:2"`
+	UpstreamModelName   string `json:"upstream_model_name" gorm:"type:varchar(255)"`
+	UpstreamRequestID   string `json:"upstream_request_id,omitempty" gorm:"type:varchar(128);index:idx_model_monitor_observation_upstream_request"`
+	Status              string `json:"status" gorm:"type:varchar(32);not null;index"`
+	Source              string `json:"source" gorm:"type:varchar(32);not null;index"`
+	FailureType         string `json:"failure_type" gorm:"type:varchar(64)"`
+	ErrorSummary        string `json:"error_summary" gorm:"type:text"`
+	FirstResponseMS     *int64 `json:"first_response_ms"`
+	TotalDurationMS     int64  `json:"total_duration_ms" gorm:"bigint"`
+	PromptTokens        int    `json:"prompt_tokens"`
+	CompletionTokens    int    `json:"completion_tokens"`
+	CacheReadTokens     int    `json:"cache_read_tokens"`
+	CacheCreationTokens int    `json:"cache_creation_tokens"`
+	PriceSnapshotID     int64  `json:"price_snapshot_id" gorm:"index"`
+	CostMicrousd        int64  `json:"cost_microusd" gorm:"bigint"`
+	CostKind            string `json:"cost_kind" gorm:"type:varchar(32)"`
+	ObservedAt          int64  `json:"observed_at" gorm:"bigint;not null;index:idx_model_monitor_observation_site_model_time,priority:3;index:idx_model_monitor_observation_channel_time,priority:2"`
+	CreatedAt           int64  `json:"created_at" gorm:"bigint;index"`
+}
+
+type ModelMonitorAggregateHourly struct {
+	ID                      int64  `json:"id" gorm:"primaryKey"`
+	SiteID                  int64  `json:"site_id" gorm:"not null;uniqueIndex:uk_model_monitor_aggregate_path_hour,priority:1;index"`
+	TargetID                int64  `json:"target_id" gorm:"not null;uniqueIndex:uk_model_monitor_aggregate_path_hour,priority:2;index"`
+	ChannelID               int    `json:"channel_id" gorm:"not null;uniqueIndex:uk_model_monitor_aggregate_path_hour,priority:3;index"`
+	ModelName               string `json:"model_name" gorm:"type:varchar(255);not null;index"`
+	HourStart               int64  `json:"hour_start" gorm:"bigint;not null;uniqueIndex:uk_model_monitor_aggregate_path_hour,priority:4;index"`
+	ObservationCount        int    `json:"observation_count"`
+	AvailableCount          int    `json:"available_count"`
+	LimitedCount            int    `json:"limited_count"`
+	UnavailableCount        int    `json:"unavailable_count"`
+	UnknownCount            int    `json:"unknown_count"`
+	AvailabilityBasisPoints int    `json:"availability_basis_points"`
+	FirstResponseP95MS      *int64 `json:"first_response_p95_ms"`
+	TotalDurationP95MS      int64  `json:"total_duration_p95_ms" gorm:"bigint"`
+	CostMicrousd            int64  `json:"cost_microusd" gorm:"bigint"`
+	ActualCostCount         int    `json:"actual_cost_count"`
+	EstimatedCostCount      int    `json:"estimated_cost_count"`
+	UnknownCostCount        int    `json:"unknown_cost_count"`
+	FailureCounts           string `json:"failure_counts" gorm:"type:text;not null"`
+	UpdatedAt               int64  `json:"updated_at" gorm:"bigint"`
 }
 
 type ModelMonitorEffectiveModel struct {
@@ -276,12 +329,18 @@ func BuildModelMonitorSiteSummary(targets []ModelMonitorTarget, observations []M
 	}
 	sort.Strings(modelNames)
 
-	observationsByModel := make(map[string][]ModelMonitorObservation, len(modelNames))
+	observationsByModelPath := make(map[string]map[[2]int64][]ModelMonitorObservation, len(modelNames))
 	for _, observation := range observations {
 		if _, ok := targetsByModel[observation.ModelName]; !ok {
 			continue
 		}
-		observationsByModel[observation.ModelName] = append(observationsByModel[observation.ModelName], observation)
+		paths := observationsByModelPath[observation.ModelName]
+		if paths == nil {
+			paths = make(map[[2]int64][]ModelMonitorObservation)
+			observationsByModelPath[observation.ModelName] = paths
+		}
+		key := [2]int64{observation.TargetID, int64(observation.ChannelID)}
+		paths[key] = append(paths[key], observation)
 	}
 
 	summary := ModelMonitorSiteSummary{
@@ -293,7 +352,15 @@ func BuildModelMonitorSiteSummary(targets []ModelMonitorTarget, observations []M
 	allUnavailable := len(modelNames) > 0
 	for _, modelName := range modelNames {
 		target := targetsByModel[modelName]
-		status, observedAt := effectiveModelMonitorStatus(observationsByModel[modelName])
+		pathStates := make([]ModelMonitorObservation, 0, len(observationsByModelPath[modelName]))
+		for _, pathObservations := range observationsByModelPath[modelName] {
+			status, observedAt := deriveModelMonitorPathStatus(pathObservations)
+			pathStates = append(pathStates, ModelMonitorObservation{
+				Status:     status,
+				ObservedAt: observedAt,
+			})
+		}
+		status, observedAt := effectiveModelMonitorStatus(pathStates)
 		stale := status == ModelMonitorStatusUnknown && now-observedAt > unknownGraceSeconds
 		effective := ModelMonitorEffectiveModel{
 			ModelName: modelName,
@@ -327,6 +394,48 @@ func BuildModelMonitorSiteSummary(targets []ModelMonitorTarget, observations []M
 		summary.Health = ModelMonitorSiteHealthDegraded
 	}
 	return summary
+}
+
+func deriveModelMonitorPathStatus(observations []ModelMonitorObservation) (string, int64) {
+	if len(observations) == 0 {
+		return ModelMonitorStatusUnknown, 0
+	}
+	ordered := append([]ModelMonitorObservation(nil), observations...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if ordered[i].ObservedAt == ordered[j].ObservedAt {
+			return ordered[i].ID < ordered[j].ID
+		}
+		return ordered[i].ObservedAt < ordered[j].ObservedAt
+	})
+
+	status := ModelMonitorStatusUnknown
+	consecutiveFailures := 0
+	consecutiveSuccesses := 0
+	latestObservedAt := int64(0)
+	for _, observation := range ordered {
+		if observation.ObservedAt > latestObservedAt {
+			latestObservedAt = observation.ObservedAt
+		}
+		switch observation.Status {
+		case ModelMonitorStatusLimited:
+			status = ModelMonitorStatusLimited
+			consecutiveFailures = 0
+			consecutiveSuccesses = 0
+		case ModelMonitorStatusAvailable:
+			consecutiveFailures = 0
+			consecutiveSuccesses++
+			if status == ModelMonitorStatusUnknown || status == ModelMonitorStatusAvailable || consecutiveSuccesses >= 2 {
+				status = ModelMonitorStatusAvailable
+			}
+		case ModelMonitorStatusUnavailable:
+			consecutiveSuccesses = 0
+			consecutiveFailures++
+			if consecutiveFailures >= 3 {
+				status = ModelMonitorStatusUnavailable
+			}
+		}
+	}
+	return status, latestObservedAt
 }
 
 func effectiveModelMonitorStatus(observations []ModelMonitorObservation) (string, int64) {

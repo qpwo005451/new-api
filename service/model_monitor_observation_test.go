@@ -82,6 +82,10 @@ func TestModelMonitorPassiveSuccessRecordsBusinessObservation(t *testing.T) {
 		PromptTokens:     17,
 		CompletionTokens: 9,
 		TotalTokens:      26,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens:         3,
+			CachedCreationTokens: 2,
+		},
 	})
 	require.NoError(t, err)
 
@@ -97,9 +101,30 @@ func TestModelMonitorPassiveSuccessRecordsBusinessObservation(t *testing.T) {
 	assert.Equal(t, model.ModelMonitorCostKindUnknown, observation.CostKind)
 	assert.Equal(t, 17, observation.PromptTokens)
 	assert.Equal(t, 9, observation.CompletionTokens)
+	assert.Equal(t, 3, observation.CacheReadTokens)
+	assert.Equal(t, 2, observation.CacheCreationTokens)
 	require.NotNil(t, observation.FirstResponseMS)
 	assert.Equal(t, int64(120), *observation.FirstResponseMS)
 	assert.GreaterOrEqual(t, observation.TotalDurationMS, *observation.FirstResponseMS)
+}
+
+func TestModelMonitorPassiveUsesUpstreamActualCostWhenProvided(t *testing.T) {
+	db := setupModelMonitorObservationTestDB(t)
+	setModelMonitorObservationEnabled(t, true)
+	createModelMonitorPassivePath(t, db, 704, "gpt-5")
+
+	require.NoError(t, RecordModelMonitorPassiveSuccess(modelMonitorPassiveRelayInfo(704, "gpt-5"), &dto.Usage{
+		PromptTokens:     17,
+		CompletionTokens: 9,
+		TotalTokens:      26,
+		Cost:             0.0042,
+	}))
+
+	var observation model.ModelMonitorObservation
+	require.NoError(t, db.First(&observation).Error)
+	assert.Equal(t, model.ModelMonitorCostKindActualUpstream, observation.CostKind)
+	assert.EqualValues(t, 4200, observation.CostMicrousd)
+	assert.Zero(t, observation.PriceSnapshotID)
 }
 
 func TestModelMonitorPassiveDoesNothingWhenDisabled(t *testing.T) {

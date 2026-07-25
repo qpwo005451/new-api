@@ -59,13 +59,14 @@ func TestModelMonitorSchedulerLimitsGlobalAndSiteConcurrency(t *testing.T) {
 }
 
 func TestModelMonitorSchedulerHonorsSiteIntervalAndExponentialBackoff(t *testing.T) {
+	now := time.Date(2026, time.July, 25, 11, 30, 0, 0, time.UTC)
 	scheduler := NewModelMonitorProbeScheduler(ModelMonitorProbeSchedulerConfig{
 		GlobalConcurrency: 2,
 		SiteMinInterval:   10 * time.Second,
 		BackoffBase:       time.Minute,
 		BackoffMax:        16 * time.Minute,
+		Now:               func() time.Time { return now },
 	})
-	now := time.Date(2026, time.July, 25, 11, 30, 0, 0, time.UTC)
 
 	assert.False(t, scheduler.ShouldRun(ModelMonitorProbeCandidate{
 		SiteID:          1,

@@ -20,6 +20,7 @@ import (
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -84,6 +85,10 @@ func runModelMonitorProbe(ctx context.Context, channel *model.Channel, target mo
 	if err != nil {
 		return observation, err
 	}
+	requestID := common.NewRequestId()
+	info.RuntimeHeadersOverride = relaycommon.GetEffectiveHeaderOverride(info)
+	info.RuntimeHeadersOverride["x-request-id"] = requestID
+	info.UseRuntimeHeadersOverride = true
 	info.DisablePing = true
 	info.InitChannelMeta(probeContext)
 	if err = helper.ModelMappedHelper(probeContext, info, request); err != nil {
@@ -116,6 +121,7 @@ func runModelMonitorProbe(ctx context.Context, channel *model.Channel, target mo
 		setModelMonitorProbeHTTPFailure(&observation, response.StatusCode)
 		return observation, nil
 	}
+	observation.UpstreamRequestID = strings.TrimSpace(info.UpstreamRequestId)
 
 	return consumeModelMonitorProbeStream(ctx, response.Body, startedAt, observation), nil
 }
@@ -219,6 +225,11 @@ func consumeModelMonitorProbeStream(ctx context.Context, body io.ReadCloser, sta
 			observation.Status = model.ModelMonitorStatusAvailable
 			observation.FailureType = model.ModelMonitorFailureTypeNone
 			observation.ErrorSummary = ""
+			if observation.CostKind != model.ModelMonitorCostKindActualUpstream {
+				if err := service.ApplyModelMonitorEstimatedCost(&observation); err != nil {
+					common.SysError("model monitor probe cost estimation failed")
+				}
+			}
 			return observation
 		}
 		if err := detectErrorFromTestResponseBody([]byte(payload)); err != nil {
@@ -226,6 +237,7 @@ func consumeModelMonitorProbeStream(ctx context.Context, body io.ReadCloser, sta
 			setModelMonitorProbeStreamError(&observation, err)
 			return observation
 		}
+		updateModelMonitorProbeUsage([]byte(payload), &observation)
 		if !firstResponseSeen {
 			firstResponseMS := time.Since(startedAt).Milliseconds()
 			observation.FirstResponseMS = &firstResponseMS
@@ -244,6 +256,90 @@ func consumeModelMonitorProbeStream(ctx context.Context, body io.ReadCloser, sta
 	}
 	setModelMonitorProbeFailure(&observation, model.ModelMonitorStatusUnavailable, model.ModelMonitorFailureTypeStreamBreak, "stream ended before completion")
 	return observation
+}
+
+type modelMonitorProbeUsage struct {
+	PromptTokens             int                    `json:"prompt_tokens"`
+	CompletionTokens         int                    `json:"completion_tokens"`
+	InputTokens              int                    `json:"input_tokens"`
+	OutputTokens             int                    `json:"output_tokens"`
+	PromptTokensDetails      dto.InputTokenDetails  `json:"prompt_tokens_details"`
+	InputTokensDetails       *dto.InputTokenDetails `json:"input_tokens_details"`
+	CacheReadInputTokens     int                    `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int                    `json:"cache_creation_input_tokens"`
+	Cost                     any                    `json:"cost"`
+}
+
+type modelMonitorProbeUsageEnvelope struct {
+	Usage    *modelMonitorProbeUsage `json:"usage"`
+	Response *struct {
+		Usage *modelMonitorProbeUsage `json:"usage"`
+	} `json:"response"`
+	Message *struct {
+		Usage *modelMonitorProbeUsage `json:"usage"`
+	} `json:"message"`
+	UsageMetadata *struct {
+		PromptTokenCount        int `json:"promptTokenCount"`
+		CandidatesTokenCount    int `json:"candidatesTokenCount"`
+		CachedContentTokenCount int `json:"cachedContentTokenCount"`
+	} `json:"usageMetadata"`
+}
+
+func updateModelMonitorProbeUsage(payload []byte, observation *model.ModelMonitorObservation) {
+	if observation == nil {
+		return
+	}
+	envelope := modelMonitorProbeUsageEnvelope{}
+	if err := common.Unmarshal(payload, &envelope); err != nil {
+		return
+	}
+	usage := envelope.Usage
+	if usage == nil && envelope.Response != nil {
+		usage = envelope.Response.Usage
+	}
+	if usage == nil && envelope.Message != nil {
+		usage = envelope.Message.Usage
+	}
+	if usage != nil {
+		promptTokens := usage.PromptTokens
+		if promptTokens == 0 {
+			promptTokens = usage.InputTokens
+		}
+		completionTokens := usage.CompletionTokens
+		if completionTokens == 0 {
+			completionTokens = usage.OutputTokens
+		}
+		cacheReadTokens := usage.PromptTokensDetails.CachedTokens
+		cacheCreationTokens := usage.PromptTokensDetails.CacheCreationTokensTotal()
+		if usage.InputTokensDetails != nil {
+			if cacheReadTokens == 0 {
+				cacheReadTokens = usage.InputTokensDetails.CachedTokens
+			}
+			if cacheCreationTokens == 0 {
+				cacheCreationTokens = usage.InputTokensDetails.CacheCreationTokensTotal()
+			}
+		}
+		if cacheReadTokens == 0 {
+			cacheReadTokens = usage.CacheReadInputTokens
+		}
+		if cacheCreationTokens == 0 {
+			cacheCreationTokens = usage.CacheCreationInputTokens
+		}
+		observation.PromptTokens = max(observation.PromptTokens, promptTokens)
+		observation.CompletionTokens = max(observation.CompletionTokens, completionTokens)
+		observation.CacheReadTokens = max(observation.CacheReadTokens, cacheReadTokens)
+		observation.CacheCreationTokens = max(observation.CacheCreationTokens, cacheCreationTokens)
+		if actualCost, ok := usage.Cost.(float64); ok {
+			if err := service.ApplyModelMonitorActualCost(observation, actualCost); err != nil {
+				common.SysError("model monitor probe actual cost parsing failed")
+			}
+		}
+	}
+	if envelope.UsageMetadata != nil {
+		observation.PromptTokens = max(observation.PromptTokens, envelope.UsageMetadata.PromptTokenCount)
+		observation.CompletionTokens = max(observation.CompletionTokens, envelope.UsageMetadata.CandidatesTokenCount)
+		observation.CacheReadTokens = max(observation.CacheReadTokens, envelope.UsageMetadata.CachedContentTokenCount)
+	}
 }
 
 func setModelMonitorProbeHTTPFailure(observation *model.ModelMonitorObservation, statusCode int) {

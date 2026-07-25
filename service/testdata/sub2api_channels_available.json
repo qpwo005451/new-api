@@ -1,0 +1,45 @@
+{
+  "code": 0,
+  "message": "success",
+  "data": [
+    {
+      "name": "Primary",
+      "description": "user-visible channel",
+      "platforms": [
+        {
+          "platform": "openai",
+          "groups": [
+            {
+              "id": 12,
+              "name": "CodeX",
+              "platform": "openai",
+              "subscription_type": "standard",
+              "rate_multiplier": 0.8,
+              "peak_rate_enabled": false,
+              "peak_start": "",
+              "peak_end": "",
+              "peak_rate_multiplier": 1,
+              "is_exclusive": false
+            }
+          ],
+          "supported_models": [
+            {
+              "name": "gpt-5.4",
+              "platform": "openai",
+              "pricing": {
+                "billing_mode": "token",
+                "input_price": 0.00000175,
+                "output_price": 0.000014,
+                "cache_write_price": 0.00000175,
+                "cache_read_price": 0.000000175,
+                "image_output_price": null,
+                "per_request_price": null,
+                "intervals": []
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

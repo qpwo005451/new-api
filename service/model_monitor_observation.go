@@ -17,17 +17,21 @@ import (
 )
 
 type modelMonitorPassiveObservationInput struct {
-	ChannelID         int
-	ModelName         string
-	UpstreamModelName string
-	Status            string
-	FailureType       string
-	ErrorSummary      string
-	FirstResponseMS   *int64
-	TotalDurationMS   int64
-	PromptTokens      int
-	CompletionTokens  int
-	ObservedAt        int64
+	ChannelID           int
+	ModelName           string
+	UpstreamModelName   string
+	UpstreamRequestID   string
+	Status              string
+	FailureType         string
+	ErrorSummary        string
+	FirstResponseMS     *int64
+	TotalDurationMS     int64
+	PromptTokens        int
+	CompletionTokens    int
+	CacheReadTokens     int
+	CacheCreationTokens int
+	ActualCostUSD       *float64
+	ObservedAt          int64
 }
 
 func RecordModelMonitorPassiveSuccess(info *relaycommon.RelayInfo, usage *dto.Usage) error {
@@ -94,6 +98,11 @@ func newModelMonitorPassiveSuccessInput(info *relaycommon.RelayInfo, usage *dto.
 	if usage != nil {
 		input.PromptTokens = usage.PromptTokens
 		input.CompletionTokens = usage.CompletionTokens
+		input.CacheReadTokens = usage.PromptTokensDetails.CachedTokens
+		input.CacheCreationTokens = usage.PromptTokensDetails.CacheCreationTokensTotal()
+		if actualCostUSD, ok := usage.Cost.(float64); ok {
+			input.ActualCostUSD = &actualCostUSD
+		}
 	}
 	if info.HasSendResponse() {
 		firstResponseMS := info.FirstResponseTime.Sub(info.StartTime).Milliseconds()
@@ -156,6 +165,7 @@ func newModelMonitorPassiveObservationInput(info *relaycommon.RelayInfo) (modelM
 		ChannelID:         info.ChannelId,
 		ModelName:         modelName,
 		UpstreamModelName: strings.TrimSpace(info.UpstreamModelName),
+		UpstreamRequestID: strings.TrimSpace(info.UpstreamRequestId),
 		TotalDurationMS:   totalDurationMS,
 		ObservedAt:        common.GetTimestamp(),
 	}, nil
@@ -173,22 +183,35 @@ func persistModelMonitorPassiveObservations(input modelMonitorPassiveObservation
 	observations := make([]model.ModelMonitorObservation, 0, len(paths))
 	for _, path := range paths {
 		observations = append(observations, model.ModelMonitorObservation{
-			SiteID:            path.SiteID,
-			TargetID:          path.TargetID,
-			ChannelID:         path.ChannelID,
-			ModelName:         path.ModelName,
-			UpstreamModelName: input.UpstreamModelName,
-			Status:            input.Status,
-			Source:            model.ModelMonitorObservationSourcePassive,
-			FailureType:       input.FailureType,
-			ErrorSummary:      input.ErrorSummary,
-			FirstResponseMS:   input.FirstResponseMS,
-			TotalDurationMS:   input.TotalDurationMS,
-			PromptTokens:      input.PromptTokens,
-			CompletionTokens:  input.CompletionTokens,
-			CostKind:          model.ModelMonitorCostKindUnknown,
-			ObservedAt:        input.ObservedAt,
+			SiteID:              path.SiteID,
+			TargetID:            path.TargetID,
+			ChannelID:           path.ChannelID,
+			ModelName:           path.ModelName,
+			UpstreamModelName:   input.UpstreamModelName,
+			UpstreamRequestID:   input.UpstreamRequestID,
+			Status:              input.Status,
+			Source:              model.ModelMonitorObservationSourcePassive,
+			FailureType:         input.FailureType,
+			ErrorSummary:        input.ErrorSummary,
+			FirstResponseMS:     input.FirstResponseMS,
+			TotalDurationMS:     input.TotalDurationMS,
+			PromptTokens:        input.PromptTokens,
+			CompletionTokens:    input.CompletionTokens,
+			CacheReadTokens:     input.CacheReadTokens,
+			CacheCreationTokens: input.CacheCreationTokens,
+			CostKind:            model.ModelMonitorCostKindUnknown,
+			ObservedAt:          input.ObservedAt,
 		})
+		observation := &observations[len(observations)-1]
+		if input.ActualCostUSD != nil {
+			if err := ApplyModelMonitorActualCost(observation, *input.ActualCostUSD); err != nil {
+				return err
+			}
+		} else {
+			if err := ApplyModelMonitorEstimatedCost(observation); err != nil {
+				return err
+			}
+		}
 	}
 	return model.DB.Create(&observations).Error
 }

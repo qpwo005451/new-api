@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestModelMonitorHandlerIsDisabledUntilBothSwitchesAreEnabled(t *testing.T) {
+func TestModelMonitorHandlerRunsMaintenanceWhenMonitorIsEnabled(t *testing.T) {
 	original := *operation_setting.GetModelMonitorSetting()
 	t.Cleanup(func() {
 		*operation_setting.GetModelMonitorSetting() = original
@@ -25,10 +25,10 @@ func TestModelMonitorHandlerIsDisabledUntilBothSwitchesAreEnabled(t *testing.T) 
 		AutoProbeIntervalMinutes: 15,
 		UnknownGraceMinutes:      5,
 	}
-	assert.False(t, modelMonitorHandler{}.Enabled())
-
-	operation_setting.GetModelMonitorSetting().AutoProbeEnabled = true
 	assert.True(t, modelMonitorHandler{}.Enabled())
+
+	operation_setting.GetModelMonitorSetting().Enabled = false
+	assert.False(t, modelMonitorHandler{}.Enabled())
 }
 
 func TestModelMonitorTaskCountsConfiguredTargetsAndMergesManualRuns(t *testing.T) {
@@ -40,6 +40,7 @@ func TestModelMonitorTaskCountsConfiguredTargetsAndMergesManualRuns(t *testing.T
 		&model.ModelMonitorSiteChannel{},
 		&model.ModelMonitorTarget{},
 		&model.ModelMonitorObservation{},
+		&model.ModelMonitorAggregateHourly{},
 		&model.Channel{},
 	))
 
@@ -75,6 +76,7 @@ func TestModelMonitorTaskProbesConfirmedChannelPathsAndPersistsObservations(t *t
 		&model.ModelMonitorSiteChannel{},
 		&model.ModelMonitorTarget{},
 		&model.ModelMonitorObservation{},
+		&model.ModelMonitorAggregateHourly{},
 	))
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -298,6 +298,11 @@ func migrateDB() error {
 		&SystemTask{},
 		&SystemTaskLock{},
 		&ChannelBalanceProtection{},
+		&ModelMonitorSite{},
+		&ModelMonitorSiteChannel{},
+		&ModelMonitorTarget{},
+		&ModelMonitorPriceSnapshot{},
+		&ModelMonitorObservation{},
 		&CasbinRule{},
 		&AuthzRole{},
 	)
@@ -353,6 +358,11 @@ func migrateDBFast() error {
 		{&SystemTask{}, "SystemTask"},
 		{&SystemTaskLock{}, "SystemTaskLock"},
 		{&ChannelBalanceProtection{}, "ChannelBalanceProtection"},
+		{&ModelMonitorSite{}, "ModelMonitorSite"},
+		{&ModelMonitorSiteChannel{}, "ModelMonitorSiteChannel"},
+		{&ModelMonitorTarget{}, "ModelMonitorTarget"},
+		{&ModelMonitorPriceSnapshot{}, "ModelMonitorPriceSnapshot"},
+		{&ModelMonitorObservation{}, "ModelMonitorObservation"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))

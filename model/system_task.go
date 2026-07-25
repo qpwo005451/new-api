@@ -21,6 +21,7 @@ const (
 	SystemTaskTypeMultiKeyRecovery  = "multi_key_recovery"
 	SystemTaskTypeModelUpdate       = "model_update"
 	SystemTaskTypeBalanceProtection = "balance_protection"
+	SystemTaskTypeModelMonitor      = "model_monitor"
 	SystemTaskTypeMidjourneyPoll    = "midjourney_poll"
 	SystemTaskTypeAsyncTaskPoll     = "async_task_poll"
 )

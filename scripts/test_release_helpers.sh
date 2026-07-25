@@ -250,7 +250,7 @@ FRONTEND_CACHE_ROOT="$frontend_cache_root" \
 
 [ ! -e "$build_release_src" ] || fail "release source worktree was not removed after build"
 grep -Fxq "BUN_BIN=$fake_bin/bun" "$build_release_root/manifest.env" || fail "release manifest did not record the bun binary"
-expected_web_lock_sha="$(sha256sum "$repo_root/web/bun.lock" | awk '{print $1}')"
+expected_web_lock_sha="$(git -C "$repo_root" show HEAD:web/bun.lock | sha256sum | awk '{print $1}')"
 grep -Fxq "WEB_LOCK_SHA256=$expected_web_lock_sha" "$build_release_root/manifest.env" || fail "release manifest did not record the frontend lockfile"
 frontend_cache_key="$(sed -n 's/^FRONTEND_CACHE_KEY=//p' "$build_release_root/manifest.env")"
 [ -n "$frontend_cache_key" ] || fail "release manifest did not record the frontend cache key"

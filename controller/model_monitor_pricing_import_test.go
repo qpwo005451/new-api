@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -52,6 +53,17 @@ func performModelMonitorPricingImport(
 
 	ImportModelMonitorPricingSnapshot(context)
 	return recorder
+}
+
+func setModelMonitorPricingImportUserIDs(t *testing.T, userIDs []int) {
+	t.Helper()
+
+	setting := operation_setting.GetModelMonitorSetting()
+	original := *setting
+	t.Cleanup(func() {
+		*setting = original
+	})
+	setting.PricingImportUserIDs = userIDs
 }
 
 func TestModelMonitorPricingImportCreatesSanitizedSnapshotsAndDeduplicates(t *testing.T) {
@@ -107,6 +119,7 @@ func TestModelMonitorPricingImportCreatesSanitizedSnapshotsAndDeduplicates(t *te
 
 func TestModelMonitorPricingImportRejectsNonAdminAndIncompletePricing(t *testing.T) {
 	db := setupModelMonitorPricingImportTestDB(t)
+	setModelMonitorPricingImportUserIDs(t, nil)
 	user := model.User{Username: "pricing-user", AffCode: "pricing-user-aff", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
 	require.NoError(t, db.Create(&user).Error)
 
@@ -131,4 +144,23 @@ func TestModelMonitorPricingImportRejectsNonAdminAndIncompletePricing(t *testing
 	var snapshotCount int64
 	require.NoError(t, db.Model(&model.ModelMonitorPriceSnapshot{}).Count(&snapshotCount).Error)
 	assert.Zero(t, snapshotCount)
+}
+
+func TestModelMonitorPricingImportAllowsConfiguredOrdinaryUser(t *testing.T) {
+	db := setupModelMonitorPricingImportTestDB(t)
+	user := model.User{Username: "pricing-importer", AffCode: "pricing-importer-aff", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, db.Create(&user).Error)
+	setModelMonitorPricingImportUserIDs(t, []int{user.Id})
+
+	response := performModelMonitorPricingImport(t, user.Id, `{
+		"site_name":"https://688.qzz.io",
+		"site_type":"newapi",
+		"pricing_version":"catalog-v1",
+		"models":[{"model_name":"gpt-5","quota_type":0,"model_ratio":1,"completion_ratio":1}]
+	}`)
+	require.Equal(t, http.StatusOK, response.Code)
+
+	var snapshotCount int64
+	require.NoError(t, db.Model(&model.ModelMonitorPriceSnapshot{}).Count(&snapshotCount).Error)
+	assert.EqualValues(t, 1, snapshotCount)
 }

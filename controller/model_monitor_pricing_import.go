@@ -7,6 +7,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
 )
@@ -22,8 +23,8 @@ func ImportModelMonitorPricingSnapshot(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "authentication is required"})
 		return
 	}
-	if user.Role < common.RoleAdminUser {
-		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "administrator access is required"})
+	if user.Role < common.RoleAdminUser && !operation_setting.IsModelMonitorPricingImportUser(user.Id) {
+		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "pricing import permission is required"})
 		return
 	}
 

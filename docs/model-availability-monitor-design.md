@@ -406,7 +406,9 @@ go test ./service -run 'TestModelMonitorScheduler|TestModelMonitorBackoff'
 - 先从用户实际使用的 NewAPI 和 sub2api 站点采集并脱敏保存协议 fixture，再实现两个显式适配器。
 - 适配器仅负责模型目录和价格快照；不复用现有余额查询的类型 switch，也不改变渠道余额保护逻辑。
 - 任务在探测前按需同步定价；同步失败时允许继续探测，但成本标记为未知或沿用已关联的旧快照。
-- 对需要网页登录态的 NewAPI 站点，AI Balance 插件保留上游会话并向 `POST /api/model-monitor/pricing-snapshots` 推送脱敏目录。该接口使用已有管理员普通 API key 或管理员会话认证；NewAPI 不保存上游账号、密码、Cookie 或原始响应。
+- 对需要网页登录态的 NewAPI 站点，AI Balance 插件保留上游会话并向 `POST /api/model-monitor/pricing-snapshots` 推送脱敏目录。该接口使用已有管理员普通 API key、管理员会话，或 `model_monitor_setting.pricing_import_user_ids` 中普通用户的普通 API key；NewAPI 不保存上游账号、密码、Cookie 或原始响应。
+- 多设备部署时，为每台设备创建独立的普通 Token，并把所属普通用户 ID 写入 `model_monitor_setting.pricing_import_user_ids`。该配置通过根管理员的通用设置接口持久化，例如 `PUT /api/option/`，键为 `model_monitor_setting.pricing_import_user_ids`，值为 JSON 数组 `[123]`。
+- Token 的既有 IP 白名单应填写加密隧道或虚拟局域网中可稳定识别的来源 IP/CIDR。HTTP 仅适用于隧道传输层已经加密且导入端口未直接暴露公网的部署。
 
 **通过条件**
 

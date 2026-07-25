@@ -217,20 +217,12 @@ func consumeModelMonitorProbeStream(ctx context.Context, body io.ReadCloser, sta
 			continue
 		}
 		if payload == "[DONE]" {
-			observation.TotalDurationMS = time.Since(startedAt).Milliseconds()
 			if !firstResponseSeen {
+				observation.TotalDurationMS = time.Since(startedAt).Milliseconds()
 				setModelMonitorProbeFailure(&observation, model.ModelMonitorStatusUnavailable, model.ModelMonitorFailureTypeInvalidStream, "stream completed without an event")
 				return observation
 			}
-			observation.Status = model.ModelMonitorStatusAvailable
-			observation.FailureType = model.ModelMonitorFailureTypeNone
-			observation.ErrorSummary = ""
-			if observation.CostKind != model.ModelMonitorCostKindActualUpstream {
-				if err := service.ApplyModelMonitorEstimatedCost(&observation); err != nil {
-					common.SysError("model monitor probe cost estimation failed")
-				}
-			}
-			return observation
+			return completeModelMonitorProbe(startedAt, observation)
 		}
 		if err := detectErrorFromTestResponseBody([]byte(payload)); err != nil {
 			observation.TotalDurationMS = time.Since(startedAt).Milliseconds()
@@ -242,6 +234,9 @@ func consumeModelMonitorProbeStream(ctx context.Context, body io.ReadCloser, sta
 			firstResponseMS := time.Since(startedAt).Milliseconds()
 			observation.FirstResponseMS = &firstResponseMS
 			firstResponseSeen = true
+		}
+		if isModelMonitorProbeResponsesCompleted([]byte(payload)) {
+			return completeModelMonitorProbe(startedAt, observation)
 		}
 	}
 
@@ -255,6 +250,26 @@ func consumeModelMonitorProbeStream(ctx context.Context, body io.ReadCloser, sta
 		return observation
 	}
 	setModelMonitorProbeFailure(&observation, model.ModelMonitorStatusUnavailable, model.ModelMonitorFailureTypeStreamBreak, "stream ended before completion")
+	return observation
+}
+
+func isModelMonitorProbeResponsesCompleted(payload []byte) bool {
+	event := struct {
+		Type string `json:"type"`
+	}{}
+	return common.Unmarshal(payload, &event) == nil && event.Type == "response.completed"
+}
+
+func completeModelMonitorProbe(startedAt time.Time, observation model.ModelMonitorObservation) model.ModelMonitorObservation {
+	observation.TotalDurationMS = time.Since(startedAt).Milliseconds()
+	observation.Status = model.ModelMonitorStatusAvailable
+	observation.FailureType = model.ModelMonitorFailureTypeNone
+	observation.ErrorSummary = ""
+	if observation.CostKind != model.ModelMonitorCostKindActualUpstream {
+		if err := service.ApplyModelMonitorEstimatedCost(&observation); err != nil {
+			common.SysError("model monitor probe cost estimation failed")
+		}
+	}
 	return observation
 }
 

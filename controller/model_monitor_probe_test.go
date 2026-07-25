@@ -44,6 +44,37 @@ func TestModelMonitorProbeRecordsFirstResponseAndTotalDuration(t *testing.T) {
 	assert.GreaterOrEqual(t, observation.TotalDurationMS, *observation.FirstResponseMS)
 }
 
+func TestModelMonitorProbeAcceptsResponsesCompletedTerminalEvent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/responses", r.URL.Path)
+		assert.NotEmpty(t, r.Header.Get("X-Request-ID"))
+		w.Header().Set("X-Request-ID", r.Header.Get("X-Request-ID"))
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: response.output_text.delta\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n"))
+		_, _ = w.Write([]byte("event: response.completed\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":12,\"output_tokens\":3,\"input_tokens_details\":{\"cached_tokens\":4},\"cost\":0.0042}}}\n\n"))
+	}))
+	t.Cleanup(server.Close)
+
+	observation, err := runModelMonitorProbe(
+		context.Background(),
+		modelMonitorProbeTestChannel(server.URL),
+		modelMonitorProbeTestTarget(string(constant.EndpointTypeOpenAIResponse)),
+	)
+	require.NoError(t, err)
+	assert.Equal(t, model.ModelMonitorStatusAvailable, observation.Status)
+	assert.Equal(t, model.ModelMonitorFailureTypeNone, observation.FailureType)
+	assert.NotEmpty(t, observation.UpstreamRequestID)
+	assert.Equal(t, 12, observation.PromptTokens)
+	assert.Equal(t, 3, observation.CompletionTokens)
+	assert.Equal(t, 4, observation.CacheReadTokens)
+	assert.EqualValues(t, 4200, observation.CostMicrousd)
+	assert.Equal(t, model.ModelMonitorCostKindActualUpstream, observation.CostKind)
+	require.NotNil(t, observation.FirstResponseMS)
+	assert.GreaterOrEqual(t, observation.TotalDurationMS, *observation.FirstResponseMS)
+}
+
 func TestModelMonitorProbeClassifiesHTTPFailures(t *testing.T) {
 	testCases := []struct {
 		name        string

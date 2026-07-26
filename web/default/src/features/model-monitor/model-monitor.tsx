@@ -140,205 +140,211 @@ export function ModelMonitor() {
   }
 
   return (
-    <SectionPageLayout fixedContent={false}>
-      <SectionPageLayout.Title>
-        <span className='flex items-center gap-2'>
-          <Activity className='size-5' aria-hidden='true' />
-          {t('Model Availability')}
-        </span>
-      </SectionPageLayout.Title>
-      <SectionPageLayout.Actions>
-        <Button
-          type='button'
-          variant='outline'
-          onClick={() => void invalidate()}
-          disabled={sitesQuery.isFetching}
-        >
-          <RefreshCw
-            data-icon='inline-start'
-            className={sitesQuery.isFetching ? 'animate-spin' : undefined}
-            aria-hidden='true'
-          />
-          {t('Refresh')}
-        </Button>
-        <Button
-          type='button'
-          variant='outline'
-          onClick={() => setRunDialogOpen(true)}
-          disabled={!config.setting.enabled || runMutation.isPending}
-        >
-          <Play data-icon='inline-start' aria-hidden='true' />
-          {t('Run monitor')}
-        </Button>
-        <Button
-          type='button'
-          onClick={() => saveMutation.mutate(config)}
-          disabled={saveMutation.isPending}
-        >
-          <Save data-icon='inline-start' aria-hidden='true' />
-          {saveMutation.isPending ? t('Saving...') : t('Save configuration')}
-        </Button>
-      </SectionPageLayout.Actions>
-      <SectionPageLayout.Content>
-        <div className='space-y-4'>
-          <Card>
-            <CardHeader>
-              <CardTitle>{t('Monitoring controls')}</CardTitle>
-              <CardDescription>
-                {t(
-                  'Passive observations never change channel routing. Active runs send controlled upstream checks.'
-                )}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className='grid gap-4 md:grid-cols-2 xl:grid-cols-4'>
-              <label className='flex items-center justify-between gap-3 rounded-lg border p-3'>
-                <span>
-                  <span className='block font-medium'>
-                    {t('Monitoring enabled')}
+    <>
+      <SectionPageLayout fixedContent={false}>
+        <SectionPageLayout.Title>
+          <span className='flex items-center gap-2'>
+            <Activity className='size-5' aria-hidden='true' />
+            {t('Model Availability')}
+          </span>
+        </SectionPageLayout.Title>
+        <SectionPageLayout.Actions>
+          <Button
+            type='button'
+            variant='outline'
+            onClick={() => void invalidate()}
+            disabled={sitesQuery.isFetching}
+          >
+            <RefreshCw
+              data-icon='inline-start'
+              className={sitesQuery.isFetching ? 'animate-spin' : undefined}
+              aria-hidden='true'
+            />
+            {t('Refresh')}
+          </Button>
+          <Button
+            type='button'
+            variant='outline'
+            onClick={() => setRunDialogOpen(true)}
+            disabled={!config.setting.enabled || runMutation.isPending}
+          >
+            <Play data-icon='inline-start' aria-hidden='true' />
+            {t('Run monitor')}
+          </Button>
+          <Button
+            type='button'
+            onClick={() => saveMutation.mutate(config)}
+            disabled={saveMutation.isPending}
+          >
+            <Save data-icon='inline-start' aria-hidden='true' />
+            {saveMutation.isPending
+              ? t('Saving...')
+              : t('Save configuration')}
+          </Button>
+        </SectionPageLayout.Actions>
+        <SectionPageLayout.Content>
+          <div className='space-y-4'>
+            <Card>
+              <CardHeader>
+                <CardTitle>{t('Monitoring controls')}</CardTitle>
+                <CardDescription>
+                  {t(
+                    'Passive observations never change channel routing. Active runs send controlled upstream checks.'
+                  )}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className='grid gap-4 md:grid-cols-2 xl:grid-cols-4'>
+                <label className='flex items-center justify-between gap-3 rounded-lg border p-3'>
+                  <span>
+                    <span className='block font-medium'>
+                      {t('Monitoring enabled')}
+                    </span>
+                    <span className='text-muted-foreground text-xs'>
+                      {t('Collect passive observations')}
+                    </span>
                   </span>
-                  <span className='text-muted-foreground text-xs'>
-                    {t('Collect passive observations')}
+                  <Switch
+                    checked={config.setting.enabled}
+                    onCheckedChange={(enabled) =>
+                      setDraft({
+                        ...config,
+                        setting: { ...config.setting, enabled },
+                      })
+                    }
+                  />
+                </label>
+                <label className='flex items-center justify-between gap-3 rounded-lg border p-3'>
+                  <span>
+                    <span className='block font-medium'>
+                      {t('Scheduled probes')}
+                    </span>
+                    <span className='text-muted-foreground text-xs'>
+                      {t('Run controlled upstream checks')}
+                    </span>
                   </span>
-                </span>
-                <Switch
-                  checked={config.setting.enabled}
-                  onCheckedChange={(enabled) =>
-                    setDraft({
-                      ...config,
-                      setting: { ...config.setting, enabled },
-                    })
-                  }
-                />
-              </label>
-              <label className='flex items-center justify-between gap-3 rounded-lg border p-3'>
-                <span>
-                  <span className='block font-medium'>
-                    {t('Scheduled probes')}
+                  <Switch
+                    checked={config.setting.auto_probe_enabled}
+                    onCheckedChange={(auto_probe_enabled) =>
+                      setDraft({
+                        ...config,
+                        setting: { ...config.setting, auto_probe_enabled },
+                      })
+                    }
+                  />
+                </label>
+                <label className='grid gap-1.5 text-sm'>
+                  <span className='font-medium'>
+                    {t('Probe interval (minutes)')}
                   </span>
-                  <span className='text-muted-foreground text-xs'>
-                    {t('Run controlled upstream checks')}
+                  <Input
+                    type='number'
+                    min={1}
+                    value={config.setting.auto_probe_interval_minutes}
+                    onChange={(event) =>
+                      setDraft({
+                        ...config,
+                        setting: {
+                          ...config.setting,
+                          auto_probe_interval_minutes: Number(
+                            event.target.value
+                          ),
+                        },
+                      })
+                    }
+                  />
+                </label>
+                <label className='grid gap-1.5 text-sm'>
+                  <span className='font-medium'>
+                    {t('Unknown grace (minutes)')}
                   </span>
-                </span>
-                <Switch
-                  checked={config.setting.auto_probe_enabled}
-                  onCheckedChange={(auto_probe_enabled) =>
-                    setDraft({
-                      ...config,
-                      setting: { ...config.setting, auto_probe_enabled },
-                    })
-                  }
-                />
-              </label>
-              <label className='grid gap-1.5 text-sm'>
-                <span className='font-medium'>
-                  {t('Probe interval (minutes)')}
-                </span>
-                <Input
-                  type='number'
-                  min={1}
-                  value={config.setting.auto_probe_interval_minutes}
-                  onChange={(event) =>
-                    setDraft({
-                      ...config,
-                      setting: {
-                        ...config.setting,
-                        auto_probe_interval_minutes: Number(event.target.value),
-                      },
-                    })
-                  }
-                />
-              </label>
-              <label className='grid gap-1.5 text-sm'>
-                <span className='font-medium'>
-                  {t('Unknown grace (minutes)')}
-                </span>
-                <Input
-                  type='number'
-                  min={1}
-                  value={config.setting.unknown_grace_minutes}
-                  onChange={(event) =>
-                    setDraft({
-                      ...config,
-                      setting: {
-                        ...config.setting,
-                        unknown_grace_minutes: Number(event.target.value),
-                      },
-                    })
-                  }
-                />
-              </label>
-            </CardContent>
-          </Card>
+                  <Input
+                    type='number'
+                    min={1}
+                    value={config.setting.unknown_grace_minutes}
+                    onChange={(event) =>
+                      setDraft({
+                        ...config,
+                        setting: {
+                          ...config.setting,
+                          unknown_grace_minutes: Number(event.target.value),
+                        },
+                      })
+                    }
+                  />
+                </label>
+              </CardContent>
+            </Card>
 
-          <div className='grid gap-3 lg:grid-cols-2'>
-            {sites.map((site) => (
-              <SiteSummaryCard
-                key={site.site.id}
-                site={site}
-                onOpen={() => setSiteId(site.site.id)}
-              />
-            ))}
-          </div>
+            <div className='grid gap-3 lg:grid-cols-2'>
+              {sites.map((site) => (
+                <SiteSummaryCard
+                  key={site.site.id}
+                  site={site}
+                  onOpen={() => setSiteId(site.site.id)}
+                />
+              ))}
+            </div>
 
-          <MonitorTasksPanel />
+            <MonitorTasksPanel />
 
-          <Card>
-            <CardHeader>
-              <CardTitle>{t('Site configuration')}</CardTitle>
-              <CardDescription>
-                {t(
-                  'Changes keep existing monitor history. Removing a target disables it instead of deleting its observations.'
-                )}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className='space-y-3'>
-              <div className='flex flex-wrap gap-2'>
-                <Button
-                  type='button'
-                  variant='outline'
-                  onClick={() => setShowEditor((value) => !value)}
-                >
-                  {showEditor ? t('Hide editor') : t('Edit configuration')}
-                </Button>
-                {showEditor && (
+            <Card>
+              <CardHeader>
+                <CardTitle>{t('Site configuration')}</CardTitle>
+                <CardDescription>
+                  {t(
+                    'Changes keep existing monitor history. Removing a target disables it instead of deleting its observations.'
+                  )}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className='space-y-3'>
+                <div className='flex flex-wrap gap-2'>
                   <Button
                     type='button'
                     variant='outline'
-                    onClick={() =>
-                      setDraft({
-                        ...config,
-                        sites: [...config.sites, createSite()],
-                      })
-                    }
+                    onClick={() => setShowEditor((value) => !value)}
                   >
-                    <Plus data-icon='inline-start' aria-hidden='true' />
-                    {t('Add site')}
+                    {showEditor ? t('Hide editor') : t('Edit configuration')}
                   </Button>
-                )}
-              </div>
-              {showEditor && (
-                <div className='space-y-3'>
-                  {config.sites.map((site, index) => (
-                    <SiteEditor
-                      key={site.id ?? `new-${index}`}
-                      site={site}
-                      onChange={(next) => replaceSite(index, next)}
-                      onRemove={() =>
+                  {showEditor && (
+                    <Button
+                      type='button'
+                      variant='outline'
+                      onClick={() =>
                         setDraft({
                           ...config,
-                          sites: config.sites.filter(
-                            (_, itemIndex) => itemIndex !== index
-                          ),
+                          sites: [...config.sites, createSite()],
                         })
                       }
-                    />
-                  ))}
+                    >
+                      <Plus data-icon='inline-start' aria-hidden='true' />
+                      {t('Add site')}
+                    </Button>
+                  )}
                 </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      </SectionPageLayout.Content>
+                {showEditor && (
+                  <div className='space-y-3'>
+                    {config.sites.map((site, index) => (
+                      <SiteEditor
+                        key={site.id ?? `new-${index}`}
+                        site={site}
+                        onChange={(next) => replaceSite(index, next)}
+                        onRemove={() =>
+                          setDraft({
+                            ...config,
+                            sites: config.sites.filter(
+                              (_, itemIndex) => itemIndex !== index
+                            ),
+                          })
+                        }
+                      />
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </SectionPageLayout.Content>
+      </SectionPageLayout>
       <RunMonitorDialog
         open={runDialogOpen}
         pending={runMutation.isPending}
@@ -349,6 +355,6 @@ export function ModelMonitor() {
         siteId={siteId}
         onOpenChange={(open) => !open && setSiteId(null)}
       />
-    </SectionPageLayout>
+    </>
   )
 }

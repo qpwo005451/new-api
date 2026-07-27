@@ -61,6 +61,9 @@ export type ModelMonitorConfig = {
 export type ModelMonitorEffectiveModel = {
   model_name: string
   status: ModelMonitorStatus
+  latest_status: ModelMonitorStatus
+  latest_failure_type?: string
+  latest_error_summary?: string
   weight: number
   stale: boolean
 }
@@ -91,7 +94,7 @@ export type ModelMonitorObservation = {
   source: 'active' | 'passive'
   failure_type: string
   error_summary?: string
-  first_response_ms?: number
+  first_response_ms?: number | null
   total_duration_ms: number
   observed_at: number
 }

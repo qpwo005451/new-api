@@ -138,8 +138,8 @@ func GetModelMonitorModel(c *gin.Context) {
 		siteID,
 		modelName,
 		model.ModelMonitorPriceSourceUpstreamCatalog,
-	).Order("captured_at DESC, id DESC").First(&priceSnapshot)
-	if priceSnapshotQuery.Error != nil && !errors.Is(priceSnapshotQuery.Error, gorm.ErrRecordNotFound) {
+	).Order("captured_at DESC, id DESC").Limit(1).Find(&priceSnapshot)
+	if priceSnapshotQuery.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": priceSnapshotQuery.Error.Error()})
 		return
 	}
@@ -228,7 +228,7 @@ func EnqueueModelMonitorRun(c *gin.Context) {
 
 func buildModelMonitorSiteResponses(includeHistory bool) ([]modelMonitorSiteAPIResponse, error) {
 	sites := make([]model.ModelMonitorSite, 0)
-	if err := model.DB.Order("id ASC").Find(&sites).Error; err != nil {
+	if err := model.DB.Where("enabled = ?", true).Order("id ASC").Find(&sites).Error; err != nil {
 		return nil, err
 	}
 	responses := make([]modelMonitorSiteAPIResponse, 0, len(sites))
@@ -334,7 +334,9 @@ func loadModelMonitorConfig() (modelMonitorConfigResponse, error) {
 		if err := model.DB.Where("site_id = ?", site.ID).Order("model_name ASC").Find(&targets).Error; err != nil {
 			return response, err
 		}
+		hasEnabledTarget := false
 		for _, target := range targets {
+			hasEnabledTarget = hasEnabledTarget || target.Enabled
 			config.Targets = append(config.Targets, modelMonitorTargetConfig{
 				ID:           target.ID,
 				ModelName:    target.ModelName,
@@ -342,6 +344,9 @@ func loadModelMonitorConfig() (modelMonitorConfigResponse, error) {
 				Weight:       target.Weight,
 				Enabled:      target.Enabled,
 			})
+		}
+		if !site.Enabled && len(config.ChannelIDs) == 0 && !hasEnabledTarget {
+			continue
 		}
 		response.Sites = append(response.Sites, config)
 	}
@@ -445,7 +450,25 @@ func saveModelMonitorConfig(config modelMonitorConfigResponse) error {
 		if len(configuredSiteIDs) > 0 {
 			query = query.Where("id NOT IN ?", configuredSiteIDs)
 		}
-		if err := query.Update("enabled", false).Error; err != nil {
+		removedSiteIDs := make([]int64, 0)
+		if err := query.Pluck("id", &removedSiteIDs).Error; err != nil {
+			return err
+		}
+		if len(removedSiteIDs) == 0 {
+			return nil
+		}
+		if err := tx.Model(&model.ModelMonitorSite{}).
+			Where("id IN ?", removedSiteIDs).
+			Update("enabled", false).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("site_id IN ?", removedSiteIDs).
+			Delete(&model.ModelMonitorSiteChannel{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.ModelMonitorTarget{}).
+			Where("site_id IN ?", removedSiteIDs).
+			Update("enabled", false).Error; err != nil {
 			return err
 		}
 		return nil

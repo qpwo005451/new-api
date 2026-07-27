@@ -157,10 +157,13 @@ type ModelMonitorAggregateHourly struct {
 }
 
 type ModelMonitorEffectiveModel struct {
-	ModelName string `json:"model_name"`
-	Status    string `json:"status"`
-	Weight    int    `json:"weight"`
-	Stale     bool   `json:"stale"`
+	ModelName          string `json:"model_name"`
+	Status             string `json:"status"`
+	LatestStatus       string `json:"latest_status"`
+	LatestFailureType  string `json:"latest_failure_type,omitempty"`
+	LatestErrorSummary string `json:"latest_error_summary,omitempty"`
+	Weight             int    `json:"weight"`
+	Stale              bool   `json:"stale"`
 }
 
 type ModelMonitorSiteSummary struct {
@@ -330,9 +333,16 @@ func BuildModelMonitorSiteSummary(targets []ModelMonitorTarget, observations []M
 	sort.Strings(modelNames)
 
 	observationsByModelPath := make(map[string]map[[2]int64][]ModelMonitorObservation, len(modelNames))
+	latestObservationByModel := make(map[string]ModelMonitorObservation, len(modelNames))
 	for _, observation := range observations {
 		if _, ok := targetsByModel[observation.ModelName]; !ok {
 			continue
+		}
+		latestObservation, exists := latestObservationByModel[observation.ModelName]
+		if !exists ||
+			observation.ObservedAt > latestObservation.ObservedAt ||
+			(observation.ObservedAt == latestObservation.ObservedAt && observation.ID > latestObservation.ID) {
+			latestObservationByModel[observation.ModelName] = observation
 		}
 		paths := observationsByModelPath[observation.ModelName]
 		if paths == nil {
@@ -367,6 +377,13 @@ func BuildModelMonitorSiteSummary(targets []ModelMonitorTarget, observations []M
 			Status:    status,
 			Weight:    target.Weight,
 			Stale:     stale,
+		}
+		if latestObservation, ok := latestObservationByModel[modelName]; ok {
+			effective.LatestStatus = latestObservation.Status
+			effective.LatestFailureType = latestObservation.FailureType
+			effective.LatestErrorSummary = latestObservation.ErrorSummary
+		} else {
+			effective.LatestStatus = ModelMonitorStatusUnknown
 		}
 		summary.Models = append(summary.Models, effective)
 

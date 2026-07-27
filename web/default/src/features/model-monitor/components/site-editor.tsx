@@ -15,9 +15,10 @@ You should have received a copy of the GNU Affero General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { Trash2 } from 'lucide-react'
-import { useState } from 'react'
+import { RefreshCw, Trash2 } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import { Button } from '@/components/design-system/button'
 import { Input } from '@/components/design-system/input'
@@ -28,6 +29,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/design-system/select'
+import { MultiSelect } from '@/components/multi-select'
 import {
   Card,
   CardContent,
@@ -36,44 +38,15 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { Switch } from '@/components/ui/switch'
-import { Textarea } from '@/components/ui/textarea'
+import { fetchUpstreamModels } from '@/features/channels/api'
 
-import type { ModelMonitorSiteConfig } from '../types'
+import type { ModelMonitorSiteConfig, ModelMonitorTarget } from '../types'
 
 function parseNumbers(value: string): number[] {
   return value
     .split(',')
     .map((item) => Number(item.trim()))
     .filter((item) => Number.isInteger(item) && item > 0)
-}
-
-function parseTargets(value: string) {
-  return value
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const [modelName, endpointType = 'openai', weightValue = '1'] = line
-        .split('|')
-        .map((item) => item.trim())
-      return {
-        model_name: modelName,
-        endpoint_type: endpointType || 'openai',
-        weight: Math.min(5, Math.max(1, Number(weightValue) || 1)),
-        enabled: true,
-      }
-    })
-    .filter((target) => target.model_name)
-}
-
-function targetsToText(site: ModelMonitorSiteConfig): string {
-  return site.targets
-    .filter((target) => target.enabled)
-    .map(
-      (target) =>
-        `${target.model_name} | ${target.endpoint_type || 'openai'} | ${target.weight}`
-    )
-    .join('\n')
 }
 
 type SiteEditorProps = {
@@ -84,7 +57,83 @@ type SiteEditorProps = {
 
 export function SiteEditor(props: SiteEditorProps) {
   const { t } = useTranslation()
-  const [targetText, setTargetText] = useState(() => targetsToText(props.site))
+  const [isFetchingModels, setIsFetchingModels] = useState(false)
+  const [discoveredModels, setDiscoveredModels] = useState<string[]>([])
+  const enabledTargets = props.site.targets.filter((target) => target.enabled)
+  const selectedModels = enabledTargets.map((target) => target.model_name)
+  const modelOptions = useMemo(() => {
+    const models = new Set(discoveredModels)
+    for (const target of enabledTargets) models.add(target.model_name)
+    return [...models]
+      .sort((left, right) => left.localeCompare(right))
+      .map((model) => ({ label: model, value: model }))
+  }, [discoveredModels, enabledTargets])
+
+  useEffect(() => {
+    setDiscoveredModels([])
+  }, [props.site.id])
+
+  const updateTarget = (
+    modelName: string,
+    changes: Partial<ModelMonitorTarget>
+  ) => {
+    props.onChange({
+      ...props.site,
+      targets: props.site.targets.map((target) =>
+        target.model_name === modelName ? { ...target, ...changes } : target
+      ),
+    })
+  }
+
+  const handleModelsChange = (models: string[]) => {
+    const currentTargets = new Map(
+      props.site.targets.map((target) => [target.model_name, target])
+    )
+    props.onChange({
+      ...props.site,
+      targets: models.map((modelName) => {
+        const current = currentTargets.get(modelName)
+        return current
+          ? { ...current, enabled: true }
+          : {
+              model_name: modelName,
+              endpoint_type: 'openai',
+              weight: 1,
+              enabled: true,
+            }
+      }),
+    })
+  }
+
+  const handleFetchModels = async () => {
+    if (props.site.channel_ids.length === 0) {
+      toast.error(t('Channel IDs'))
+      return
+    }
+    setIsFetchingModels(true)
+    try {
+      const responses = await Promise.all(
+        props.site.channel_ids.map((channelId) =>
+          fetchUpstreamModels(channelId)
+        )
+      )
+      const models = new Set<string>()
+      for (const response of responses) {
+        if (!response.success) {
+          throw new Error(response.message || t('Failed to fetch models'))
+        }
+        for (const model of response.data ?? []) models.add(model)
+      }
+      setDiscoveredModels([...models])
+      toast.success(t('Fetched {{count}} models', { count: models.size }))
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t('Failed to fetch models')
+      )
+    } finally {
+      setIsFetchingModels(false)
+    }
+  }
 
   return (
     <Card size='sm'>
@@ -151,21 +200,90 @@ export function SiteEditor(props: SiteEditorProps) {
             }
           />
         </label>
-        <label className='grid gap-1.5 text-sm md:col-span-2'>
-          <span className='font-medium'>{t('Monitored models')}</span>
-          <Textarea
-            rows={Math.max(4, Math.min(10, targetText.split('\n').length + 1))}
-            value={targetText}
-            placeholder='gpt-5.4 | openai | 1'
-            onChange={(event) => {
-              setTargetText(event.target.value)
-              props.onChange({
-                ...props.site,
-                targets: parseTargets(event.target.value),
-              })
-            }}
+        <div className='grid gap-1.5 text-sm md:col-span-2'>
+          <div className='flex items-center justify-between gap-3'>
+            <span className='font-medium'>{t('Monitored models')}</span>
+            <Button
+              type='button'
+              variant='outline'
+              onClick={() => void handleFetchModels()}
+              disabled={isFetchingModels || props.site.channel_ids.length === 0}
+            >
+              <RefreshCw
+                data-icon='inline-start'
+                className={isFetchingModels ? 'animate-spin' : undefined}
+                aria-hidden='true'
+              />
+              {t('Fetch Models')}
+            </Button>
+          </div>
+          <MultiSelect
+            options={modelOptions}
+            selected={selectedModels}
+            onChange={handleModelsChange}
+            placeholder={t('Monitored models')}
+            emptyText={t('Fetch upstream models to load available models')}
+            allowCreate
           />
-        </label>
+        </div>
+        {enabledTargets.length > 0 && (
+          <div className='rounded-md border md:col-span-2'>
+            <div className='text-muted-foreground grid grid-cols-[minmax(0,1fr)_minmax(8rem,0.45fr)_5rem] gap-3 border-b px-3 py-2 text-xs'>
+              <span>{t('Model')}</span>
+              <span>{t('Endpoint')}</span>
+              <span>{t('Weight')}</span>
+            </div>
+            {enabledTargets.map((target) => (
+              <div
+                key={target.model_name}
+                className='grid grid-cols-[minmax(0,1fr)_minmax(8rem,0.45fr)_5rem] items-center gap-3 border-b px-3 py-2 last:border-b-0'
+              >
+                <span className='truncate text-sm'>{target.model_name}</span>
+                <Select
+                  value={target.endpoint_type || 'openai'}
+                  onValueChange={(endpointType) => {
+                    if (endpointType === null) return
+                    updateTarget(target.model_name, {
+                      endpoint_type: endpointType,
+                    })
+                  }}
+                >
+                  <SelectTrigger size='sm'>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value='openai'>OpenAI Chat</SelectItem>
+                    <SelectItem value='openai-response'>
+                      OpenAI Responses
+                    </SelectItem>
+                    <SelectItem value='anthropic'>Anthropic</SelectItem>
+                    <SelectItem value='gemini'>Gemini</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={String(target.weight)}
+                  onValueChange={(weight) => {
+                    if (weight === null) return
+                    updateTarget(target.model_name, {
+                      weight: Number(weight),
+                    })
+                  }}
+                >
+                  <SelectTrigger size='sm'>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {[1, 2, 3, 4, 5].map((weight) => (
+                      <SelectItem key={weight} value={String(weight)}>
+                        {weight}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ))}
+          </div>
+        )}
         <div className='flex items-center justify-between gap-3 border-t pt-3 md:col-span-2'>
           <div className='flex items-center gap-2 text-sm'>
             <Switch

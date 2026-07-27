@@ -90,10 +90,17 @@ func TestSaveModelMonitorConfigPreservesHistoryAndDisablesRemovedEntities(t *tes
 	removedSite := model.ModelMonitorSite{Name: "removed", SiteType: model.ModelMonitorSiteTypeNewAPI, Enabled: true}
 	require.NoError(t, db.Create(&site).Error)
 	require.NoError(t, db.Create(&removedSite).Error)
+	require.NoError(t, db.Create(&model.ModelMonitorSiteChannel{
+		SiteID: removedSite.ID, ChannelID: channel.Id,
+	}).Error)
 	target := model.ModelMonitorTarget{SiteID: site.ID, ModelName: "gpt-5", Weight: 5, Enabled: true}
 	removedTarget := model.ModelMonitorTarget{SiteID: site.ID, ModelName: "grok-4", Weight: 3, Enabled: true}
+	removedSiteTarget := model.ModelMonitorTarget{
+		SiteID: removedSite.ID, ModelName: "claude-4", Weight: 2, Enabled: true,
+	}
 	require.NoError(t, db.Create(&target).Error)
 	require.NoError(t, db.Create(&removedTarget).Error)
+	require.NoError(t, db.Create(&removedSiteTarget).Error)
 	observation := model.ModelMonitorObservation{
 		SiteID: site.ID, TargetID: target.ID, ChannelID: channel.Id, ModelName: target.ModelName,
 		Status: model.ModelMonitorStatusAvailable, Source: model.ModelMonitorObservationSourcePassive,
@@ -128,6 +135,11 @@ func TestSaveModelMonitorConfigPreservesHistoryAndDisablesRemovedEntities(t *tes
 	var storedRemovedSite model.ModelMonitorSite
 	require.NoError(t, db.First(&storedRemovedSite, removedSite.ID).Error)
 	assert.False(t, storedRemovedSite.Enabled)
+	var removedSiteChannelCount int64
+	require.NoError(t, db.Model(&model.ModelMonitorSiteChannel{}).
+		Where("site_id = ?", removedSite.ID).
+		Count(&removedSiteChannelCount).Error)
+	assert.Zero(t, removedSiteChannelCount)
 
 	var storedTarget model.ModelMonitorTarget
 	require.NoError(t, db.First(&storedTarget, target.ID).Error)
@@ -135,6 +147,9 @@ func TestSaveModelMonitorConfigPreservesHistoryAndDisablesRemovedEntities(t *tes
 	var storedRemovedTarget model.ModelMonitorTarget
 	require.NoError(t, db.First(&storedRemovedTarget, removedTarget.ID).Error)
 	assert.False(t, storedRemovedTarget.Enabled)
+	var storedRemovedSiteTarget model.ModelMonitorTarget
+	require.NoError(t, db.First(&storedRemovedSiteTarget, removedSiteTarget.ID).Error)
+	assert.False(t, storedRemovedSiteTarget.Enabled)
 
 	var storedObservation model.ModelMonitorObservation
 	require.NoError(t, db.First(&storedObservation, observation.ID).Error)
@@ -145,6 +160,11 @@ func TestSaveModelMonitorConfigPreservesHistoryAndDisablesRemovedEntities(t *tes
 	var enabledOption model.Option
 	require.NoError(t, db.Where("key = ?", "model_monitor_setting.enabled").First(&enabledOption).Error)
 	assert.Equal(t, "true", enabledOption.Value)
+
+	loaded, err := loadModelMonitorConfig()
+	require.NoError(t, err)
+	require.Len(t, loaded.Sites, 1)
+	assert.Equal(t, site.ID, loaded.Sites[0].ID)
 }
 
 func TestValidateModelMonitorConfigRejectsChannelAssignedToMultipleSites(t *testing.T) {

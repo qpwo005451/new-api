@@ -92,6 +92,8 @@ func TestModelMonitorAggregateAppliesPathHysteresis(t *testing.T) {
 	summary := BuildModelMonitorSiteSummary(targets, oneFailure, 250, 300)
 	require.Len(t, summary.Models, 1)
 	assert.Equal(t, ModelMonitorStatusAvailable, summary.Models[0].Status)
+	assert.Equal(t, ModelMonitorStatusUnavailable, summary.Models[0].LatestStatus)
+	assert.Equal(t, ModelMonitorFailureTypeTimeout, summary.Models[0].LatestFailureType)
 
 	threeFailures := append(oneFailure,
 		ModelMonitorObservation{

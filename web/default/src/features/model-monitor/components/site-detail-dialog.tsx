@@ -16,9 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { RefreshCw } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { Button } from '@/components/design-system/button'
 import {
   Dialog,
   DialogContent,
@@ -77,7 +79,10 @@ type SiteDetailDialogProps = {
 
 export function SiteDetailDialog(props: SiteDetailDialogProps) {
   const { t } = useTranslation()
-  const [modelName, setModelName] = useState<string | null>(null)
+  const [selection, setSelection] = useState<{
+    siteId: number
+    modelName: string
+  } | null>(null)
   const siteQuery = useQuery({
     queryKey: ['model-monitor', 'site', props.siteId],
     queryFn: async () => {
@@ -88,32 +93,31 @@ export function SiteDetailDialog(props: SiteDetailDialogProps) {
       return response.data
     },
     enabled: props.siteId !== null,
-    retry: false,
+    retry: 2,
   })
 
-  useEffect(() => {
-    const firstModel = siteQuery.data?.summary.models[0]?.model_name
-    if (!modelName && firstModel) setModelName(firstModel)
-  }, [modelName, siteQuery.data])
-
-  useEffect(() => {
-    setModelName(null)
-  }, [props.siteId])
+  const selectedModel =
+    selection?.siteId === props.siteId &&
+    siteQuery.data?.summary.models.some(
+      (model) => model.model_name === selection.modelName
+    )
+      ? selection.modelName
+      : siteQuery.data?.summary.models[0]?.model_name
 
   const modelQuery = useQuery({
-    queryKey: ['model-monitor', 'site', props.siteId, 'model', modelName],
+    queryKey: ['model-monitor', 'site', props.siteId, 'model', selectedModel],
     queryFn: async () => {
       const response = await getModelMonitorModel(
         props.siteId as number,
-        modelName as string
+        selectedModel as string
       )
       if (!response.success || !response.data) {
         throw new Error(response.message || t('Failed to load model details'))
       }
       return response.data
     },
-    enabled: props.siteId !== null && modelName !== null,
-    retry: false,
+    enabled: props.siteId !== null && selectedModel !== undefined,
+    retry: 2,
   })
 
   const detail = modelQuery.data
@@ -122,7 +126,7 @@ export function SiteDetailDialog(props: SiteDetailDialogProps) {
   const availabilityLabel =
     availability === undefined ? '-' : `${availability}%`
   const latestTtft = detail?.observations[0]?.first_response_ms
-  const latestTtftLabel = latestTtft === undefined ? '-' : `${latestTtft} ms`
+  const latestTtftLabel = latestTtft == null ? '-' : `${latestTtft} ms`
   const latestObservation = detail?.observations[0]
 
   return (
@@ -171,14 +175,32 @@ export function SiteDetailDialog(props: SiteDetailDialogProps) {
                     <button
                       key={model.model_name}
                       type='button'
-                      className='hover:bg-muted/50 flex w-full items-center justify-between gap-3 rounded-md border px-3 py-2 text-left text-sm'
-                      onClick={() => setModelName(model.model_name)}
+                      className='hover:bg-muted/50 data-[selected=true]:bg-muted/50 flex w-full items-center justify-between gap-3 rounded-md border px-3 py-2 text-left text-sm'
+                      data-selected={selectedModel === model.model_name}
+                      onClick={() =>
+                        setSelection({
+                          siteId: siteQuery.data.site.id,
+                          modelName: model.model_name,
+                        })
+                      }
                     >
                       <span className='min-w-0 truncate'>
                         {model.model_name}
                       </span>
-                      <StatusBadge variant={modelVariant[model.status]}>
-                        {t(model.status)}
+                      <StatusBadge
+                        variant={
+                          modelVariant[
+                            model.status === 'unknown'
+                              ? model.latest_status
+                              : model.status
+                          ]
+                        }
+                      >
+                        {t(
+                          model.status === 'unknown'
+                            ? model.latest_status
+                            : model.status
+                        )}
                       </StatusBadge>
                     </button>
                   ))}
@@ -189,11 +211,28 @@ export function SiteDetailDialog(props: SiteDetailDialogProps) {
                 <h3 className='text-sm font-medium'>{t('Model details')}</h3>
                 {modelQuery.isLoading && <Skeleton className='h-48 w-full' />}
                 {!modelQuery.isLoading && (modelQuery.isError || !detail) && (
-                  <p className='text-destructive text-sm'>
-                    {modelQuery.error instanceof Error
-                      ? modelQuery.error.message
-                      : t('Failed to load model details')}
-                  </p>
+                  <div className='space-y-2'>
+                    <p className='text-destructive text-sm'>
+                      {modelQuery.error instanceof Error
+                        ? modelQuery.error.message
+                        : t('Failed to load model details')}
+                    </p>
+                    <Button
+                      type='button'
+                      variant='outline'
+                      onClick={() => void modelQuery.refetch()}
+                      disabled={modelQuery.isFetching}
+                    >
+                      <RefreshCw
+                        data-icon='inline-start'
+                        className={
+                          modelQuery.isFetching ? 'animate-spin' : undefined
+                        }
+                        aria-hidden='true'
+                      />
+                      {t('Retry')}
+                    </Button>
+                  </div>
                 )}
                 {!modelQuery.isLoading && !modelQuery.isError && detail && (
                   <>

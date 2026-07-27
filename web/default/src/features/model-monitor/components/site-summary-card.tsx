@@ -83,7 +83,13 @@ export function SiteSummaryCard(props: SiteSummaryCardProps) {
           {props.site.summary.models.map((model) => (
             <StatusBadge
               key={model.model_name}
-              variant={modelVariant[model.status]}
+              variant={
+                modelVariant[
+                  model.status === 'unknown'
+                    ? model.latest_status
+                    : model.status
+                ]
+              }
             >
               {model.model_name}
             </StatusBadge>

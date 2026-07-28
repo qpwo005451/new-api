@@ -131,6 +131,7 @@ function DetailMetric(props: {
 
 type SiteDetailDialogProps = {
   siteId: number | null
+  modelName?: string
   onOpenChange: (open: boolean) => void
 }
 
@@ -153,13 +154,27 @@ export function SiteDetailDialog(props: SiteDetailDialogProps) {
     retry: 2,
   })
 
-  const selectedModel =
+  let selectedModel: string | undefined
+  if (
+    siteQuery.data?.summary.models.some(
+      (model) => model.model_name === props.modelName
+    )
+  ) {
+    selectedModel = props.modelName
+  } else if (
     selection?.siteId === props.siteId &&
     siteQuery.data?.summary.models.some(
       (model) => model.model_name === selection.modelName
     )
-      ? selection.modelName
-      : siteQuery.data?.summary.models[0]?.model_name
+  ) {
+    selectedModel = selection.modelName
+  } else {
+    selectedModel = siteQuery.data?.summary.models.toSorted(
+      (left, right) =>
+        right.weight - left.weight ||
+        left.model_name.localeCompare(right.model_name)
+    )[0]?.model_name
+  }
 
   const modelQuery = useQuery({
     queryKey: ['model-monitor', 'site', props.siteId, 'model', selectedModel],
@@ -203,7 +218,16 @@ export function SiteDetailDialog(props: SiteDetailDialogProps) {
       unknown: 0,
     } satisfies Record<ModelMonitorStatus, number>
   )
-  const latestAggregates = detail?.aggregates.slice(-12) ?? []
+  const sortedModels =
+    siteQuery.data?.summary.models.toSorted(
+      (left, right) =>
+        right.weight - left.weight ||
+        left.model_name.localeCompare(right.model_name)
+    ) ?? []
+  const latestAggregates =
+    detail?.aggregates
+      .toSorted((left, right) => right.hour_start - left.hour_start)
+      .slice(0, 12) ?? []
 
   return (
     <Dialog
@@ -318,7 +342,7 @@ export function SiteDetailDialog(props: SiteDetailDialogProps) {
                 </div>
                 <ScrollArea className='max-h-48 min-h-0 flex-1 md:max-h-none'>
                   <div className='divide-y'>
-                    {siteQuery.data.summary.models.map((model) => {
+                    {sortedModels.map((model) => {
                       const effectiveStatus = getEffectiveStatus(model)
                       return (
                         <button
@@ -561,6 +585,16 @@ export function SiteDetailDialog(props: SiteDetailDialogProps) {
                                 >
                                   {t(lastException.status)}
                                 </StatusBadge>
+                              </dd>
+                            </div>
+                            <div className='grid grid-cols-[5.5rem_minmax(0,1fr)] gap-3'>
+                              <dt className='text-muted-foreground text-xs'>
+                                {t('Exception time')}
+                              </dt>
+                              <dd className='text-muted-foreground text-xs tabular-nums'>
+                                {formatTimestampToDate(
+                                  lastException.observed_at
+                                )}
                               </dd>
                             </div>
                             <div className='grid grid-cols-[5.5rem_minmax(0,1fr)] gap-3'>

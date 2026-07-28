@@ -60,6 +60,11 @@ export function SiteSummaryCard(props: SiteSummaryCardProps) {
     props.site.freshness_seconds === undefined
       ? undefined
       : Math.floor(Date.now() / 1000) - props.site.freshness_seconds
+  const sortedModels = props.site.summary.models.toSorted(
+    (left, right) =>
+      right.weight - left.weight ||
+      left.model_name.localeCompare(right.model_name)
+  )
 
   return (
     <Card size='sm'>
@@ -80,7 +85,7 @@ export function SiteSummaryCard(props: SiteSummaryCardProps) {
       </CardHeader>
       <CardContent className='space-y-3'>
         <div className='flex flex-wrap gap-1.5'>
-          {props.site.summary.models.map((model) => (
+          {sortedModels.map((model) => (
             <StatusBadge
               key={model.model_name}
               variant={

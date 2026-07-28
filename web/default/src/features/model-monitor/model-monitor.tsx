@@ -16,13 +16,22 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity, Play, Plus, RefreshCw, Save } from 'lucide-react'
-import { useState } from 'react'
+import {
+  Activity,
+  Boxes,
+  Play,
+  Plus,
+  RefreshCw,
+  Save,
+  Server,
+} from 'lucide-react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/design-system/button'
 import { Input } from '@/components/design-system/input'
+import { Tabs, TabsList, TabsTrigger } from '@/components/design-system/tabs'
 import { SectionPageLayout } from '@/components/layout'
 import {
   Card,
@@ -39,6 +48,10 @@ import {
   getModelMonitorSites,
   updateModelMonitorConfig,
 } from './api'
+import {
+  ModelSummaryCard,
+  type ModelSummarySite,
+} from './components/model-summary-card'
 import { MonitorTasksPanel } from './components/monitor-tasks-panel'
 import { RunMonitorDialog } from './components/run-monitor-dialog'
 import { SiteDetailDialog } from './components/site-detail-dialog'
@@ -62,8 +75,12 @@ export function ModelMonitor() {
   const queryClient = useQueryClient()
   const [draft, setDraft] = useState<ModelMonitorConfig | null>(null)
   const [showEditor, setShowEditor] = useState(false)
-  const [siteId, setSiteId] = useState<number | null>(null)
+  const [detailSelection, setDetailSelection] = useState<{
+    siteId: number
+    modelName?: string
+  } | null>(null)
   const [runDialogOpen, setRunDialogOpen] = useState(false)
+  const [viewMode, setViewMode] = useState<'sites' | 'models'>('sites')
   const configQuery = useQuery({
     queryKey: ['model-monitor', 'config'],
     queryFn: getModelMonitorConfig,
@@ -76,7 +93,42 @@ export function ModelMonitor() {
     refetchInterval: 30_000,
   })
   const config = draft ?? configQuery.data?.data
-  const sites = sitesQuery.data?.data ?? []
+  const sites = useMemo(() => sitesQuery.data?.data ?? [], [sitesQuery.data])
+  const modelSummaries = useMemo(() => {
+    const models = new Map<
+      string,
+      { modelName: string; weight: number; sites: ModelSummarySite[] }
+    >()
+
+    for (const site of sites) {
+      for (const model of site.summary.models) {
+        const existing = models.get(model.model_name)
+        if (existing) {
+          existing.weight = Math.max(existing.weight, model.weight)
+          existing.sites.push({ site, model })
+          continue
+        }
+        models.set(model.model_name, {
+          modelName: model.model_name,
+          weight: model.weight,
+          sites: [{ site, model }],
+        })
+      }
+    }
+
+    return [...models.values()]
+      .map((item) => ({
+        ...item,
+        sites: item.sites.toSorted((left, right) =>
+          left.site.site.name.localeCompare(right.site.site.name)
+        ),
+      }))
+      .toSorted(
+        (left, right) =>
+          right.weight - left.weight ||
+          left.modelName.localeCompare(right.modelName)
+      )
+  }, [sites])
 
   const invalidate = async () => {
     await Promise.all([
@@ -177,9 +229,7 @@ export function ModelMonitor() {
             disabled={saveMutation.isPending}
           >
             <Save data-icon='inline-start' aria-hidden='true' />
-            {saveMutation.isPending
-              ? t('Saving...')
-              : t('Save configuration')}
+            {saveMutation.isPending ? t('Saving...') : t('Save configuration')}
           </Button>
         </SectionPageLayout.Actions>
         <SectionPageLayout.Content>
@@ -275,14 +325,63 @@ export function ModelMonitor() {
               </CardContent>
             </Card>
 
+            <div className='flex flex-wrap items-center justify-between gap-3'>
+              <Tabs
+                value={viewMode}
+                onValueChange={(value) =>
+                  setViewMode(value as 'sites' | 'models')
+                }
+              >
+                <TabsList aria-label={t('Availability perspective')}>
+                  <TabsTrigger value='sites'>
+                    <Server
+                      data-icon='inline-start'
+                      className='size-4'
+                      aria-hidden='true'
+                    />
+                    {t('Site view')}
+                  </TabsTrigger>
+                  <TabsTrigger value='models'>
+                    <Boxes
+                      data-icon='inline-start'
+                      className='size-4'
+                      aria-hidden='true'
+                    />
+                    {t('Model view')}
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+              <p className='text-muted-foreground text-xs'>
+                {viewMode === 'sites'
+                  ? t('{{count}} monitored sites', { count: sites.length })
+                  : t('{{count}} monitored models', {
+                      count: modelSummaries.length,
+                    })}
+              </p>
+            </div>
+
             <div className='grid gap-3 lg:grid-cols-2'>
-              {sites.map((site) => (
-                <SiteSummaryCard
-                  key={site.site.id}
-                  site={site}
-                  onOpen={() => setSiteId(site.site.id)}
-                />
-              ))}
+              {viewMode === 'sites'
+                ? sites.map((site) => (
+                    <SiteSummaryCard
+                      key={site.site.id}
+                      site={site}
+                      onOpen={() =>
+                        setDetailSelection({ siteId: site.site.id })
+                      }
+                    />
+                  ))
+                : modelSummaries.map((model) => (
+                    <ModelSummaryCard
+                      key={model.modelName}
+                      modelName={model.modelName}
+                      weight={model.weight}
+                      sites={model.sites}
+                      onOpenSite={(siteId, modelName) =>
+                        setDetailSelection({ siteId, modelName })
+                      }
+                    />
+                  ))}
             </div>
 
             <MonitorTasksPanel />
@@ -352,8 +451,9 @@ export function ModelMonitor() {
         onConfirm={() => runMutation.mutate()}
       />
       <SiteDetailDialog
-        siteId={siteId}
-        onOpenChange={(open) => !open && setSiteId(null)}
+        siteId={detailSelection?.siteId ?? null}
+        modelName={detailSelection?.modelName}
+        onOpenChange={(open) => !open && setDetailSelection(null)}
       />
     </>
   )

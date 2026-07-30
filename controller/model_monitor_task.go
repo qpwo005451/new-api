@@ -81,10 +81,26 @@ func runModelMonitorTask(ctx context.Context, report func(processed, total int))
 	if err != nil {
 		return modelMonitorTaskSummary{}, err
 	}
-	summary.Paths = len(paths)
-	candidates := make([]service.ModelMonitorProbeCandidate, 0, len(paths))
-	pathsByTargetAndChannel := make(map[[2]int64]model.ModelMonitorProbePath, len(paths))
+	eligiblePaths := make([]model.ModelMonitorProbePath, 0, len(paths))
+	channelsByID := make(map[int]*model.Channel, len(paths))
 	for _, path := range paths {
+		channel, exists := channelsByID[path.ChannelID]
+		if !exists {
+			channel, err = model.GetChannelById(path.ChannelID, true)
+			if err == nil {
+				channelsByID[path.ChannelID] = channel
+			}
+		}
+		if channel != nil && !channel.SupportsModel(path.ModelName) {
+			continue
+		}
+		eligiblePaths = append(eligiblePaths, path)
+	}
+
+	summary.Paths = len(eligiblePaths)
+	candidates := make([]service.ModelMonitorProbeCandidate, 0, len(eligiblePaths))
+	pathsByTargetAndChannel := make(map[[2]int64]model.ModelMonitorProbePath, len(eligiblePaths))
+	for _, path := range eligiblePaths {
 		state, err := model.GetModelMonitorProbeScheduleState(path.SiteID, path.TargetID, path.ChannelID)
 		if err != nil {
 			return modelMonitorTaskSummary{}, err
@@ -118,8 +134,8 @@ func runModelMonitorTask(ctx context.Context, report func(processed, total int))
 			CostKind:          model.ModelMonitorCostKindUnknown,
 			ObservedAt:        common.GetTimestamp(),
 		}
-		channel, channelErr := model.GetChannelById(path.ChannelID, true)
-		if channelErr == nil {
+		channel := channelsByID[path.ChannelID]
+		if channel != nil {
 			target := model.ModelMonitorTarget{
 				ID:           path.TargetID,
 				SiteID:       path.SiteID,
@@ -144,13 +160,13 @@ func runModelMonitorTask(ctx context.Context, report func(processed, total int))
 		progressMutex.Lock()
 		processed++
 		if report != nil {
-			report(processed, len(paths))
+			report(processed, len(eligiblePaths))
 		}
 		progressMutex.Unlock()
 	})
 	summary.ProbedPaths = len(scheduleResult.Executed)
 	summary.SkippedPaths = len(scheduleResult.Skipped)
-	if len(paths) == 0 && report != nil {
+	if len(eligiblePaths) == 0 && report != nil {
 		report(0, 0)
 	}
 	if err := service.MaintainModelMonitorAggregates(common.GetTimestamp()); err != nil {

@@ -44,10 +44,86 @@ func TestModelMonitorAggregateDeduplicatesPathsAndWeights(t *testing.T) {
 	summary := BuildModelMonitorSiteSummary(targets, observations, 1_000, 300)
 
 	require.Len(t, summary.Models, 2)
-	assert.Equal(t, ModelMonitorStatusAvailable, summary.Models[0].Status)
+	assert.Equal(t, ModelMonitorStatusLimited, summary.Models[0].Status)
 	assert.Equal(t, ModelMonitorStatusLimited, summary.Models[1].Status)
-	assert.Equal(t, 91, summary.Score)
+	assert.Equal(t, 50, summary.Score)
 	assert.Equal(t, ModelMonitorSiteHealthDegraded, summary.Health)
+}
+
+func TestModelMonitorAggregateKeepsAllAvailablePathsNormal(t *testing.T) {
+	targets := []ModelMonitorTarget{
+		{ID: 1, SiteID: 1, ModelName: "gpt-5", Weight: 5, Enabled: true},
+	}
+	observations := []ModelMonitorObservation{
+		{SiteID: 1, TargetID: 1, ChannelID: 10, ModelName: "gpt-5", Status: ModelMonitorStatusAvailable, ObservedAt: 100},
+		{SiteID: 1, TargetID: 1, ChannelID: 11, ModelName: "gpt-5", Status: ModelMonitorStatusAvailable, ObservedAt: 200},
+	}
+
+	summary := BuildModelMonitorSiteSummary(targets, observations, 250, 300)
+
+	require.Len(t, summary.Models, 1)
+	assert.Equal(t, ModelMonitorStatusAvailable, summary.Models[0].Status)
+	assert.Equal(t, 100, summary.Score)
+	assert.Equal(t, ModelMonitorSiteHealthNormal, summary.Health)
+}
+
+func TestModelMonitorAggregateCapsScoreByRecentQuality(t *testing.T) {
+	targets := []ModelMonitorTarget{
+		{ID: 1, SiteID: 1, ModelName: "gpt-5", Weight: 5, Enabled: true},
+	}
+	observations := []ModelMonitorObservation{
+		{
+			SiteID: 1, TargetID: 1, ChannelID: 10, ModelName: "gpt-5",
+			Status: ModelMonitorStatusAvailable, ObservedAt: 100,
+		},
+		{
+			SiteID: 1, TargetID: 1, ChannelID: 11, ModelName: "gpt-5",
+			Status: ModelMonitorStatusUnavailable, ObservedAt: 200,
+		},
+		{
+			SiteID: 1, TargetID: 1, ChannelID: 11, ModelName: "gpt-5",
+			Status: ModelMonitorStatusAvailable, ObservedAt: 300,
+		},
+		{
+			SiteID: 1, TargetID: 1, ChannelID: 11, ModelName: "gpt-5",
+			Status: ModelMonitorStatusAvailable, ObservedAt: 400,
+		},
+	}
+
+	summary := BuildModelMonitorSiteSummary(targets, observations, 500, 300)
+
+	require.Len(t, summary.Models, 1)
+	assert.Equal(t, ModelMonitorStatusAvailable, summary.Models[0].Status)
+	assert.Equal(t, 75, summary.Score)
+	assert.Equal(t, ModelMonitorSiteHealthDegraded, summary.Health)
+}
+
+func TestModelMonitorAggregateExcludesOldFailuresFromRecentQuality(t *testing.T) {
+	const now int64 = 100_000
+	targets := []ModelMonitorTarget{
+		{ID: 1, SiteID: 1, ModelName: "gpt-5", Weight: 5, Enabled: true},
+	}
+	observations := []ModelMonitorObservation{
+		{
+			SiteID: 1, TargetID: 1, ChannelID: 10, ModelName: "gpt-5",
+			Status: ModelMonitorStatusUnavailable, ObservedAt: now - 24*60*60 - 1,
+		},
+		{
+			SiteID: 1, TargetID: 1, ChannelID: 10, ModelName: "gpt-5",
+			Status: ModelMonitorStatusAvailable, ObservedAt: now - 100,
+		},
+		{
+			SiteID: 1, TargetID: 1, ChannelID: 10, ModelName: "gpt-5",
+			Status: ModelMonitorStatusAvailable, ObservedAt: now - 50,
+		},
+	}
+
+	summary := BuildModelMonitorSiteSummary(targets, observations, now, 300)
+
+	require.Len(t, summary.Models, 1)
+	assert.Equal(t, ModelMonitorStatusAvailable, summary.Models[0].Status)
+	assert.Equal(t, 100, summary.Score)
+	assert.Equal(t, ModelMonitorSiteHealthNormal, summary.Health)
 }
 
 func TestModelMonitorAggregateTreatsExpiredUnknownAsLimited(t *testing.T) {
@@ -91,15 +167,20 @@ func TestModelMonitorAggregateAppliesPathHysteresis(t *testing.T) {
 	})
 	summary := BuildModelMonitorSiteSummary(targets, oneFailure, 250, 300)
 	require.Len(t, summary.Models, 1)
-	assert.Equal(t, ModelMonitorStatusAvailable, summary.Models[0].Status)
+	assert.Equal(t, ModelMonitorStatusLimited, summary.Models[0].Status)
 	assert.Equal(t, ModelMonitorStatusUnavailable, summary.Models[0].LatestStatus)
 	assert.Equal(t, ModelMonitorFailureTypeTimeout, summary.Models[0].LatestFailureType)
+	assert.Equal(t, 50, summary.Score)
+	assert.Equal(t, ModelMonitorSiteHealthDegraded, summary.Health)
 
-	threeFailures := append(oneFailure,
-		ModelMonitorObservation{
-			SiteID: 1, TargetID: 1, ChannelID: 10, ModelName: "gpt-5",
-			Status: ModelMonitorStatusUnavailable, FailureType: ModelMonitorFailureTypeConnection, ObservedAt: 300,
-		},
+	twoFailures := append(oneFailure, ModelMonitorObservation{
+		SiteID: 1, TargetID: 1, ChannelID: 10, ModelName: "gpt-5",
+		Status: ModelMonitorStatusUnavailable, FailureType: ModelMonitorFailureTypeConnection, ObservedAt: 300,
+	})
+	summary = BuildModelMonitorSiteSummary(targets, twoFailures, 350, 300)
+	assert.Equal(t, ModelMonitorStatusLimited, summary.Models[0].Status)
+
+	threeFailures := append(twoFailures,
 		ModelMonitorObservation{
 			SiteID: 1, TargetID: 1, ChannelID: 10, ModelName: "gpt-5",
 			Status: ModelMonitorStatusUnavailable, FailureType: ModelMonitorFailureTypeUpstreamServer, ObservedAt: 400,

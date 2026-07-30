@@ -333,11 +333,13 @@ func BuildModelMonitorSiteSummary(targets []ModelMonitorTarget, observations []M
 	sort.Strings(modelNames)
 
 	observationsByModelPath := make(map[string]map[[2]int64][]ModelMonitorObservation, len(modelNames))
+	observationsByModel := make(map[string][]ModelMonitorObservation, len(modelNames))
 	latestObservationByModel := make(map[string]ModelMonitorObservation, len(modelNames))
 	for _, observation := range observations {
 		if _, ok := targetsByModel[observation.ModelName]; !ok {
 			continue
 		}
+		observationsByModel[observation.ModelName] = append(observationsByModel[observation.ModelName], observation)
 		latestObservation, exists := latestObservationByModel[observation.ModelName]
 		if !exists ||
 			observation.ObservedAt > latestObservation.ObservedAt ||
@@ -394,6 +396,11 @@ func BuildModelMonitorSiteSummary(targets []ModelMonitorTarget, observations []M
 		if !counted {
 			continue
 		}
+		if status != ModelMonitorStatusUnknown {
+			if recentScore, ok := modelMonitorRecentQualityScore(observationsByModel[modelName], now); ok && recentScore < score {
+				score = recentScore
+			}
+		}
 		totalWeight += target.Weight
 		totalScore += score * target.Weight
 	}
@@ -403,7 +410,7 @@ func BuildModelMonitorSiteSummary(targets []ModelMonitorTarget, observations []M
 	}
 	summary.Score = totalScore / totalWeight
 	switch {
-	case allUnavailable || summary.Score < 50:
+	case allUnavailable:
 		summary.Health = ModelMonitorSiteHealthUnavailable
 	case summary.Score == 100:
 		summary.Health = ModelMonitorSiteHealthNormal
@@ -449,6 +456,8 @@ func deriveModelMonitorPathStatus(observations []ModelMonitorObservation) (strin
 			consecutiveFailures++
 			if consecutiveFailures >= 3 {
 				status = ModelMonitorStatusUnavailable
+			} else {
+				status = ModelMonitorStatusLimited
 			}
 		}
 	}
@@ -460,7 +469,9 @@ func effectiveModelMonitorStatus(observations []ModelMonitorObservation) (string
 		return ModelMonitorStatusUnknown, 0
 	}
 
+	hasAvailable := false
 	hasLimited := false
+	hasUnavailable := false
 	hasUnknown := false
 	latestObservedAt := int64(0)
 	for _, observation := range observations {
@@ -469,15 +480,20 @@ func effectiveModelMonitorStatus(observations []ModelMonitorObservation) (string
 		}
 		switch observation.Status {
 		case ModelMonitorStatusAvailable:
-			return ModelMonitorStatusAvailable, latestObservedAt
+			hasAvailable = true
 		case ModelMonitorStatusLimited:
 			hasLimited = true
+		case ModelMonitorStatusUnavailable:
+			hasUnavailable = true
 		case ModelMonitorStatusUnknown:
 			hasUnknown = true
 		}
 	}
-	if hasLimited {
+	if hasLimited || (hasAvailable && (hasUnavailable || hasUnknown)) {
 		return ModelMonitorStatusLimited, latestObservedAt
+	}
+	if hasAvailable {
+		return ModelMonitorStatusAvailable, latestObservedAt
 	}
 	if hasUnknown {
 		return ModelMonitorStatusUnknown, latestObservedAt
@@ -499,4 +515,28 @@ func modelMonitorStatusScore(status string, stale bool) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+func modelMonitorRecentQualityScore(observations []ModelMonitorObservation, now int64) (int, bool) {
+	const scoreWindowSeconds int64 = 24 * 60 * 60
+
+	cutoff := now - scoreWindowSeconds
+	total := 0
+	qualityPoints := 0
+	for _, observation := range observations {
+		if observation.ObservedAt < cutoff {
+			continue
+		}
+		total++
+		switch observation.Status {
+		case ModelMonitorStatusAvailable:
+			qualityPoints += 100
+		case ModelMonitorStatusLimited:
+			qualityPoints += 50
+		}
+	}
+	if total == 0 {
+		return 0, false
+	}
+	return qualityPoints / total, true
 }

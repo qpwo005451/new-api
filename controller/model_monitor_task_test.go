@@ -90,10 +90,16 @@ func TestModelMonitorTaskProbesConfirmedChannelPathsAndPersistsObservations(t *t
 	channel.Id = 801
 	channel.Type = constant.ChannelTypeOpenAI
 	require.NoError(t, db.Create(channel).Error)
+	incompatibleChannel := modelMonitorProbeTestChannel(server.URL)
+	incompatibleChannel.Id = 802
+	incompatibleChannel.Type = constant.ChannelTypeOpenAI
+	incompatibleChannel.Models = "grok-4.5"
+	require.NoError(t, db.Create(incompatibleChannel).Error)
 
 	site := model.ModelMonitorSite{Name: "input", SiteType: model.ModelMonitorSiteTypeNewAPI, Enabled: true}
 	require.NoError(t, db.Create(&site).Error)
 	require.NoError(t, db.Create(&model.ModelMonitorSiteChannel{SiteID: site.ID, ChannelID: channel.Id}).Error)
+	require.NoError(t, db.Create(&model.ModelMonitorSiteChannel{SiteID: site.ID, ChannelID: incompatibleChannel.Id}).Error)
 	target := model.ModelMonitorTarget{
 		SiteID: site.ID, ModelName: "gpt-5", EndpointType: string(constant.EndpointTypeOpenAI), Weight: 5, Enabled: true,
 	}

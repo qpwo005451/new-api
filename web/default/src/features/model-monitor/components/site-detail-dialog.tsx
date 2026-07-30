@@ -46,6 +46,7 @@ import { cn } from '@/lib/utils'
 
 import { getModelMonitorModel, getModelMonitorSite } from '../api'
 import type {
+  ModelMonitorAggregateHourly,
   ModelMonitorEffectiveModel,
   ModelMonitorHealth,
   ModelMonitorModelDetail,
@@ -72,17 +73,55 @@ function getEffectiveStatus(
   return model.status === 'unknown' ? model.latest_status : model.status
 }
 
-function getAvailability(detail: ModelMonitorModelDetail): number | undefined {
-  const total = detail.aggregates.reduce(
-    (sum, item) => sum + item.observation_count,
-    0
-  )
-  if (total === 0) return undefined
-  const available = detail.aggregates.reduce(
-    (sum, item) => sum + item.available_count,
-    0
-  )
-  return Math.round((available / total) * 100)
+type HourlyAvailability = Pick<
+  ModelMonitorAggregateHourly,
+  'hour_start' | 'observation_count' | 'available_count'
+> & {
+  availability_basis_points: number
+}
+
+function get24HourAvailability(
+  detail: ModelMonitorModelDetail,
+  now = Math.floor(Date.now() / 1000)
+) {
+  const cutoff = now - 24 * 60 * 60
+  const hourly = new Map<number, HourlyAvailability>()
+  for (const item of detail.aggregates) {
+    if (item.hour_start < cutoff) continue
+    const current = hourly.get(item.hour_start) ?? {
+      hour_start: item.hour_start,
+      observation_count: 0,
+      available_count: 0,
+      availability_basis_points: 0,
+    }
+    current.observation_count += item.observation_count
+    current.available_count += item.available_count
+    hourly.set(item.hour_start, current)
+  }
+
+  let total = 0
+  let available = 0
+  const items = [...hourly.values()]
+    .map((item) => {
+      total += item.observation_count
+      available += item.available_count
+      return {
+        ...item,
+        availability_basis_points:
+          item.observation_count === 0
+            ? 0
+            : Math.round(
+                (item.available_count / item.observation_count) * 10_000
+              ),
+      }
+    })
+    .toSorted((left, right) => right.hour_start - left.hour_start)
+
+  return {
+    items,
+    total,
+    percentage: total === 0 ? undefined : Math.round((available / total) * 100),
+  }
 }
 
 function getLastException(detail: ModelMonitorModelDetail) {
@@ -194,7 +233,10 @@ export function SiteDetailDialog(props: SiteDetailDialogProps) {
 
   const detail = modelQuery.data
   const lastException = detail ? getLastException(detail) : undefined
-  const availability = detail ? getAvailability(detail) : undefined
+  const recentAvailability = detail
+    ? get24HourAvailability(detail)
+    : { items: [], total: 0, percentage: undefined }
+  const availability = recentAvailability.percentage
   const availabilityLabel =
     availability === undefined ? '-' : `${availability}%`
   const latestTtft = detail?.observations[0]?.first_response_ms
@@ -224,10 +266,7 @@ export function SiteDetailDialog(props: SiteDetailDialogProps) {
         right.weight - left.weight ||
         left.model_name.localeCompare(right.model_name)
     ) ?? []
-  const latestAggregates =
-    detail?.aggregates
-      .toSorted((left, right) => right.hour_start - left.hour_start)
-      .slice(0, 12) ?? []
+  const latestAggregates = recentAvailability.items
 
   return (
     <Dialog
@@ -472,7 +511,7 @@ export function SiteDetailDialog(props: SiteDetailDialogProps) {
                         label={t('24h availability')}
                         value={availabilityLabel}
                         helper={t('{{count}} observations', {
-                          count: detail.observations.length,
+                          count: recentAvailability.total,
                         })}
                       />
                       <DetailMetric
@@ -530,7 +569,7 @@ export function SiteDetailDialog(props: SiteDetailDialogProps) {
                             )
                             return (
                               <div
-                                key={item.id}
+                                key={item.hour_start}
                                 className='grid grid-cols-[minmax(6.5rem,auto)_minmax(0,1fr)_3rem] items-center gap-3 text-xs'
                               >
                                 <span className='text-muted-foreground truncate tabular-nums'>

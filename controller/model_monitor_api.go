@@ -118,13 +118,21 @@ func GetModelMonitorModel(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
 		return
 	}
-	observations := make([]model.ModelMonitorObservation, 0)
-	if err := model.DB.Where("site_id = ? AND model_name = ?", siteID, modelName).
-		Order("observed_at DESC, id DESC").
-		Limit(200).
-		Find(&observations).Error; err != nil {
+	siteChannels, _, err := loadModelMonitorSiteChannels(siteID)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
 		return
+	}
+	eligibleChannelIDs := modelMonitorEligibleChannelIDs(siteChannels, modelName)
+	observations := make([]model.ModelMonitorObservation, 0)
+	if len(eligibleChannelIDs) > 0 {
+		if err := model.DB.Where("site_id = ? AND model_name = ? AND channel_id IN ?", siteID, modelName, eligibleChannelIDs).
+			Order("observed_at DESC, id DESC").
+			Limit(200).
+			Find(&observations).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
+			return
+		}
 	}
 	summary := model.BuildModelMonitorSiteSummary(
 		[]model.ModelMonitorTarget{target},
@@ -156,11 +164,13 @@ func GetModelMonitorModel(c *gin.Context) {
 		}
 	}
 	aggregates := make([]model.ModelMonitorAggregateHourly, 0)
-	if err := model.DB.Where("site_id = ? AND model_name = ? AND hour_start >= ?", siteID, modelName, common.GetTimestamp()-7*24*60*60).
-		Order("hour_start ASC, channel_id ASC").
-		Find(&aggregates).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
-		return
+	if len(eligibleChannelIDs) > 0 {
+		if err := model.DB.Where("site_id = ? AND model_name = ? AND channel_id IN ? AND hour_start >= ?", siteID, modelName, eligibleChannelIDs, common.GetTimestamp()-7*24*60*60).
+			Order("hour_start ASC, channel_id ASC").
+			Find(&aggregates).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
+			return
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -253,20 +263,29 @@ func buildModelMonitorSiteResponse(siteID int64, includeHistory bool) (modelMoni
 	}
 	observations := make([]model.ModelMonitorObservation, 0)
 	query := model.DB.Where("site_id = ?", siteID).Order("observed_at DESC, id DESC")
-	if includeHistory {
-		query = query.Limit(200)
-	}
 	if err := query.Find(&observations).Error; err != nil {
 		return modelMonitorSiteAPIResponse{}, err
 	}
-	current := latestModelMonitorPathObservations(observations)
-	channelIDs := make([]int, 0)
-	if err := model.DB.Model(&model.ModelMonitorSiteChannel{}).
-		Where("site_id = ?", siteID).
-		Order("channel_id ASC").
-		Pluck("channel_id", &channelIDs).Error; err != nil {
+	siteChannels, channelIDs, err := loadModelMonitorSiteChannels(siteID)
+	if err != nil {
 		return modelMonitorSiteAPIResponse{}, err
 	}
+	channelsByID := make(map[int]model.Channel, len(siteChannels))
+	for _, channel := range siteChannels {
+		channelsByID[channel.Id] = channel
+	}
+	filteredObservations := make([]model.ModelMonitorObservation, 0, len(observations))
+	for _, observation := range observations {
+		channel, ok := channelsByID[observation.ChannelID]
+		if ok && channel.SupportsModel(observation.ModelName) {
+			filteredObservations = append(filteredObservations, observation)
+		}
+	}
+	observations = filteredObservations
+	if includeHistory && len(observations) > 200 {
+		observations = observations[:200]
+	}
+	current := latestModelMonitorPathObservations(observations)
 
 	response := modelMonitorSiteAPIResponse{
 		Site:       site,
@@ -303,6 +322,37 @@ func latestModelMonitorPathObservations(observations []model.ModelMonitorObserva
 		latest = append(latest, observation)
 	}
 	return latest
+}
+
+func loadModelMonitorSiteChannels(siteID int64) ([]model.Channel, []int, error) {
+	channelIDs := make([]int, 0)
+	if err := model.DB.Model(&model.ModelMonitorSiteChannel{}).
+		Where("site_id = ?", siteID).
+		Order("channel_id ASC").
+		Pluck("channel_id", &channelIDs).Error; err != nil {
+		return nil, nil, err
+	}
+	if len(channelIDs) == 0 {
+		return []model.Channel{}, channelIDs, nil
+	}
+
+	channels := make([]model.Channel, 0, len(channelIDs))
+	if err := model.DB.Select("id", "models", "model_mapping").
+		Where("id IN ?", channelIDs).
+		Find(&channels).Error; err != nil {
+		return nil, nil, err
+	}
+	return channels, channelIDs, nil
+}
+
+func modelMonitorEligibleChannelIDs(channels []model.Channel, modelName string) []int {
+	channelIDs := make([]int, 0, len(channels))
+	for _, channel := range channels {
+		if channel.SupportsModel(modelName) {
+			channelIDs = append(channelIDs, channel.Id)
+		}
+	}
+	return channelIDs
 }
 
 func loadModelMonitorConfig() (modelMonitorConfigResponse, error) {

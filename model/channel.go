@@ -315,6 +315,33 @@ func (channel *Channel) GetModels() []string {
 	return strings.Split(strings.Trim(channel.Models, ","), ",")
 }
 
+func (channel *Channel) SupportsModel(modelName string) bool {
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		return false
+	}
+	for _, supportedModel := range channel.GetModels() {
+		if strings.TrimSpace(supportedModel) == modelName {
+			return true
+		}
+	}
+
+	modelMapping := strings.TrimSpace(channel.GetModelMapping())
+	if modelMapping == "" {
+		return false
+	}
+	mapping := make(map[string]string)
+	if err := common.UnmarshalJsonStr(modelMapping, &mapping); err != nil {
+		return false
+	}
+	for sourceModel := range mapping {
+		if strings.TrimSpace(sourceModel) == modelName {
+			return true
+		}
+	}
+	return false
+}
+
 func (channel *Channel) GetGroups() []string {
 	if channel.Group == "" {
 		return []string{}

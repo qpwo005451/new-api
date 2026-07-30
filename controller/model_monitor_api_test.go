@@ -59,27 +59,103 @@ func TestModelMonitorSiteSummaryUsesPathHysteresis(t *testing.T) {
 	db := setupModelMonitorAPITestDB(t)
 	site := model.ModelMonitorSite{Name: "input", SiteType: model.ModelMonitorSiteTypeNewAPI, Enabled: true}
 	require.NoError(t, db.Create(&site).Error)
+	channel := model.Channel{Name: "input", Models: "gpt-5", Status: common.ChannelStatusEnabled}
+	require.NoError(t, db.Create(&channel).Error)
+	incompatibleChannel := model.Channel{Name: "grok-only", Models: "grok-4.5", Status: common.ChannelStatusEnabled}
+	require.NoError(t, db.Create(&incompatibleChannel).Error)
+	require.NoError(t, db.Create(&model.ModelMonitorSiteChannel{SiteID: site.ID, ChannelID: channel.Id}).Error)
+	require.NoError(t, db.Create(&model.ModelMonitorSiteChannel{SiteID: site.ID, ChannelID: incompatibleChannel.Id}).Error)
 	target := model.ModelMonitorTarget{SiteID: site.ID, ModelName: "gpt-5", Weight: 5, Enabled: true}
 	require.NoError(t, db.Create(&target).Error)
 	require.NoError(t, db.Create(&[]model.ModelMonitorObservation{
 		{
-			SiteID: site.ID, TargetID: target.ID, ChannelID: 10, ModelName: target.ModelName,
+			SiteID: site.ID, TargetID: target.ID, ChannelID: channel.Id, ModelName: target.ModelName,
 			Status: model.ModelMonitorStatusAvailable, Source: model.ModelMonitorObservationSourcePassive,
 			FailureType: model.ModelMonitorFailureTypeNone, ObservedAt: 100,
 		},
 		{
-			SiteID: site.ID, TargetID: target.ID, ChannelID: 10, ModelName: target.ModelName,
+			SiteID: site.ID, TargetID: target.ID, ChannelID: channel.Id, ModelName: target.ModelName,
 			Status: model.ModelMonitorStatusUnavailable, Source: model.ModelMonitorObservationSourceActive,
 			FailureType: model.ModelMonitorFailureTypeTimeout, ObservedAt: 200,
+		},
+		{
+			SiteID: site.ID, TargetID: target.ID, ChannelID: incompatibleChannel.Id, ModelName: target.ModelName,
+			Status: model.ModelMonitorStatusUnavailable, Source: model.ModelMonitorObservationSourceActive,
+			FailureType: model.ModelMonitorFailureTypeModelNotFound, ObservedAt: 300,
 		},
 	}).Error)
 
 	response, err := buildModelMonitorSiteResponse(site.ID, true)
 	require.NoError(t, err)
-	assert.Equal(t, model.ModelMonitorSiteHealthNormal, response.Summary.Health)
+	assert.Equal(t, model.ModelMonitorSiteHealthDegraded, response.Summary.Health)
 	require.Len(t, response.Summary.Models, 1)
-	assert.Equal(t, model.ModelMonitorStatusAvailable, response.Summary.Models[0].Status)
+	assert.Equal(t, model.ModelMonitorStatusLimited, response.Summary.Models[0].Status)
+	assert.Equal(t, 50, response.Summary.Score)
 	assert.EqualValues(t, 200, response.LatestObservedAt)
+	require.Len(t, response.Observations, 2)
+}
+
+func TestGetModelMonitorModelFiltersUnsupportedChannelHistory(t *testing.T) {
+	db := setupModelMonitorAPITestDB(t)
+	site := model.ModelMonitorSite{Name: "input", SiteType: model.ModelMonitorSiteTypeNewAPI, Enabled: true}
+	require.NoError(t, db.Create(&site).Error)
+	supportedChannel := model.Channel{Name: "gpt", Models: "gpt-5", Status: common.ChannelStatusEnabled}
+	unsupportedChannel := model.Channel{Name: "grok", Models: "grok-4.5", Status: common.ChannelStatusEnabled}
+	require.NoError(t, db.Create(&supportedChannel).Error)
+	require.NoError(t, db.Create(&unsupportedChannel).Error)
+	require.NoError(t, db.Create(&model.ModelMonitorSiteChannel{SiteID: site.ID, ChannelID: supportedChannel.Id}).Error)
+	require.NoError(t, db.Create(&model.ModelMonitorSiteChannel{SiteID: site.ID, ChannelID: unsupportedChannel.Id}).Error)
+	target := model.ModelMonitorTarget{SiteID: site.ID, ModelName: "gpt-5", Weight: 5, Enabled: true}
+	require.NoError(t, db.Create(&target).Error)
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&[]model.ModelMonitorObservation{
+		{
+			SiteID: site.ID, TargetID: target.ID, ChannelID: supportedChannel.Id, ModelName: target.ModelName,
+			Status: model.ModelMonitorStatusAvailable, Source: model.ModelMonitorObservationSourcePassive,
+			FailureType: model.ModelMonitorFailureTypeNone, ObservedAt: now - 60,
+		},
+		{
+			SiteID: site.ID, TargetID: target.ID, ChannelID: unsupportedChannel.Id, ModelName: target.ModelName,
+			Status: model.ModelMonitorStatusUnavailable, Source: model.ModelMonitorObservationSourceActive,
+			FailureType: model.ModelMonitorFailureTypeModelNotFound, ObservedAt: now,
+		},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ModelMonitorAggregateHourly{
+		{
+			SiteID: site.ID, TargetID: target.ID, ChannelID: supportedChannel.Id, ModelName: target.ModelName,
+			HourStart: now - now%3600, ObservationCount: 1, AvailableCount: 1, AvailabilityBasisPoints: 10_000,
+		},
+		{
+			SiteID: site.ID, TargetID: target.ID, ChannelID: unsupportedChannel.Id, ModelName: target.ModelName,
+			HourStart: now - now%3600, ObservationCount: 1, UnavailableCount: 1,
+		},
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Params = gin.Params{
+		{Key: "site_id", Value: fmt.Sprintf("%d", site.ID)},
+		{Key: "model", Value: target.ModelName},
+	}
+	GetModelMonitorModel(context)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Observations []model.ModelMonitorObservation     `json:"observations"`
+			Aggregates   []model.ModelMonitorAggregateHourly `json:"aggregates"`
+			Summary      model.ModelMonitorSiteSummary       `json:"summary"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.True(t, response.Success)
+	require.Len(t, response.Data.Observations, 1)
+	assert.Equal(t, supportedChannel.Id, response.Data.Observations[0].ChannelID)
+	require.Len(t, response.Data.Aggregates, 1)
+	assert.Equal(t, supportedChannel.Id, response.Data.Aggregates[0].ChannelID)
+	require.Len(t, response.Data.Summary.Models, 1)
+	assert.Equal(t, model.ModelMonitorStatusAvailable, response.Data.Summary.Models[0].Status)
 }
 
 func TestSaveModelMonitorConfigPreservesHistoryAndDisablesRemovedEntities(t *testing.T) {

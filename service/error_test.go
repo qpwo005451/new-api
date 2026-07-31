@@ -120,6 +120,49 @@ func TestRelayErrorHandlerKeepsOpenAIErrorMessage(t *testing.T) {
 
 	require.NotNil(t, newAPIError)
 	require.Equal(t, message, newAPIError.Error())
+	require.Equal(t, http.StatusInternalServerError, newAPIError.StatusCode)
+}
+
+func TestRelayErrorHandlerCapturesGeminiStatusWithoutDetails(t *testing.T) {
+	body := `{"error":{"code":500,"message":"An internal error has occurred.","status":"INTERNAL","details":[{"@type":"type.googleapis.com/example.DebugInfo","detail":"secret-debug-data"}]}}`
+	resp := &http.Response{
+		StatusCode: http.StatusInternalServerError,
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+
+	newAPIError := RelayErrorHandler(context.Background(), resp, false)
+
+	require.NotNil(t, newAPIError)
+	require.Equal(t, "An internal error has occurred.", newAPIError.Error())
+	require.Equal(t, types.ErrorCode("500"), newAPIError.GetErrorCode())
+	require.Equal(t, http.StatusInternalServerError, newAPIError.StatusCode)
+	require.Equal(t, "status_code=500, An internal error has occurred.", newAPIError.MaskSensitiveErrorWithStatusCode())
+	require.NotContains(t, newAPIError.Error(), "secret-debug-data")
+
+	errorInfo := newAPIError.GetUpstreamErrorInfo()
+	require.NotNil(t, errorInfo)
+	require.Equal(t, "provider_error", errorInfo.Kind)
+	require.Equal(t, "INTERNAL", errorInfo.Status)
+}
+
+func TestRelayErrorHandlerDropsOpenRouterMetadata(t *testing.T) {
+	body := `{"error":{"code":500,"message":"Provider returned an error","type":"server_error","metadata":{"raw":"Authorization: Bearer secret-token","provider_name":"Google"}}}`
+	resp := &http.Response{
+		StatusCode: http.StatusInternalServerError,
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+
+	newAPIError := RelayErrorHandler(context.Background(), resp, false)
+
+	require.NotNil(t, newAPIError)
+	require.Equal(t, "Provider returned an error", newAPIError.Error())
+	require.Empty(t, newAPIError.ToOpenAIError().Metadata)
+	require.NotContains(t, newAPIError.Error(), "secret-token")
+
+	errorInfo := newAPIError.GetUpstreamErrorInfo()
+	require.NotNil(t, errorInfo)
+	require.Equal(t, "provider_error", errorInfo.Kind)
+	require.Empty(t, errorInfo.Status)
 }
 
 func TestRelayErrorHandlerKeepsInvalidJSONBodyInDebugLog(t *testing.T) {

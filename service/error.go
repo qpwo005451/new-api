@@ -84,7 +84,11 @@ func ClaudeErrorWrapperLocal(err error, code string, statusCode int) *dto.Claude
 }
 
 func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFail bool) (newApiErr *types.NewAPIError) {
-	newApiErr = types.InitOpenAIError(types.ErrorCodeBadResponseStatusCode, resp.StatusCode)
+	newApiErr = types.InitOpenAIError(
+		types.ErrorCodeBadResponseStatusCode,
+		resp.StatusCode,
+		types.ErrOptionWithUpstreamErrorInfo("provider_error", ""),
+	)
 
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -114,16 +118,25 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 
 	if common.GetJsonType(errResponse.Error) == "object" {
 		// General format error (OpenAI, Anthropic, Gemini, etc.)
-		oaiError := errResponse.TryToOpenAIError()
+		oaiError, providerStatus := errResponse.TryToOpenAIErrorWithStatus()
 		if oaiError != nil {
-			newApiErr = types.WithOpenAIError(*oaiError, resp.StatusCode)
+			newApiErr = types.WithOpenAIError(
+				*oaiError,
+				resp.StatusCode,
+				types.ErrOptionWithUpstreamErrorInfo("provider_error", providerStatus),
+			)
 			if showBodyWhenFail {
 				newApiErr.Err = buildErrWithBody(newApiErr.Error())
 			}
 			return
 		}
 	}
-	newApiErr = types.NewOpenAIError(errors.New(errResponse.ToMessage()), types.ErrorCodeBadResponseStatusCode, resp.StatusCode)
+	newApiErr = types.NewOpenAIError(
+		errors.New(errResponse.ToMessage()),
+		types.ErrorCodeBadResponseStatusCode,
+		resp.StatusCode,
+		types.ErrOptionWithUpstreamErrorInfo("provider_error", ""),
+	)
 	if showBodyWhenFail {
 		newApiErr.Err = buildErrWithBody(newApiErr.Error())
 	}

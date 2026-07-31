@@ -39,14 +39,32 @@ type GeneralErrorResponse struct {
 }
 
 func (e GeneralErrorResponse) TryToOpenAIError() *types.OpenAIError {
-	var openAIError types.OpenAIError
+	openAIError, _ := e.TryToOpenAIErrorWithStatus()
+	return openAIError
+}
+
+func (e GeneralErrorResponse) TryToOpenAIErrorWithStatus() (*types.OpenAIError, string) {
+	var providerError struct {
+		Message  string          `json:"message"`
+		Type     string          `json:"type"`
+		Param    string          `json:"param"`
+		Code     any             `json:"code"`
+		Metadata json.RawMessage `json:"metadata,omitempty"`
+		Status   string          `json:"status,omitempty"`
+	}
 	if len(e.Error) > 0 {
-		err := common.Unmarshal(e.Error, &openAIError)
-		if err == nil && openAIError.Message != "" {
-			return &openAIError
+		err := common.Unmarshal(e.Error, &providerError)
+		if err == nil && providerError.Message != "" {
+			return &types.OpenAIError{
+				Message:  providerError.Message,
+				Type:     providerError.Type,
+				Param:    providerError.Param,
+				Code:     providerError.Code,
+				Metadata: providerError.Metadata,
+			}, providerError.Status
 		}
 	}
-	return nil
+	return nil, ""
 }
 
 func (e GeneralErrorResponse) ToMessage() string {

@@ -311,7 +311,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo.LastError = newAPIError
 
 		inputTransientCooldown := time.Duration(0)
-		if inputTransientRetryTarget && isInputTransientRetryError(newAPIError) {
+		if inputTransientRetryTarget &&
+			service.RelayRequestContext(c).Err() == nil &&
+			isInputTransientRetryError(newAPIError) {
 			inputTransientCooldown = inputTransientRetryCooldown(retryParam.GetRetry())
 			inputTransientRetryGateFor(channel.Id).setCooldown(time.Now(), inputTransientCooldown)
 			logger.LogInfo(c, fmt.Sprintf("Input transient retry cooldown %s (channel #%d, model %s, status %d)", inputTransientCooldown, channel.Id, relayInfo.OriginModelName, newAPIError.StatusCode))
@@ -434,6 +436,9 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if openaiErr == nil {
 		return false
 	}
+	if service.RelayRequestContext(c).Err() != nil {
+		return false
+	}
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		return false
 	}
@@ -552,6 +557,9 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 			adminInfo["multi_key_index"] = common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex)
 		}
 		service.AppendChannelAffinityAdminInfo(c, adminInfo)
+		if upstreamError := err.GetUpstreamErrorInfo(); upstreamError != nil {
+			adminInfo["upstream_error"] = upstreamError
+		}
 		other["admin_info"] = adminInfo
 		startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
 		if startTime.IsZero() {

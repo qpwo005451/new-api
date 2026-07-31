@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -49,6 +52,46 @@ func TestTransientRetryBackoff(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, transientRetryBackoff(tt.statusCode, tt.retryIndex))
+		})
+	}
+}
+
+func TestShouldRetryStopsWhenRelayContextIsDone(t *testing.T) {
+	tests := []struct {
+		name   string
+		cancel func(context.Context) context.Context
+	}{
+		{
+			name: "canceled",
+			cancel: func(parent context.Context) context.Context {
+				ctx, cancel := context.WithCancel(parent)
+				cancel()
+				return ctx
+			},
+		},
+		{
+			name: "deadline exceeded",
+			cancel: func(parent context.Context) context.Context {
+				ctx, cancel := context.WithTimeout(parent, 0)
+				cancel()
+				return ctx
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			ctx.Request = request.WithContext(test.cancel(request.Context()))
+			apiErr := types.NewErrorWithStatusCode(
+				io.EOF,
+				types.ErrorCodeDoRequestFailed,
+				http.StatusBadGateway,
+			)
+
+			assert.False(t, shouldRetry(ctx, apiErr, 1))
 		})
 	}
 }

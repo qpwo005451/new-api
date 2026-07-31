@@ -20,16 +20,26 @@ func TestFormatUserLogsStripsQuotaSaturation(t *testing.T) {
 				"kind":    "overflow",
 				"clamped": common.MaxQuota,
 			},
+			"upstream_error": map[string]interface{}{
+				"kind":   "provider_error",
+				"status": "INTERNAL",
+			},
 		},
 	})
 	logs := []*Log{{Other: other}}
+
+	adminView, err := common.StrToMap(logs[0].Other)
+	require.NoError(t, err)
+	adminInfo := adminView["admin_info"].(map[string]interface{})
+	upstreamError := adminInfo["upstream_error"].(map[string]interface{})
+	require.Equal(t, "INTERNAL", upstreamError["status"])
 
 	formatUserLogs(logs, 0)
 
 	parsed, err := common.StrToMap(logs[0].Other)
 	require.NoError(t, err)
 	_, hasAdminInfo := parsed["admin_info"]
-	require.False(t, hasAdminInfo, "admin_info (and nested quota_saturation) must be stripped for non-admin views")
+	require.False(t, hasAdminInfo, "admin_info and nested diagnostics must be stripped for non-admin views")
 	// Non-admin billing fields remain visible.
 	require.Contains(t, parsed, "model_price")
 }

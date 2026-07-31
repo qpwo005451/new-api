@@ -18,6 +18,11 @@ type OpenAIError struct {
 	Metadata json.RawMessage `json:"metadata,omitempty"`
 }
 
+type UpstreamErrorInfo struct {
+	Kind   string `json:"kind,omitempty"`
+	Status string `json:"status,omitempty"`
+}
+
 type ClaudeError struct {
 	Type    string `json:"type,omitempty"`
 	Message string `json:"message,omitempty"`
@@ -96,13 +101,17 @@ type NewAPIError struct {
 	errorType      ErrorType
 	errorCode      ErrorCode
 	StatusCode     int
-	Metadata       json.RawMessage
+	cause          error
+	upstreamError  *UpstreamErrorInfo
 }
 
 // Unwrap enables errors.Is / errors.As to work with NewAPIError by exposing the underlying error.
 func (e *NewAPIError) Unwrap() error {
 	if e == nil {
 		return nil
+	}
+	if e.cause != nil {
+		return e.cause
 	}
 	return e.Err
 }
@@ -119,6 +128,14 @@ func (e *NewAPIError) GetErrorType() ErrorType {
 		return ""
 	}
 	return e.errorType
+}
+
+func (e *NewAPIError) GetUpstreamErrorInfo() *UpstreamErrorInfo {
+	if e == nil || e.upstreamError == nil {
+		return nil
+	}
+	info := *e.upstreamError
+	return &info
 }
 
 func (e *NewAPIError) Error() string {
@@ -327,19 +344,15 @@ func WithOpenAIError(openAIError OpenAIError, statusCode int, ops ...NewAPIError
 	if openAIError.Type == "" {
 		openAIError.Type = "upstream_error"
 	}
+	// Provider metadata is not part of the public error contract and may
+	// contain raw upstream payloads, internal routes, or credentials.
+	openAIError.Metadata = nil
 	e := &NewAPIError{
 		RelayError: openAIError,
 		errorType:  ErrorTypeOpenAIError,
 		StatusCode: statusCode,
 		Err:        errors.New(openAIError.Message),
 		errorCode:  ErrorCode(code),
-	}
-	// OpenRouter
-	if len(openAIError.Metadata) > 0 {
-		openAIError.Message = fmt.Sprintf("%s (%s)", openAIError.Message, openAIError.Metadata)
-		e.Metadata = openAIError.Metadata
-		e.RelayError = openAIError
-		e.Err = errors.New(openAIError.Message)
 	}
 	for _, op := range ops {
 		op(e)
@@ -400,9 +413,26 @@ func ErrOptionWithStatusCode(statusCode int) NewAPIErrorOptions {
 func ErrOptionWithHideErrMsg(replaceStr string) NewAPIErrorOptions {
 	return func(e *NewAPIError) {
 		if common.DebugEnabled {
-			fmt.Printf("ErrOptionWithHideErrMsg: %s, origin error: %s", replaceStr, e.Err)
+			fmt.Printf("ErrOptionWithHideErrMsg: %s", replaceStr)
+		}
+		if e.cause == nil {
+			e.cause = e.Err
 		}
 		e.Err = errors.New(replaceStr)
+	}
+}
+
+func ErrOptionWithUpstreamErrorInfo(kind string, status string) NewAPIErrorOptions {
+	kind = strings.TrimSpace(kind)
+	status = strings.TrimSpace(status)
+	return func(e *NewAPIError) {
+		if kind == "" && status == "" {
+			return
+		}
+		e.upstreamError = &UpstreamErrorInfo{
+			Kind:   kind,
+			Status: status,
+		}
 	}
 }
 

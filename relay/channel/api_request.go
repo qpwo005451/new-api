@@ -2,13 +2,16 @@ package channel
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	common2 "github.com/QuantumNous/new-api/common"
@@ -474,6 +477,82 @@ func sendPingData(c *gin.Context, mutex *sync.Mutex) error {
 func DoRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
 	return doRequest(c, req, info)
 }
+
+const statusClientClosedRequest = 499
+
+func newUpstreamTransportError(req *http.Request, err error) *types.NewAPIError {
+	statusCode := http.StatusBadGateway
+	kind := "transport"
+	message := "upstream request failed before receiving a response"
+	skipRetry := false
+
+	var requestContextErr error
+	if req != nil {
+		requestContextErr = req.Context().Err()
+	}
+
+	switch {
+	case errors.Is(err, context.Canceled) || errors.Is(requestContextErr, context.Canceled):
+		statusCode = statusClientClosedRequest
+		kind = "client_canceled"
+		message = "downstream request canceled before upstream response"
+		skipRetry = true
+	case errors.Is(err, context.DeadlineExceeded) || errors.Is(requestContextErr, context.DeadlineExceeded):
+		statusCode = http.StatusGatewayTimeout
+		kind = "timeout"
+		message = "upstream response timed out"
+		skipRetry = true
+	case errors.Is(err, io.ErrUnexpectedEOF):
+		kind = "unexpected_eof"
+		message = "upstream closed connection before sending a complete response"
+	case errors.Is(err, io.EOF):
+		kind = "eof"
+		message = "upstream closed connection before sending a response"
+	default:
+		var tlsRecordHeaderError tls.RecordHeaderError
+		var dnsError *net.DNSError
+		var networkError net.Error
+		lowerError := strings.ToLower(err.Error())
+
+		switch {
+		case errors.As(err, &tlsRecordHeaderError) ||
+			strings.Contains(lowerError, "tls") ||
+			strings.Contains(lowerError, "x509"):
+			kind = "tls"
+			message = "upstream TLS handshake failed"
+		case errors.As(err, &dnsError):
+			kind = "dns"
+			message = "upstream DNS lookup failed"
+		case errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE):
+			kind = "connection_reset"
+			message = "upstream connection was reset before sending a response"
+		case errors.Is(err, syscall.ECONNREFUSED):
+			kind = "connection_refused"
+			message = "upstream connection was refused"
+		case errors.Is(err, net.ErrClosed) || errors.Is(err, io.ErrClosedPipe):
+			kind = "connection_closed"
+			message = "upstream connection closed before sending a response"
+		case errors.As(err, &networkError) && networkError.Timeout():
+			statusCode = http.StatusGatewayTimeout
+			kind = "timeout"
+			message = "upstream response timed out"
+			skipRetry = true
+		case errors.As(err, &networkError):
+			kind = "network"
+			message = "upstream network request failed before receiving a response"
+		}
+	}
+
+	options := []types.NewAPIErrorOptions{
+		types.ErrOptionWithHideErrMsg(message),
+		types.ErrOptionWithUpstreamErrorInfo(kind, ""),
+	}
+	if skipRetry {
+		options = append(options, types.ErrOptionWithSkipRetry())
+	}
+	return types.NewErrorWithStatusCode(err, types.ErrorCodeDoRequestFailed, statusCode, options...)
+}
+
 func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
 	var client *http.Client
 	var err error
@@ -508,8 +587,15 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 
 	resp, err := client.Do(req)
 	if err != nil {
-		logger.LogError(c, "do request failed: "+err.Error())
-		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
+		upstreamError := newUpstreamTransportError(req, err)
+		errorInfo := upstreamError.GetUpstreamErrorInfo()
+		logger.LogError(c, fmt.Sprintf(
+			"do request failed: kind=%s, status_code=%d, %s",
+			errorInfo.Kind,
+			upstreamError.StatusCode,
+			upstreamError.Error(),
+		))
+		return nil, upstreamError
 	}
 	if resp == nil {
 		return nil, errors.New("resp is nil")

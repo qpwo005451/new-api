@@ -428,6 +428,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const isViolation = isViolationFeeLog(other)
   const isRefund = props.log.type === 6
   const isConsume = props.log.type === 2
+  const isError = props.log.type === LOG_TYPE_ENUM.ERROR
   const isTopup = props.log.type === 1
   const isManage = props.log.type === 3
   const isSubscription = other?.billing_source === 'subscription'
@@ -445,6 +446,22 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const showAdminIp =
     !!props.log.ip && (showTiming || (props.isAdmin && isTopup))
   const adminInfo = other?.admin_info
+  const upstreamError = adminInfo?.upstream_error
+  const upstreamStatus = [
+    other?.status_code != null ? `HTTP ${other.status_code}` : '',
+    upstreamError?.status,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  const showUpstreamError =
+    props.isAdmin &&
+    isError &&
+    Boolean(
+      upstreamStatus ||
+      upstreamError?.kind ||
+      other?.error_type ||
+      other?.error_code
+    )
   const topupAuditFields =
     isTopup && props.isAdmin && adminInfo
       ? ([
@@ -682,6 +699,28 @@ export function DetailsDialog(props: DetailsDialogProps) {
             />
           )}
         </div>
+
+        {/* Safe upstream diagnostics (admin only) */}
+        {showUpstreamError && (
+          <DetailSection
+            icon={<AlertTriangle className='size-3.5' aria-hidden='true' />}
+            label={t('Error')}
+            variant='destructive'
+          >
+            {upstreamStatus && (
+              <DetailRow label={t('Status')} value={upstreamStatus} mono />
+            )}
+            {upstreamError?.kind && (
+              <DetailRow label={t('Kind')} value={upstreamError.kind} mono />
+            )}
+            {other?.error_type && (
+              <DetailRow label={t('Type')} value={other.error_type} mono />
+            )}
+            {other?.error_code && (
+              <DetailRow label={t('Code')} value={other.error_code} mono />
+            )}
+          </DetailSection>
+        )}
 
         {/* Request conversion (admin only, not for refund) */}
         {showConversion && (

@@ -1,14 +1,25 @@
 package channel
 
 import (
+	"context"
+	"crypto/tls"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 func TestProcessHeaderOverride_ChannelTestSkipsPassthroughRules(t *testing.T) {
 	t.Parallel()
@@ -190,4 +201,96 @@ func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.
 	require.Equal(t, "Codex CLI", upstreamReq.Header.Get("Originator"))
 	require.Equal(t, "sess-123", upstreamReq.Header.Get("Session_id"))
 	require.Empty(t, upstreamReq.Header.Get("X-Codex-Beta-Features"))
+}
+
+func TestNewUpstreamTransportErrorClassifiesRoundTripperFailures(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		transportError error
+		wantStatus     int
+		wantKind       string
+		wantMessage    string
+		wantSkipRetry  bool
+	}{
+		{
+			name:           "client canceled",
+			transportError: context.Canceled,
+			wantStatus:     statusClientClosedRequest,
+			wantKind:       "client_canceled",
+			wantMessage:    "downstream request canceled before upstream response",
+			wantSkipRetry:  true,
+		},
+		{
+			name:           "deadline exceeded",
+			transportError: context.DeadlineExceeded,
+			wantStatus:     http.StatusGatewayTimeout,
+			wantKind:       "timeout",
+			wantMessage:    "upstream response timed out",
+			wantSkipRetry:  true,
+		},
+		{
+			name:           "EOF",
+			transportError: io.EOF,
+			wantStatus:     http.StatusBadGateway,
+			wantKind:       "eof",
+			wantMessage:    "upstream closed connection before sending a response",
+		},
+		{
+			name:           "unexpected EOF",
+			transportError: io.ErrUnexpectedEOF,
+			wantStatus:     http.StatusBadGateway,
+			wantKind:       "unexpected_eof",
+			wantMessage:    "upstream closed connection before sending a complete response",
+		},
+		{
+			name:           "TLS",
+			transportError: tls.RecordHeaderError{Msg: "invalid TLS record header"},
+			wantStatus:     http.StatusBadGateway,
+			wantKind:       "tls",
+			wantMessage:    "upstream TLS handshake failed",
+		},
+		{
+			name: "DNS",
+			transportError: &net.DNSError{
+				Err:        "no such host",
+				Name:       "upstream.invalid",
+				IsNotFound: true,
+			},
+			wantStatus:  http.StatusBadGateway,
+			wantKind:    "dns",
+			wantMessage: "upstream DNS lookup failed",
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := &http.Client{
+				Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+					return nil, test.transportError
+				}),
+			}
+			req, err := http.NewRequest(http.MethodPost, "https://upstream.invalid/v1/test", nil)
+			require.NoError(t, err)
+
+			_, transportErr := client.Do(req)
+			require.Error(t, transportErr)
+
+			apiErr := newUpstreamTransportError(req, transportErr)
+			require.Equal(t, types.ErrorCodeDoRequestFailed, apiErr.GetErrorCode())
+			require.Equal(t, test.wantStatus, apiErr.StatusCode)
+			require.Equal(t, test.wantMessage, apiErr.Error())
+			require.Equal(t, test.wantSkipRetry, types.IsSkipRetryError(apiErr))
+			require.ErrorIs(t, apiErr, test.transportError)
+
+			errorInfo := apiErr.GetUpstreamErrorInfo()
+			require.NotNil(t, errorInfo)
+			require.Equal(t, test.wantKind, errorInfo.Kind)
+			require.Empty(t, errorInfo.Status)
+		})
+	}
 }

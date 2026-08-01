@@ -25,6 +25,7 @@ import { GeminiSettingsCard } from './gemini-settings-card'
 import { GlobalSettingsCard } from './global-settings-card'
 import { GrokSettingsCard } from './grok-settings-card'
 import { RoutingReliabilitySection } from './routing-reliability-section'
+import { UpstreamRateLimitSection } from './upstream-rate-limit-section'
 
 function formatJsonForEditor(value: string, fallback: string) {
   const raw = (value ?? '').toString().trim()
@@ -163,6 +164,20 @@ const MODELS_SECTIONS = [
             settings['channel_affinity_setting.default_ttl_seconds'],
           'channel_affinity_setting.rules':
             settings['channel_affinity_setting.rules'],
+        }}
+      />
+    ),
+  },
+  {
+    id: 'upstream-rate-limits',
+    titleKey: 'Upstream Request Limits',
+    build: (settings: ModelSettings) => (
+      <UpstreamRateLimitSection
+        defaultValues={{
+          'upstream_rate_limit_setting.enabled':
+            settings['upstream_rate_limit_setting.enabled'],
+          'upstream_rate_limit_setting.rules':
+            settings['upstream_rate_limit_setting.rules'],
         }}
       />
     ),

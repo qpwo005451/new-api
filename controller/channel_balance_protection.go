@@ -22,15 +22,20 @@ type balanceProtectionTaskSummary struct {
 	Skipped   int `json:"skipped"`
 }
 
-func supportsChannelBalanceQuery(channelType int) bool {
-	switch channelType {
+func supportsChannelBalanceQuery(channel *model.Channel) bool {
+	if channel == nil {
+		return false
+	}
+	if isOfficialDeepSeekBalanceChannel(channel) {
+		return true
+	}
+	switch channel.Type {
 	case constant.ChannelTypeOpenAI,
 		constant.ChannelTypeCustom,
 		constant.ChannelTypeAIProxy,
 		constant.ChannelTypeAPI2GPT,
 		constant.ChannelTypeAIGC2D,
 		constant.ChannelTypeSiliconFlow,
-		constant.ChannelTypeDeepSeek,
 		constant.ChannelTypeOpenRouter,
 		constant.ChannelTypeMoonshot:
 		return true
@@ -55,7 +60,7 @@ func attachChannelBalanceProtections(channels []*model.Channel) {
 		if channel == nil {
 			continue
 		}
-		channel.BalanceProtection = protections[channel.Id].ToView(supportsChannelBalanceQuery(channel.Type))
+		channel.BalanceProtection = protections[channel.Id].ToView(supportsChannelBalanceQuery(channel))
 	}
 }
 
@@ -154,7 +159,7 @@ func runBalanceProtectionTaskOnce(ctx context.Context, report func(processed, to
 			summary.Skipped += total - index
 			break
 		}
-		if channel == nil || channel.ChannelInfo.IsMultiKey || !supportsChannelBalanceQuery(channel.Type) {
+		if channel == nil || channel.ChannelInfo.IsMultiKey || !supportsChannelBalanceQuery(channel) {
 			summary.Skipped++
 			if report != nil {
 				report(index+1, total)

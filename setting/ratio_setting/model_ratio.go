@@ -243,6 +243,12 @@ var defaultModelRatio = map[string]float64{
 	"deepseek-chat":          0.27 / 2,
 	"deepseek-coder":         0.27 / 2,
 	"deepseek-reasoner":      0.55 / 2, // 0.55 / 1k tokens
+	"deepseek-v4-flash":      0.14 / 2,
+	"deepseek-v4-flash-none": 0.14 / 2,
+	"deepseek-v4-flash-max":  0.14 / 2,
+	"deepseek-v4-pro":        0.435 / 2,
+	"deepseek-v4-pro-none":   0.435 / 2,
+	"deepseek-v4-pro-max":    0.435 / 2,
 	// Perplexity online 模型对搜索额外收费，有需要应自行调整，此处不计入搜索费用
 	"llama-3-sonar-small-32k-chat":   0.2 / 1000 * USD,
 	"llama-3-sonar-small-32k-online": 0.2 / 1000 * USD,
@@ -327,10 +333,16 @@ var modelRatioMap = types.NewRWMap[string, float64]()
 var completionRatioMap = types.NewRWMap[string, float64]()
 
 var defaultCompletionRatio = map[string]float64{
-	"gpt-4-gizmo-*":  2,
-	"gpt-4o-gizmo-*": 3,
-	"gpt-4-all":      2,
-	"gpt-image-1":    8,
+	"gpt-4-gizmo-*":          2,
+	"gpt-4o-gizmo-*":         3,
+	"gpt-4-all":              2,
+	"gpt-image-1":            8,
+	"deepseek-v4-flash":      2,
+	"deepseek-v4-flash-none": 2,
+	"deepseek-v4-flash-max":  2,
+	"deepseek-v4-pro":        2,
+	"deepseek-v4-pro-none":   2,
+	"deepseek-v4-pro-max":    2,
 }
 
 // InitRatioSettings initializes all model related settings maps

@@ -8,11 +8,115 @@ import (
 
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/glebarez/sqlite"
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestOfficialDeepSeekBalanceChannelDetection(t *testing.T) {
+	tests := []struct {
+		name        string
+		channelType int
+		baseURL     string
+		want        bool
+	}{
+		{
+			name:        "native DeepSeek channel",
+			channelType: constant.ChannelTypeDeepSeek,
+			want:        true,
+		},
+		{
+			name:        "official advanced custom channel",
+			channelType: constant.ChannelTypeAdvancedCustom,
+			baseURL:     "https://api.deepseek.com",
+			want:        true,
+		},
+		{
+			name:        "official advanced custom channel with API path",
+			channelType: constant.ChannelTypeAdvancedCustom,
+			baseURL:     "https://api.deepseek.com/v1",
+			want:        true,
+		},
+		{
+			name:        "official host with explicit HTTPS port",
+			channelType: constant.ChannelTypeAdvancedCustom,
+			baseURL:     "https://api.deepseek.com:443",
+			want:        true,
+		},
+		{
+			name:        "non-HTTPS official host",
+			channelType: constant.ChannelTypeAdvancedCustom,
+			baseURL:     "http://api.deepseek.com",
+		},
+		{
+			name:        "non-standard official host port",
+			channelType: constant.ChannelTypeAdvancedCustom,
+			baseURL:     "https://api.deepseek.com:8443",
+		},
+		{
+			name:        "lookalike host",
+			channelType: constant.ChannelTypeAdvancedCustom,
+			baseURL:     "https://api.deepseek.com.example.com",
+		},
+		{
+			name:        "unrelated advanced custom channel",
+			channelType: constant.ChannelTypeAdvancedCustom,
+			baseURL:     "https://example.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			baseURL := tt.baseURL
+			channel := &model.Channel{
+				Type:    tt.channelType,
+				BaseURL: &baseURL,
+			}
+			assert.Equal(t, tt.want, isOfficialDeepSeekBalanceChannel(channel))
+			assert.Equal(t, tt.want, supportsChannelBalanceQuery(channel))
+		})
+	}
+}
+
+func TestParseDeepSeekBalanceConvertsCNYToUSD(t *testing.T) {
+	previousExchangeRate := operation_setting.USDExchangeRate
+	operation_setting.USDExchangeRate = 7.3
+	t.Cleanup(func() {
+		operation_setting.USDExchangeRate = previousExchangeRate
+	})
+
+	balance, err := parseDeepSeekBalance([]byte(`{
+		"is_available": true,
+		"balance_infos": [{
+			"currency": "CNY",
+			"total_balance": "5.90",
+			"granted_balance": "0",
+			"topped_up_balance": "5.90"
+		}]
+	}`))
+	require.NoError(t, err)
+
+	want := decimal.NewFromFloat(5.90).
+		Div(decimal.NewFromFloat(operation_setting.USDExchangeRate)).
+		InexactFloat64()
+	assert.InDelta(t, want, balance, 1e-9)
+}
+
+func TestParseDeepSeekBalanceRequiresValidExchangeRate(t *testing.T) {
+	previousExchangeRate := operation_setting.USDExchangeRate
+	operation_setting.USDExchangeRate = 0
+	t.Cleanup(func() {
+		operation_setting.USDExchangeRate = previousExchangeRate
+	})
+
+	_, err := parseDeepSeekBalance([]byte(`{
+		"balance_infos": [{"currency": "CNY", "total_balance": "100"}]
+	}`))
+	require.EqualError(t, err, "USD exchange rate must be greater than 0")
+}
 
 func TestUpdateChannelBalanceFallsBackToSub2APIUsage(t *testing.T) {
 	tests := []struct {

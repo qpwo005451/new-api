@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -114,6 +115,27 @@ type DeepSeekUsageResponse struct {
 		GrantedBalance  string `json:"granted_balance"`
 		ToppedUpBalance string `json:"topped_up_balance"`
 	} `json:"balance_infos"`
+}
+
+func isOfficialDeepSeekBalanceChannel(channel *model.Channel) bool {
+	if channel == nil {
+		return false
+	}
+	if channel.Type == constant.ChannelTypeDeepSeek {
+		return true
+	}
+	if channel.Type != constant.ChannelTypeAdvancedCustom {
+		return false
+	}
+
+	baseURL, err := url.Parse(channel.GetBaseURL())
+	if err != nil || baseURL.User != nil || !strings.EqualFold(baseURL.Scheme, "https") {
+		return false
+	}
+	if !strings.EqualFold(baseURL.Hostname(), "api.deepseek.com") {
+		return false
+	}
+	return baseURL.Port() == "" || baseURL.Port() == "443"
 }
 
 type OpenRouterCreditResponse struct {
@@ -291,8 +313,17 @@ func updateChannelDeepSeekBalance(channel *model.Channel) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
+	balance, err := parseDeepSeekBalance(body)
+	if err != nil {
+		return 0, err
+	}
+	channel.UpdateBalance(balance)
+	return balance, nil
+}
+
+func parseDeepSeekBalance(body []byte) (float64, error) {
 	response := DeepSeekUsageResponse{}
-	err = json.Unmarshal(body, &response)
+	err := common.Unmarshal(body, &response)
 	if err != nil {
 		return 0, err
 	}
@@ -306,12 +337,16 @@ func updateChannelDeepSeekBalance(channel *model.Channel) (float64, error) {
 	if index == -1 {
 		return 0, errors.New("currency CNY not found")
 	}
-	balance, err := strconv.ParseFloat(response.BalanceInfos[index].TotalBalance, 64)
+	balanceCny, err := strconv.ParseFloat(response.BalanceInfos[index].TotalBalance, 64)
 	if err != nil {
 		return 0, err
 	}
-	channel.UpdateBalance(balance)
-	return balance, nil
+	if operation_setting.USDExchangeRate <= 0 {
+		return 0, errors.New("USD exchange rate must be greater than 0")
+	}
+	return decimal.NewFromFloat(balanceCny).
+		Div(decimal.NewFromFloat(operation_setting.USDExchangeRate)).
+		InexactFloat64(), nil
 }
 
 func updateChannelAIGC2DBalance(channel *model.Channel) (float64, error) {
@@ -512,6 +547,10 @@ func updateChannelLegacyOpenAIBalance(channel *model.Channel, baseURL string) (f
 }
 
 func updateChannelBalance(channel *model.Channel) (float64, error) {
+	if isOfficialDeepSeekBalanceChannel(channel) {
+		return updateChannelDeepSeekBalance(channel)
+	}
+
 	baseURL := constant.ChannelBaseURLs[channel.Type]
 	if channel.GetBaseURL() == "" {
 		channel.BaseURL = &baseURL
@@ -535,8 +574,6 @@ func updateChannelBalance(channel *model.Channel) (float64, error) {
 		return updateChannelAIGC2DBalance(channel)
 	case constant.ChannelTypeSiliconFlow:
 		return updateChannelSiliconFlowBalance(channel)
-	case constant.ChannelTypeDeepSeek:
-		return updateChannelDeepSeekBalance(channel)
 	case constant.ChannelTypeOpenRouter:
 		return updateChannelOpenRouterBalance(channel)
 	case constant.ChannelTypeMoonshot:

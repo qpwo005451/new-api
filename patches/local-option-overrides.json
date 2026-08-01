@@ -4,6 +4,30 @@
     "vip": 0,
     "svip": 0
   },
+  "ModelRatio": {
+    "deepseek-v4-flash": 0.07,
+    "deepseek-v4-flash-none": 0.07,
+    "deepseek-v4-flash-max": 0.07,
+    "deepseek-v4-pro": 0.2175,
+    "deepseek-v4-pro-none": 0.2175,
+    "deepseek-v4-pro-max": 0.2175
+  },
+  "CompletionRatio": {
+    "deepseek-v4-flash": 2,
+    "deepseek-v4-flash-none": 2,
+    "deepseek-v4-flash-max": 2,
+    "deepseek-v4-pro": 2,
+    "deepseek-v4-pro-none": 2,
+    "deepseek-v4-pro-max": 2
+  },
+  "CacheRatio": {
+    "deepseek-v4-flash": 0.02,
+    "deepseek-v4-flash-none": 0.02,
+    "deepseek-v4-flash-max": 0.02,
+    "deepseek-v4-pro": 0.008333333333333333,
+    "deepseek-v4-pro-none": 0.008333333333333333,
+    "deepseek-v4-pro-max": 0.008333333333333333
+  },
   "billing_setting.billing_mode": {
     "kimi-k2.7-code": "tiered_expr"
   },

@@ -958,7 +958,7 @@ func UpdateChannel(c *gin.Context) {
 
 	// Always copy the original ChannelInfo so that fields like IsMultiKey and MultiKeySize are retained.
 	channel.ChannelInfo = originChannel.ChannelInfo
-	if !supportsChannelBalanceQuery(channel.Type) {
+	if !supportsChannelBalanceQuery(&channel.Channel) {
 		protectionEnabled := channel.BalanceProtection != nil && channel.BalanceProtection.Enabled
 		if channel.BalanceProtection == nil {
 			existingProtection, protectionErr := model.GetChannelBalanceProtection(channel.Id)

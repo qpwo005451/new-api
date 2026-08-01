@@ -48,6 +48,7 @@ type DialogType =
   | null
 
 type UpstreamUpdateState = ReturnType<typeof useChannelUpstreamUpdates>
+export type DeepSeekBalanceCurrency = 'USD' | 'CNY'
 
 type ChannelsContextType = {
   open: DialogType
@@ -64,6 +65,8 @@ type ChannelsContextType = {
   setBatchMode: (enabled: boolean) => void
   sensitiveVisible: boolean
   setSensitiveVisible: (visible: boolean) => void
+  deepSeekBalanceCurrency: DeepSeekBalanceCurrency
+  setDeepSeekBalanceCurrency: (currency: DeepSeekBalanceCurrency) => void
   upstream: UpstreamUpdateState
 }
 
@@ -91,6 +94,20 @@ export function ChannelsProvider({ children }: { children: React.ReactNode }) {
   })
   const [batchMode, setBatchMode] = useState(false)
   const [sensitiveVisible, setSensitiveVisible] = useState(true)
+  const [deepSeekBalanceCurrency, setDeepSeekBalanceCurrencyState] =
+    useState<DeepSeekBalanceCurrency>(() => {
+      return localStorage.getItem('channels-deepseek-balance-currency') ===
+        'USD'
+        ? 'USD'
+        : 'CNY'
+    })
+  const setDeepSeekBalanceCurrency = useCallback(
+    (currency: DeepSeekBalanceCurrency) => {
+      localStorage.setItem('channels-deepseek-balance-currency', currency)
+      setDeepSeekBalanceCurrencyState(currency)
+    },
+    []
+  )
 
   const queryClient = useQueryClient()
   const refreshChannels = useCallback(async () => {
@@ -117,6 +134,8 @@ export function ChannelsProvider({ children }: { children: React.ReactNode }) {
       setBatchMode,
       sensitiveVisible,
       setSensitiveVisible,
+      deepSeekBalanceCurrency,
+      setDeepSeekBalanceCurrency,
       upstream,
     }),
     [
@@ -127,6 +146,8 @@ export function ChannelsProvider({ children }: { children: React.ReactNode }) {
       idSort,
       batchMode,
       sensitiveVisible,
+      deepSeekBalanceCurrency,
+      setDeepSeekBalanceCurrency,
       upstream,
     ]
   )

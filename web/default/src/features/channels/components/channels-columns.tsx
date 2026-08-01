@@ -23,6 +23,8 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
+  DollarSign,
+  JapaneseYen,
   ListOrdered,
   Shuffle,
   SlidersHorizontal,
@@ -34,6 +36,10 @@ import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { BadgeListCell } from '@/components/data-table'
 import { Button } from '@/components/design-system/button'
+import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from '@/components/design-system/toggle-group'
 import { GroupBadge } from '@/components/group-badge'
 import { ProviderBadge } from '@/components/provider-badge'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
@@ -54,6 +60,10 @@ import {
 } from '@/lib/currency'
 import { formatTimestampToDate } from '@/lib/format'
 import { truncateText } from '@/lib/utils'
+import {
+  DEFAULT_CURRENCY_CONFIG,
+  useSystemConfigStore,
+} from '@/stores/system-config-store'
 
 import { getCodexUsage } from '../api'
 import { CHANNEL_STATUS_CONFIG, MODEL_FETCHABLE_TYPES } from '../constants'
@@ -77,7 +87,7 @@ import {
 import { parseUpstreamUpdateMeta } from '../lib/upstream-update-utils'
 import type { Channel } from '../types'
 import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
-import { useChannels } from './channels-provider'
+import { useChannels, type DeepSeekBalanceCurrency } from './channels-provider'
 import { DataTableRowActions } from './data-table-row-actions'
 import { DataTableTagRowActions } from './data-table-tag-row-actions'
 import {
@@ -293,6 +303,55 @@ function WeightCell({ channel }: { channel: Channel }) {
 const MAX_INLINE_BALANCE_CHARS = 8
 const SENSITIVE_MASK = '••••'
 
+function isOfficialDeepSeekChannel(channel: Channel): boolean {
+  if (channel.type === 43) {
+    return true
+  }
+  if (channel.type !== 58 || !channel.base_url) {
+    return false
+  }
+
+  try {
+    const baseUrl = new URL(channel.base_url)
+    return (
+      baseUrl.protocol === 'https:' &&
+      baseUrl.hostname.toLowerCase() === 'api.deepseek.com' &&
+      (baseUrl.port === '' || baseUrl.port === '443')
+    )
+  } catch {
+    return false
+  }
+}
+
+function formatDeepSeekBalance(
+  amountUSD: number,
+  currency: DeepSeekBalanceCurrency,
+  usdExchangeRate: number,
+  options: {
+    compact?: boolean
+    locale: Intl.LocalesArgument | undefined
+    showSymbol: boolean
+  }
+): string {
+  const exchangeRate =
+    currency === 'CNY' && usdExchangeRate > 0 ? usdExchangeRate : 1
+  const value = amountUSD * exchangeRate
+  const digits = Math.abs(value) >= 1 ? 2 : 4
+  const numberOptions: Intl.NumberFormatOptions = {
+    notation: options.compact ? 'compact' : 'standard',
+    minimumFractionDigits: options.compact ? 0 : digits,
+    maximumFractionDigits: options.compact ? 1 : digits,
+  }
+
+  if (options.showSymbol) {
+    numberOptions.style = 'currency'
+    numberOptions.currency = currency
+    numberOptions.currencyDisplay = 'narrowSymbol'
+  }
+
+  return new Intl.NumberFormat(options.locale, numberOptions).format(value)
+}
+
 /**
  * Balance cell component with click to update
  */
@@ -300,10 +359,24 @@ function BalanceCell({ channel }: { channel: Channel }) {
   const { t, i18n } = useTranslation()
   const queryClient = useQueryClient()
   const layout = useContext(ChannelRowActionsLayoutContext)
-  const { sensitiveVisible } = useChannels()
+  const {
+    sensitiveVisible,
+    deepSeekBalanceCurrency,
+    setDeepSeekBalanceCurrency,
+  } = useChannels()
+  const currencyConfig = useSystemConfigStore((state) => state.config.currency)
   const isTagRow = isTagAggregateRow(channel)
+  const isOfficialDeepSeek = isOfficialDeepSeekChannel(channel)
   const balance = channel.balance || 0
   const usedQuota = channel.used_quota || 0
+  const quotaPerUnit =
+    currencyConfig.quotaPerUnit > 0
+      ? currencyConfig.quotaPerUnit
+      : DEFAULT_CURRENCY_CONFIG.quotaPerUnit
+  const usdExchangeRate =
+    currencyConfig.usdExchangeRate > 0
+      ? currencyConfig.usdExchangeRate
+      : DEFAULT_CURRENCY_CONFIG.usdExchangeRate
   const [isUpdating, setIsUpdating] = useState(false)
   const [codexUsageOpen, setCodexUsageOpen] = useState(false)
   const [codexUsageResponse, setCodexUsageResponse] =
@@ -320,8 +393,12 @@ function BalanceCell({ channel }: { channel: Channel }) {
     abbreviate: false,
     showSymbol: layout !== 'card',
   } as const
+  const deepSeekFormatOptions = {
+    locale,
+    showSymbol: layout !== 'card',
+  } as const
   // Precise values are kept for the tooltip; long values are shown compactly inline.
-  const usedFull = withSuffix(
+  let usedFull = withSuffix(
     formatQuotaWithCurrency(usedQuota, {
       digitsLarge: 2,
       digitsSmall: 4,
@@ -329,29 +406,63 @@ function BalanceCell({ channel }: { channel: Channel }) {
       showSymbol: layout !== 'card',
     })
   )
-  const remainingFull = withSuffix(
+  let remainingFull = withSuffix(
     formatCurrencyFromUSD(balance, balanceFormatOptions)
   )
-  const usedDisplay =
-    usedFull.length > MAX_INLINE_BALANCE_CHARS
-      ? withSuffix(
-          formatQuotaWithCurrency(usedQuota, {
-            compact: true,
-            locale,
-            showSymbol: layout !== 'card',
-          })
-        )
-      : usedFull
-  const remainingDisplay =
-    remainingFull.length > MAX_INLINE_BALANCE_CHARS
-      ? withSuffix(
-          formatCurrencyFromUSD(balance, {
-            compact: true,
-            locale,
-            showSymbol: layout !== 'card',
-          })
-        )
-      : remainingFull
+  if (isOfficialDeepSeek) {
+    usedFull = formatDeepSeekBalance(
+      usedQuota / quotaPerUnit,
+      deepSeekBalanceCurrency,
+      usdExchangeRate,
+      deepSeekFormatOptions
+    )
+    remainingFull = formatDeepSeekBalance(
+      balance,
+      deepSeekBalanceCurrency,
+      usdExchangeRate,
+      deepSeekFormatOptions
+    )
+  }
+
+  let usedDisplay = usedFull
+  if (usedFull.length > MAX_INLINE_BALANCE_CHARS) {
+    if (isOfficialDeepSeek) {
+      usedDisplay = formatDeepSeekBalance(
+        usedQuota / quotaPerUnit,
+        deepSeekBalanceCurrency,
+        usdExchangeRate,
+        { ...deepSeekFormatOptions, compact: true }
+      )
+    } else {
+      usedDisplay = withSuffix(
+        formatQuotaWithCurrency(usedQuota, {
+          compact: true,
+          locale,
+          showSymbol: layout !== 'card',
+        })
+      )
+    }
+  }
+
+  let remainingDisplay = remainingFull
+  if (remainingFull.length > MAX_INLINE_BALANCE_CHARS) {
+    if (isOfficialDeepSeek) {
+      remainingDisplay = formatDeepSeekBalance(
+        balance,
+        deepSeekBalanceCurrency,
+        usdExchangeRate,
+        { ...deepSeekFormatOptions, compact: true }
+      )
+    } else {
+      remainingDisplay = withSuffix(
+        formatCurrencyFromUSD(balance, {
+          compact: true,
+          locale,
+          showSymbol: layout !== 'card',
+        })
+      )
+    }
+  }
   const usedLabel = `${t('Used:')} ${usedFull}`
   const remainingLabel = `${t('Remaining:')} ${remainingFull}`
   const maskedUsedLabel = `${t('Used:')} ${SENSITIVE_MASK}`
@@ -494,6 +605,46 @@ function BalanceCell({ channel }: { channel: Channel }) {
             {channel.type !== 57 && <p>{t('Click to update balance')}</p>}
           </TooltipContent>
         </Tooltip>
+        {isOfficialDeepSeek && (
+          <ToggleGroup
+            value={[deepSeekBalanceCurrency]}
+            onValueChange={(value) => {
+              const nextCurrency = value.find(
+                (item) => item !== deepSeekBalanceCurrency
+              )
+              if (nextCurrency === 'USD' || nextCurrency === 'CNY') {
+                setDeepSeekBalanceCurrency(nextCurrency)
+              }
+            }}
+            aria-label={t('DeepSeek balance currency')}
+            variant='outline'
+            size='sm'
+            spacing={0}
+          >
+            <ToggleGroupItem
+              value='USD'
+              aria-label={t('Show DeepSeek balances in {{currency}}', {
+                currency: t('USD'),
+              })}
+              title={t('Show DeepSeek balances in {{currency}}', {
+                currency: t('USD'),
+              })}
+            >
+              <DollarSign aria-hidden='true' />
+            </ToggleGroupItem>
+            <ToggleGroupItem
+              value='CNY'
+              aria-label={t('Show DeepSeek balances in {{currency}}', {
+                currency: t('CNY'),
+              })}
+              title={t('Show DeepSeek balances in {{currency}}', {
+                currency: t('CNY'),
+              })}
+            >
+              <JapaneseYen aria-hidden='true' />
+            </ToggleGroupItem>
+          </ToggleGroup>
+        )}
         {protectionLabel && (
           <Tooltip>
             <TooltipTrigger

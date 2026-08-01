@@ -5146,6 +5146,15 @@
     "Cancellation requested; the client can retry shortly": "Annulation demandée ; le client pourra réessayer sous peu",
     "Cancel in-flight request?": "Annuler la requête en cours ?",
     "The upstream call will be stopped and the client will receive a retryable response when possible.": "L’appel en amont sera arrêté et le client recevra si possible une réponse permettant de réessayer.",
-    "Cancel request": "Annuler la requête"
+    "Cancel request": "Annuler la requête",
+    "Responses Diagnostics": "Diagnostic Responses",
+    "Input Items": "Éléments d'entrée",
+    "Input Types": "Types d'entrée",
+    "Encrypted Items": "Éléments chiffrés",
+    "Function Outputs": "Sorties de fonction",
+    "Previous Response ID": "ID de réponse précédente",
+    "Stream Events": "Événements de flux",
+    "First Events": "Premiers événements",
+    "Present": "Présent"
   }
 }

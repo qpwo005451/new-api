@@ -100,6 +100,7 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 			types.ErrOptionWithSkipRetry(),
 		)
 	}
+	relaycommon.CaptureResponsesRequestDiagnostics(c, responsesReq)
 
 	request, err := common.DeepCopy(responsesReq)
 	if err != nil {

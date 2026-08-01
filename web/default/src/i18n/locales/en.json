@@ -5146,6 +5146,15 @@
     "Cancellation requested; the client can retry shortly": "Cancellation requested; the client can retry shortly",
     "Cancel in-flight request?": "Cancel in-flight request?",
     "The upstream call will be stopped and the client will receive a retryable response when possible.": "The upstream call will be stopped and the client will receive a retryable response when possible.",
-    "Cancel request": "Cancel request"
+    "Cancel request": "Cancel request",
+    "Responses Diagnostics": "Responses Diagnostics",
+    "Input Items": "Input Items",
+    "Input Types": "Input Types",
+    "Encrypted Items": "Encrypted Items",
+    "Function Outputs": "Function Outputs",
+    "Previous Response ID": "Previous Response ID",
+    "Stream Events": "Stream Events",
+    "First Events": "First Events",
+    "Present": "Present"
   }
 }

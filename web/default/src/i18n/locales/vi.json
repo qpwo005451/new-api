@@ -5146,6 +5146,15 @@
     "Cancellation requested; the client can retry shortly": "Đã yêu cầu hủy; máy khách có thể sớm thử lại",
     "Cancel in-flight request?": "Hủy yêu cầu đang xử lý?",
     "The upstream call will be stopped and the client will receive a retryable response when possible.": "Lệnh gọi thượng nguồn sẽ bị dừng và máy khách sẽ nhận phản hồi có thể thử lại khi có thể.",
-    "Cancel request": "Hủy yêu cầu"
+    "Cancel request": "Hủy yêu cầu",
+    "Responses Diagnostics": "Chẩn đoán Responses",
+    "Input Items": "Mục đầu vào",
+    "Input Types": "Loại đầu vào",
+    "Encrypted Items": "Mục được mã hóa",
+    "Function Outputs": "Đầu ra hàm",
+    "Previous Response ID": "ID phản hồi trước",
+    "Stream Events": "Sự kiện luồng",
+    "First Events": "Các sự kiện đầu tiên",
+    "Present": "Có"
   }
 }

@@ -447,6 +447,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
     !!props.log.ip && (showTiming || (props.isAdmin && isTopup))
   const adminInfo = other?.admin_info
   const upstreamError = adminInfo?.upstream_error
+  const responsesDiagnostics = adminInfo?.responses_diagnostics
+  const responsesDiagnosticEvents =
+    responsesDiagnostics?.stream?.first_events ?? []
   const upstreamStatus = [
     other?.status_code != null ? `HTTP ${other.status_code}` : '',
     upstreamError?.status,
@@ -462,6 +465,8 @@ export function DetailsDialog(props: DetailsDialogProps) {
       other?.error_type ||
       other?.error_code
     )
+  const showResponsesDiagnostics =
+    props.isAdmin && isError && !!responsesDiagnostics
   const topupAuditFields =
     isTopup && props.isAdmin && adminInfo
       ? ([
@@ -718,6 +723,76 @@ export function DetailsDialog(props: DetailsDialogProps) {
             )}
             {other?.error_code && (
               <DetailRow label={t('Code')} value={other.error_code} mono />
+            )}
+          </DetailSection>
+        )}
+
+        {showResponsesDiagnostics && (
+          <DetailSection
+            icon={<AlertTriangle className='size-3.5' aria-hidden='true' />}
+            label={t('Responses Diagnostics')}
+            variant='destructive'
+          >
+            {responsesDiagnostics.request?.input_item_count != null && (
+              <DetailRow
+                label={t('Input Items')}
+                value={String(responsesDiagnostics.request.input_item_count)}
+                mono
+              />
+            )}
+            {responsesDiagnostics.request?.input_item_types?.length ? (
+              <DetailRow
+                label={t('Input Types')}
+                value={responsesDiagnostics.request.input_item_types.join(', ')}
+                mono
+              />
+            ) : null}
+            {responsesDiagnostics.request?.encrypted_content_count != null && (
+              <DetailRow
+                label={t('Encrypted Items')}
+                value={`${responsesDiagnostics.request.encrypted_content_count} (${responsesDiagnostics.request.encrypted_content_bytes ?? 0} B)`}
+                mono
+              />
+            )}
+            {responsesDiagnostics.request?.function_call_output_count !=
+              null && (
+              <DetailRow
+                label={t('Function Outputs')}
+                value={`${responsesDiagnostics.request.function_call_output_count} total, ${responsesDiagnostics.request.function_output_string_count ?? 0} string`}
+                mono
+              />
+            )}
+            {responsesDiagnostics.request?.previous_response_id_present && (
+              <DetailRow
+                label={t('Previous Response ID')}
+                value={`${t('Present')} (${responsesDiagnostics.request.previous_response_id_length ?? 0} B)`}
+                mono
+              />
+            )}
+            {responsesDiagnostics.stream?.event_count != null && (
+              <DetailRow
+                label={t('Stream Events')}
+                value={String(responsesDiagnostics.stream.event_count)}
+                mono
+              />
+            )}
+            {responsesDiagnosticEvents.length > 0 && (
+              <DetailRow
+                label={t('First Events')}
+                value={responsesDiagnosticEvents
+                  .map((event) =>
+                    [
+                      event.channel_id ? `#${event.channel_id}` : '',
+                      event.type,
+                      event.item_type,
+                      event.error_code,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')
+                  )
+                  .join('\n')}
+                mono
+              />
             )}
           </DetailSection>
         )}

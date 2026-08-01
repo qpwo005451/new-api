@@ -101,6 +101,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			sr.Error(err)
 			return
 		}
+		relaycommon.RecordResponsesStreamDiagnostic(c, info, streamResponse)
 		if streamResponse.Type == "response.output_text.delta" && !firstOutputSeen {
 			if toolCalls, ok := parseTextToolCalls(streamResponse.Delta, info); ok {
 				for _, toolCall := range toolCalls {

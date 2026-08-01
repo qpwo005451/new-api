@@ -5146,6 +5146,15 @@
     "Cancellation requested; the client can retry shortly": "中止を要求しました。クライアントはまもなく再試行できます",
     "Cancel in-flight request?": "進行中のリクエストを中止しますか？",
     "The upstream call will be stopped and the client will receive a retryable response when possible.": "上流呼び出しを停止し、可能な場合はクライアントへ再試行可能な応答を返します。",
-    "Cancel request": "リクエストを中止"
+    "Cancel request": "リクエストを中止",
+    "Responses Diagnostics": "Responses 診断",
+    "Input Items": "入力項目",
+    "Input Types": "入力タイプ",
+    "Encrypted Items": "暗号化項目",
+    "Function Outputs": "関数出力",
+    "Previous Response ID": "前のレスポンス ID",
+    "Stream Events": "ストリームイベント",
+    "First Events": "最初のイベント",
+    "Present": "あり"
   }
 }

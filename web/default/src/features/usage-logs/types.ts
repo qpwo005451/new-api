@@ -92,6 +92,37 @@ export interface ChannelAffinityInfo {
   using_group?: string
 }
 
+export interface ResponsesDiagnostics {
+  request?: {
+    input_json_type?: string
+    input_bytes?: number
+    input_item_count?: number
+    input_item_types?: string[]
+    previous_response_id_present?: boolean
+    previous_response_id_length?: number
+    encrypted_content_count?: number
+    encrypted_content_bytes?: number
+    function_call_output_count?: number
+    function_output_present_count?: number
+    function_output_string_count?: number
+    function_output_bytes?: number
+    type_counts?: Record<string, number>
+  }
+  stream?: {
+    event_count?: number
+    first_events?: Array<{
+      channel_id?: number
+      type?: string
+      item_type?: string
+      error_code?: string
+      message_length?: number
+    }>
+    error_event_count?: number
+    response_failed_event_count?: number
+    terminal_event_seen?: boolean
+  }
+}
+
 export interface LogOtherData {
   admin_info?: {
     is_multi_key?: boolean
@@ -124,6 +155,7 @@ export interface LogOtherData {
       kind?: string
       status?: string
     }
+    responses_diagnostics?: ResponsesDiagnostics
   }
   // Language-independent operation descriptor (audit/login logs).
   // Frontend renders localized content from action + params via i18n templates.

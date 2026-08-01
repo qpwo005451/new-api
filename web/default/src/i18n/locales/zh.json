@@ -5220,6 +5220,15 @@
     "limited": "受限",
     "normal": "正常",
     "unavailable": "不可用",
-    "unknown": "未知"
+    "unknown": "未知",
+    "Responses Diagnostics": "Responses 诊断",
+    "Input Items": "输入项",
+    "Input Types": "输入类型",
+    "Encrypted Items": "加密项",
+    "Function Outputs": "函数输出",
+    "Previous Response ID": "上一响应 ID",
+    "Stream Events": "流事件",
+    "First Events": "前几个事件",
+    "Present": "存在"
   }
 }

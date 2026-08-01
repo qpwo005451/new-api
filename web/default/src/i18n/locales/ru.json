@@ -5146,6 +5146,15 @@
     "Cancellation requested; the client can retry shortly": "Запрошена отмена; клиент вскоре сможет повторить запрос",
     "Cancel in-flight request?": "Отменить выполняющийся запрос?",
     "The upstream call will be stopped and the client will receive a retryable response when possible.": "Вызов вышестоящего сервиса будет остановлен, а клиент по возможности получит ответ, допускающий повтор.",
-    "Cancel request": "Отменить запрос"
+    "Cancel request": "Отменить запрос",
+    "Responses Diagnostics": "Диагностика Responses",
+    "Input Items": "Элементы ввода",
+    "Input Types": "Типы ввода",
+    "Encrypted Items": "Зашифрованные элементы",
+    "Function Outputs": "Выводы функций",
+    "Previous Response ID": "ID предыдущего ответа",
+    "Stream Events": "События потока",
+    "First Events": "Первые события",
+    "Present": "Есть"
   }
 }

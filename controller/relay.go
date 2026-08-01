@@ -560,6 +560,7 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		if upstreamError := err.GetUpstreamErrorInfo(); upstreamError != nil {
 			adminInfo["upstream_error"] = upstreamError
 		}
+		relaycommon.AppendResponsesDiagnosticsAdminInfo(c, err, adminInfo)
 		other["admin_info"] = adminInfo
 		startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
 		if startTime.IsZero() {

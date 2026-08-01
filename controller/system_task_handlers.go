@@ -23,6 +23,7 @@ func RegisterScheduledSystemTasks() {
 	service.RegisterSystemTaskHandler(modelUpdateHandler{})
 	service.RegisterSystemTaskHandler(balanceProtectionHandler{})
 	service.RegisterSystemTaskHandler(modelMonitorHandler{})
+	service.RegisterSystemTaskHandler(modelMonitorAlertHandler{})
 	service.RegisterSystemTaskHandler(midjourneyPollHandler{})
 	service.RegisterSystemTaskHandler(asyncTaskPollHandler{})
 }

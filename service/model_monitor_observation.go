@@ -213,5 +213,10 @@ func persistModelMonitorPassiveObservations(input modelMonitorPassiveObservation
 			}
 		}
 	}
-	return model.DB.Create(&observations).Error
+	for index := range observations {
+		if err := RecordModelMonitorObservation(&observations[index]); err != nil {
+			return err
+		}
+	}
+	return nil
 }

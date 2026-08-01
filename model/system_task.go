@@ -22,6 +22,7 @@ const (
 	SystemTaskTypeModelUpdate       = "model_update"
 	SystemTaskTypeBalanceProtection = "balance_protection"
 	SystemTaskTypeModelMonitor      = "model_monitor"
+	SystemTaskTypeModelMonitorAlert = "model_monitor_alert"
 	SystemTaskTypeMidjourneyPoll    = "midjourney_poll"
 	SystemTaskTypeAsyncTaskPoll     = "async_task_poll"
 )

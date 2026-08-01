@@ -34,6 +34,8 @@ func setupModelMonitorAPITestDB(t *testing.T) *gorm.DB {
 		&model.ModelMonitorPriceSnapshot{},
 		&model.ModelMonitorObservation{},
 		&model.ModelMonitorAggregateHourly{},
+		&model.ModelMonitorPathState{},
+		&model.ModelMonitorAlertOutbox{},
 		&model.SystemTask{},
 		&model.SystemTaskLock{},
 	))
@@ -41,18 +43,81 @@ func setupModelMonitorAPITestDB(t *testing.T) *gorm.DB {
 	previousDB := model.DB
 	previousLogDB := model.LOG_DB
 	previousSetting := *operation_setting.GetModelMonitorSetting()
+	previousAlertSetting := *operation_setting.GetModelMonitorAlertSetting()
 	model.DB = db
 	model.LOG_DB = db
 	t.Cleanup(func() {
 		model.DB = previousDB
 		model.LOG_DB = previousLogDB
 		*operation_setting.GetModelMonitorSetting() = previousSetting
+		*operation_setting.GetModelMonitorAlertSetting() = previousAlertSetting
 		sqlDB, sqlErr := db.DB()
 		if sqlErr == nil {
 			_ = sqlDB.Close()
 		}
 	})
 	return db
+}
+
+func TestModelMonitorAlertConfigNeverReturnsStoredTelegramToken(t *testing.T) {
+	setupModelMonitorAPITestDB(t)
+	setting := operation_setting.GetModelMonitorAlertSetting()
+	setting.Enabled = true
+	setting.TelegramEnabled = true
+	setting.TelegramNotifyBotToken = "stored-notification-token"
+	setting.TelegramChatID = "12345"
+
+	config := loadModelMonitorAlertConfig()
+	assert.True(t, config.TelegramBotTokenConfigured)
+	assert.Empty(t, config.TelegramBotToken)
+}
+
+func TestSaveModelMonitorAlertConfigPreservesTokenWhenRequestLeavesItEmpty(t *testing.T) {
+	db := setupModelMonitorAPITestDB(t)
+	site := model.ModelMonitorSite{Name: "input", SiteType: model.ModelMonitorSiteTypeNewAPI, Enabled: true}
+	require.NoError(t, db.Create(&site).Error)
+	require.NoError(t, db.Create(&model.ModelMonitorSiteChannel{SiteID: site.ID, ChannelID: 9}).Error)
+	operation_setting.GetModelMonitorAlertSetting().TelegramNotifyBotToken = "stored-notification-token"
+
+	request := modelMonitorAlertConfig{
+		Enabled:         true,
+		EmailEnabled:    true,
+		EmailRecipients: "ops@example.com",
+		TelegramEnabled: true,
+		TelegramChatID:  "12345",
+		Rules: []operation_setting.ModelMonitorAlertRule{
+			{SiteID: site.ID, ChannelID: 9, ModelPrefix: "gpt-", Enabled: true},
+			{SiteID: site.ID, ChannelID: 9, ModelName: "kimi-k2.7-code", Enabled: true},
+		},
+	}
+	require.NoError(t, saveModelMonitorAlertConfig(request))
+
+	setting := operation_setting.GetModelMonitorAlertSetting()
+	assert.Equal(t, "stored-notification-token", setting.TelegramNotifyBotToken)
+	assert.Equal(t, "ops@example.com", setting.EmailRecipients)
+	require.Len(t, setting.Rules, 2)
+
+	var tokenOption model.Option
+	require.NoError(t, db.Where("key = ?", "model_monitor_alert_setting.TelegramNotifyBotToken").First(&tokenOption).Error)
+	assert.Equal(t, "stored-notification-token", tokenOption.Value)
+	var rulesOption model.Option
+	require.NoError(t, db.Where("key = ?", "model_monitor_alert_setting.rules").First(&rulesOption).Error)
+	assert.Contains(t, rulesOption.Value, "kimi-k2.7-code")
+}
+
+func TestValidateModelMonitorAlertConfigRequiresUsableFocusedRule(t *testing.T) {
+	config := modelMonitorAlertConfig{
+		Enabled:         true,
+		EmailEnabled:    true,
+		EmailRecipients: "ops@example.com",
+		Rules: []operation_setting.ModelMonitorAlertRule{
+			{SiteID: 2, ChannelID: 9, Enabled: true},
+		},
+	}
+	assert.ErrorContains(t, validateModelMonitorAlertConfig(config, ""), "model selector")
+
+	config.Rules[0].ModelPrefix = "gpt-"
+	require.NoError(t, validateModelMonitorAlertConfig(config, ""))
 }
 
 func TestModelMonitorSiteSummaryUsesPathHysteresis(t *testing.T) {

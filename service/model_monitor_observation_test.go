@@ -24,15 +24,20 @@ func setupModelMonitorObservationTestDB(t *testing.T) *gorm.DB {
 		&model.ModelMonitorSiteChannel{},
 		&model.ModelMonitorTarget{},
 		&model.ModelMonitorObservation{},
+		&model.ModelMonitorPathState{},
+		&model.ModelMonitorAlertOutbox{},
 	))
 
 	previousDB := model.DB
 	previousLogDB := model.LOG_DB
+	previousAlertSetting := *operation_setting.GetModelMonitorAlertSetting()
 	model.DB = db
 	model.LOG_DB = db
+	*operation_setting.GetModelMonitorAlertSetting() = operation_setting.DefaultModelMonitorAlertSetting()
 	t.Cleanup(func() {
 		model.DB = previousDB
 		model.LOG_DB = previousLogDB
+		*operation_setting.GetModelMonitorAlertSetting() = previousAlertSetting
 	})
 	return db
 }

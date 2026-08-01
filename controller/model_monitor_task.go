@@ -153,7 +153,7 @@ func runModelMonitorTask(ctx context.Context, report func(processed, total int))
 		} else {
 			common.SysError("model monitor probe channel lookup failed")
 		}
-		if err := model.DB.Create(&observation).Error; err != nil {
+		if err := service.RecordModelMonitorObservation(&observation); err != nil {
 			common.SysError("model monitor observation persistence failed")
 		}
 

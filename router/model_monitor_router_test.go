@@ -19,6 +19,9 @@ func TestModelMonitorRoutesUseDedicatedPermissions(t *testing.T) {
 		{method: http.MethodGet, path: "/config", permission: authz.ModelMonitorRead, handler: controller.GetModelMonitorConfig},
 		{method: http.MethodPut, path: "/config", permission: authz.ModelMonitorWrite, handler: controller.UpdateModelMonitorConfig},
 		{method: http.MethodPost, path: "/runs", permission: authz.ModelMonitorOperate, handler: controller.EnqueueModelMonitorRun},
+		{method: http.MethodGet, path: "/alerts/config", permission: authz.ModelMonitorRead, handler: controller.GetModelMonitorAlertConfig},
+		{method: http.MethodPut, path: "/alerts/config", permission: authz.ModelMonitorWrite, handler: controller.UpdateModelMonitorAlertConfig},
+		{method: http.MethodPost, path: "/alerts/test", permission: authz.ModelMonitorOperate, handler: controller.TestModelMonitorAlerts},
 	}
 
 	if assert.Len(t, modelMonitorPermissionRoutes, len(expected)) {

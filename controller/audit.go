@@ -45,7 +45,8 @@ var auditContentTemplates = map[string]string{
 	"channel.upstream_apply":     "Applied upstream model changes to channel (ID: ${id})",
 	"channel.upstream_apply_all": "Applied upstream model changes to ${count} channels",
 
-	"model_monitor.config_update": "Updated model monitor configuration (${site_count} sites)",
+	"model_monitor.config_update":       "Updated model monitor configuration (${site_count} sites)",
+	"model_monitor.alert_config_update": "Updated model monitor alert configuration (${rule_count} rules)",
 
 	"redemption.create": "Created ${count} redemption codes named ${name} (${quota} each)",
 

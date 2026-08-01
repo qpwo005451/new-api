@@ -21,6 +21,8 @@ func setupModelMonitorTestDB(t *testing.T) {
 		&ModelMonitorTarget{},
 		&ModelMonitorPriceSnapshot{},
 		&ModelMonitorObservation{},
+		&ModelMonitorPathState{},
+		&ModelMonitorAlertOutbox{},
 	))
 
 	previousDB := DB
@@ -28,6 +30,137 @@ func setupModelMonitorTestDB(t *testing.T) {
 	t.Cleanup(func() {
 		DB = previousDB
 	})
+}
+
+func TestRecordModelMonitorObservationQueuesOnlyStableUnavailableAndRecoveryTransitions(t *testing.T) {
+	setupModelMonitorTestDB(t)
+
+	site := ModelMonitorSite{Name: "input", SiteType: ModelMonitorSiteTypeNewAPI, Enabled: true}
+	require.NoError(t, DB.Create(&site).Error)
+	target := ModelMonitorTarget{SiteID: site.ID, ModelName: "gpt-5.6-luna", Weight: 5, Enabled: true}
+	require.NoError(t, DB.Create(&target).Error)
+
+	record := func(status string, observedAt int64) {
+		t.Helper()
+		_, err := RecordModelMonitorObservation(&ModelMonitorObservation{
+			SiteID: site.ID, TargetID: target.ID, ChannelID: 9, ModelName: target.ModelName,
+			Status: status, Source: ModelMonitorObservationSourceActive,
+			FailureType: ModelMonitorFailureTypeTimeout, ObservedAt: observedAt,
+		}, []string{ModelMonitorAlertTransportEmail, ModelMonitorAlertTransportTelegram})
+		require.NoError(t, err)
+	}
+
+	record(ModelMonitorStatusAvailable, 100)
+	record(ModelMonitorStatusUnavailable, 200)
+	record(ModelMonitorStatusUnavailable, 300)
+
+	var state ModelMonitorPathState
+	require.NoError(t, DB.First(&state).Error)
+	assert.Equal(t, ModelMonitorStatusLimited, state.Status)
+	assert.Equal(t, 2, state.ConsecutiveFailures)
+
+	var outboxCount int64
+	require.NoError(t, DB.Model(&ModelMonitorAlertOutbox{}).Count(&outboxCount).Error)
+	assert.Zero(t, outboxCount)
+
+	record(ModelMonitorStatusUnavailable, 400)
+	require.NoError(t, DB.First(&state).Error)
+	assert.Equal(t, ModelMonitorStatusUnavailable, state.Status)
+	assert.Equal(t, int64(3), state.TransitionVersion)
+	require.NoError(t, DB.Model(&ModelMonitorAlertOutbox{}).Count(&outboxCount).Error)
+	assert.EqualValues(t, 2, outboxCount)
+
+	record(ModelMonitorStatusUnavailable, 500)
+	require.NoError(t, DB.Model(&ModelMonitorAlertOutbox{}).Count(&outboxCount).Error)
+	assert.EqualValues(t, 2, outboxCount)
+
+	record(ModelMonitorStatusAvailable, 600)
+	require.NoError(t, DB.First(&state).Error)
+	assert.Equal(t, ModelMonitorStatusUnavailable, state.Status)
+	record(ModelMonitorStatusAvailable, 700)
+	require.NoError(t, DB.First(&state).Error)
+	assert.Equal(t, ModelMonitorStatusAvailable, state.Status)
+	assert.Equal(t, int64(4), state.TransitionVersion)
+	require.NoError(t, DB.Model(&ModelMonitorAlertOutbox{}).Count(&outboxCount).Error)
+	assert.EqualValues(t, 4, outboxCount)
+
+	var events []ModelMonitorAlertOutbox
+	require.NoError(t, DB.Order("id asc").Find(&events).Error)
+	assert.Equal(t, ModelMonitorStatusUnavailable, events[0].Status)
+	assert.Equal(t, ModelMonitorStatusUnavailable, events[1].Status)
+	assert.Equal(t, ModelMonitorStatusAvailable, events[2].Status)
+	assert.Equal(t, ModelMonitorStatusAvailable, events[3].Status)
+	assert.NotEqual(t, events[0].EventKey, events[2].EventKey)
+}
+
+func TestRecordModelMonitorObservationPersistsStateAndOutboxAtomically(t *testing.T) {
+	setupModelMonitorTestDB(t)
+
+	site := ModelMonitorSite{Name: "input", SiteType: ModelMonitorSiteTypeNewAPI, Enabled: true}
+	require.NoError(t, DB.Create(&site).Error)
+	target := ModelMonitorTarget{SiteID: site.ID, ModelName: "gpt-5.6-sol", Weight: 5, Enabled: true}
+	require.NoError(t, DB.Create(&target).Error)
+	state := ModelMonitorPathState{
+		SiteID: site.ID, TargetID: target.ID, ChannelID: 9, ModelName: target.ModelName,
+		Status: ModelMonitorStatusLimited, ConsecutiveFailures: 2, TransitionVersion: 1,
+	}
+	require.NoError(t, DB.Create(&state).Error)
+	require.NoError(t, DB.Create(&ModelMonitorAlertOutbox{
+		EventKey: "model-monitor:1:1:9:2:email", Transport: ModelMonitorAlertTransportEmail,
+		Status: ModelMonitorStatusUnavailable, DeliveryStatus: ModelMonitorAlertDeliveryPending,
+	}).Error)
+
+	_, err := RecordModelMonitorObservation(&ModelMonitorObservation{
+		SiteID: site.ID, TargetID: target.ID, ChannelID: 9, ModelName: target.ModelName,
+		Status: ModelMonitorStatusUnavailable, Source: ModelMonitorObservationSourceActive,
+		FailureType: ModelMonitorFailureTypeTimeout, ObservedAt: 400,
+	}, []string{ModelMonitorAlertTransportEmail})
+	require.Error(t, err)
+
+	var observationCount int64
+	require.NoError(t, DB.Model(&ModelMonitorObservation{}).Count(&observationCount).Error)
+	assert.Zero(t, observationCount)
+	require.NoError(t, DB.First(&state).Error)
+	assert.Equal(t, ModelMonitorStatusLimited, state.Status)
+	assert.Equal(t, 2, state.ConsecutiveFailures)
+}
+
+func TestClaimModelMonitorAlertOutboxSupportsRetryAndLeaseRecovery(t *testing.T) {
+	setupModelMonitorTestDB(t)
+	require.NoError(t, DB.Create(&ModelMonitorAlertOutbox{
+		EventKey: "event-1", Transport: ModelMonitorAlertTransportTelegram,
+		Status: ModelMonitorStatusUnavailable, DeliveryStatus: ModelMonitorAlertDeliveryPending,
+		NextAttemptAt: 100,
+	}).Error)
+
+	claimed, err := ClaimDueModelMonitorAlertOutbox(100, 160, "runner-a", 10)
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	assert.Equal(t, 1, claimed[0].Attempts)
+	assert.Equal(t, "runner-a", claimed[0].ClaimedBy)
+
+	claimed, err = ClaimDueModelMonitorAlertOutbox(120, 180, "runner-b", 10)
+	require.NoError(t, err)
+	assert.Empty(t, claimed)
+
+	claimed, err = ClaimDueModelMonitorAlertOutbox(161, 221, "runner-b", 10)
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	assert.Equal(t, 2, claimed[0].Attempts)
+
+	require.NoError(t, RetryModelMonitorAlertOutbox(claimed[0].ID, "runner-b", 300, "temporary failure", 5))
+	claimed, err = ClaimDueModelMonitorAlertOutbox(299, 359, "runner-c", 10)
+	require.NoError(t, err)
+	assert.Empty(t, claimed)
+	claimed, err = ClaimDueModelMonitorAlertOutbox(300, 360, "runner-c", 10)
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	require.NoError(t, CompleteModelMonitorAlertOutbox(claimed[0].ID, "runner-c", 305))
+
+	var stored ModelMonitorAlertOutbox
+	require.NoError(t, DB.First(&stored, claimed[0].ID).Error)
+	assert.Equal(t, ModelMonitorAlertDeliverySent, stored.DeliveryStatus)
+	assert.Equal(t, int64(305), stored.SentAt)
 }
 
 func TestModelMonitorAggregateDeduplicatesPathsAndWeights(t *testing.T) {

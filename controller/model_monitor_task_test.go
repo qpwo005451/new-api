@@ -41,6 +41,8 @@ func TestModelMonitorTaskCountsConfiguredTargetsAndMergesManualRuns(t *testing.T
 		&model.ModelMonitorTarget{},
 		&model.ModelMonitorObservation{},
 		&model.ModelMonitorAggregateHourly{},
+		&model.ModelMonitorPathState{},
+		&model.ModelMonitorAlertOutbox{},
 		&model.Channel{},
 	))
 
@@ -77,6 +79,8 @@ func TestModelMonitorTaskProbesConfirmedChannelPathsAndPersistsObservations(t *t
 		&model.ModelMonitorTarget{},
 		&model.ModelMonitorObservation{},
 		&model.ModelMonitorAggregateHourly{},
+		&model.ModelMonitorPathState{},
+		&model.ModelMonitorAlertOutbox{},
 	))
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

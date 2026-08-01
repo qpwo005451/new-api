@@ -275,7 +275,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 
 		upstreamRateLimitTarget, upstreamRateLimitEnabled := getUpstreamRateLimitTarget(
-			channel,
+			common.GetContextKeyString(c, constant.ContextKeyChannelBaseUrl),
 			relayInfo.OriginModelName,
 			common.GetContextKeyString(c, constant.ContextKeyChannelKey),
 		)

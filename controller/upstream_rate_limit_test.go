@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,33 +30,21 @@ func TestGetUpstreamRateLimitTarget(t *testing.T) {
 
 	inputURL := "https://AI.Input.IM/v1"
 	otherURL := "https://example.com/v1"
-	target, ok := getUpstreamRateLimitTarget(
-		&model.Channel{Id: 9, BaseURL: &inputURL},
-		"KIMI-K2.7-CODE",
-		"key-a",
-	)
+	target, ok := getUpstreamRateLimitTarget(inputURL, "KIMI-K2.7-CODE", "key-a")
 	require.True(t, ok)
 	assert.Equal(t, 10, target.rule.RPM)
 
-	sameKeyTarget, ok := getUpstreamRateLimitTarget(
-		&model.Channel{Id: 10, BaseURL: &inputURL},
-		"kimi-k2.7-code",
-		"key-a",
-	)
+	sameKeyTarget, ok := getUpstreamRateLimitTarget(inputURL, "kimi-k2.7-code", "key-a")
 	require.True(t, ok)
 	assert.Equal(t, target.gateKey, sameKeyTarget.gateKey)
 
-	_, ok = getUpstreamRateLimitTarget(&model.Channel{Id: 9, BaseURL: &inputURL}, "other-model", "key-a")
+	_, ok = getUpstreamRateLimitTarget(inputURL, "other-model", "key-a")
 	assert.False(t, ok)
 
-	_, ok = getUpstreamRateLimitTarget(&model.Channel{Id: 9, BaseURL: &otherURL}, "kimi-k2.7-code", "key-a")
+	_, ok = getUpstreamRateLimitTarget(otherURL, "kimi-k2.7-code", "key-a")
 	assert.False(t, ok)
 
-	otherKeyTarget, ok := getUpstreamRateLimitTarget(
-		&model.Channel{Id: 9, BaseURL: &inputURL},
-		"kimi-k2.7-code",
-		"key-b",
-	)
+	otherKeyTarget, ok := getUpstreamRateLimitTarget(inputURL, "kimi-k2.7-code", "key-b")
 	require.True(t, ok)
 	assert.NotEqual(t, target.gateKey, otherKeyTarget.gateKey)
 }

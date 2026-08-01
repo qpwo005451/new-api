@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 )
 
@@ -25,15 +24,12 @@ type upstreamRateLimitGate struct {
 
 var upstreamRateLimitGates sync.Map
 
-func getUpstreamRateLimitTarget(channel *model.Channel, modelName, channelKey string) (upstreamRateLimitTarget, bool) {
-	if channel == nil {
-		return upstreamRateLimitTarget{}, false
-	}
+func getUpstreamRateLimitTarget(baseURLValue, modelName, channelKey string) (upstreamRateLimitTarget, bool) {
 	setting := operation_setting.GetUpstreamRateLimitSetting()
 	if !setting.Enabled {
 		return upstreamRateLimitTarget{}, false
 	}
-	baseURL, err := url.Parse(channel.GetBaseURL())
+	baseURL, err := url.Parse(baseURLValue)
 	if err != nil {
 		return upstreamRateLimitTarget{}, false
 	}

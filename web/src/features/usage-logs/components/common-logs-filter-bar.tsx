@@ -269,7 +269,7 @@ export function CommonLogsFilterBar<TData>(
 
   const statsBar = (
     <div className='flex flex-wrap items-center gap-2'>
-      <CommonLogsStats />
+      <CommonLogsStats autoRefresh={autoRefresh} />
     </div>
   )
   const sensitiveToggle = (

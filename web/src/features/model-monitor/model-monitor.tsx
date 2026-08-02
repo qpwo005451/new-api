@@ -48,6 +48,7 @@ import {
   getModelMonitorSites,
   updateModelMonitorConfig,
 } from './api'
+import { AlertSettings } from './components/alert-settings'
 import {
   ModelSummaryCard,
   type ModelSummarySite,
@@ -387,6 +388,8 @@ export function ModelMonitor() {
             </div>
 
             <MonitorTasksPanel />
+
+            <AlertSettings sites={config.sites} />
 
             <Card>
               <CardHeader>

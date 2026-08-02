@@ -70,7 +70,12 @@ function getColumnVisibilityStorageKey(
 }
 
 function deserializeLogTypeFilter(value: unknown): unknown[] {
-  const values = Array.isArray(value) ? value : value ? [value] : []
+  let values: unknown[] = []
+  if (Array.isArray(value)) {
+    values = value
+  } else if (value) {
+    values = [value]
+  }
   return values.filter((item) => String(item) !== LOG_TYPE_ALL_VALUE)
 }
 
@@ -129,7 +134,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     useState<UsageLog | null>(null)
   const [cancelTarget, setCancelTarget] = useState<UsageLog | null>(null)
 
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: [
       'logs',
       logCategory,
@@ -236,7 +241,6 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
         table={table}
         columns={columns as ColumnDef<Record<string, unknown>>[]}
         isLoading={isLoadingData}
-        isFetching={isFetching}
         emptyTitle={t('No Logs Found')}
         emptyDescription={t(
           'No usage logs available. Logs will appear here once API calls are made.'

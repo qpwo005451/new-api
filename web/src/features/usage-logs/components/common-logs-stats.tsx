@@ -47,7 +47,11 @@ function StatBadge(props: {
   )
 }
 
-export function CommonLogsStats() {
+type CommonLogsStatsProps = {
+  autoRefresh?: boolean
+}
+
+export function CommonLogsStats(props: CommonLogsStatsProps) {
   const { t } = useTranslation()
   const { isAdminView: isAdmin } = useLogsViewScope()
   const searchParams = route.useSearch()
@@ -73,6 +77,7 @@ export function CommonLogsStats() {
         : DEFAULT_LOG_STATS
     },
     placeholderData: (previousData) => previousData,
+    refetchInterval: props.autoRefresh === true ? 3000 : false,
   })
 
   if (isLoading) {

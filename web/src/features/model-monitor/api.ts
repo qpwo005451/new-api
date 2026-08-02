@@ -19,6 +19,8 @@ import { api } from '@/lib/api'
 
 import type {
   ApiResponse,
+  ModelMonitorAlertConfig,
+  ModelMonitorAlertTestResult,
   ModelMonitorConfig,
   ModelMonitorModelDetail,
   ModelMonitorSiteResponse,
@@ -77,5 +79,33 @@ export async function enqueueModelMonitorRun(): Promise<
   const response = await api.post<
     ApiResponse<{ task_id: string; created: boolean }>
   >('/api/model-monitor/runs')
+  return response.data
+}
+
+export async function getModelMonitorAlertConfig(): Promise<
+  ApiResponse<ModelMonitorAlertConfig>
+> {
+  const response = await api.get<ApiResponse<ModelMonitorAlertConfig>>(
+    '/api/model-monitor/alerts/config'
+  )
+  return response.data
+}
+
+export async function updateModelMonitorAlertConfig(
+  config: ModelMonitorAlertConfig
+): Promise<ApiResponse<ModelMonitorAlertConfig>> {
+  const response = await api.put<ApiResponse<ModelMonitorAlertConfig>>(
+    '/api/model-monitor/alerts/config',
+    config
+  )
+  return response.data
+}
+
+export async function testModelMonitorAlerts(): Promise<
+  ApiResponse<ModelMonitorAlertTestResult>
+> {
+  const response = await api.post<ApiResponse<ModelMonitorAlertTestResult>>(
+    '/api/model-monitor/alerts/test'
+  )
   return response.data
 }

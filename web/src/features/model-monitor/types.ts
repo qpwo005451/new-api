@@ -58,6 +58,36 @@ export type ModelMonitorConfig = {
   sites: ModelMonitorSiteConfig[]
 }
 
+export type ModelMonitorAlertRule = {
+  site_id: number
+  channel_id: number
+  model_prefix?: string
+  model_name?: string
+  enabled: boolean
+}
+
+export type ModelMonitorAlertConfig = {
+  enabled: boolean
+  email_enabled: boolean
+  email_recipients: string
+  telegram_enabled: boolean
+  telegram_bot_token?: string
+  telegram_bot_token_configured: boolean
+  telegram_chat_id: string
+  rules: ModelMonitorAlertRule[]
+}
+
+export type ModelMonitorAlertTransportResult = {
+  enabled: boolean
+  success: boolean
+  message?: string
+}
+
+export type ModelMonitorAlertTestResult = {
+  email: ModelMonitorAlertTransportResult
+  telegram: ModelMonitorAlertTransportResult
+}
+
 export type ModelMonitorEffectiveModel = {
   model_name: string
   status: ModelMonitorStatus

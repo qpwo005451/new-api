@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func TestResponsesDiagnosticsCapturesMetadataOnly(t *testing.T) {
@@ -90,4 +91,30 @@ func TestResponsesDiagnosticsSkippedForOrdinaryErrors(t *testing.T) {
 
 	_, exists := adminInfo["responses_diagnostics"]
 	assert.False(t, exists)
+}
+
+func TestRemoveResponsesInputItemStatus(t *testing.T) {
+	body := []byte(`{"model":"gpt-test","status":"top-level","metadata":{"status":"kept"},"input":[{"type":"message","role":"assistant","status":"completed","content":[]},{"type":"reasoning","id":"rs_1","status":"completed","summary":[]},{"type":"function_call","id":"fc_1","status":"completed","call_id":"call_1","name":"shell","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"ok"}]}`)
+
+	got, changed, err := RemoveResponsesInputItemStatus(body)
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	assert.Equal(t, "top-level", gjson.GetBytes(got, "status").String())
+	assert.Equal(t, "kept", gjson.GetBytes(got, "metadata.status").String())
+	assert.False(t, gjson.GetBytes(got, "input.0.status").Exists())
+	assert.False(t, gjson.GetBytes(got, "input.1.status").Exists())
+	assert.False(t, gjson.GetBytes(got, "input.2.status").Exists())
+	assert.False(t, gjson.GetBytes(got, "input.3.status").Exists())
+	assert.Equal(t, "function_call_output", gjson.GetBytes(got, "input.3.type").String())
+}
+
+func TestRemoveResponsesInputItemStatusLeavesCleanBodyUnchanged(t *testing.T) {
+	body := []byte(`{"model":"gpt-test","input":[{"type":"message","role":"user","content":"hello"}]}`)
+
+	got, changed, err := RemoveResponsesInputItemStatus(body)
+	require.NoError(t, err)
+
+	assert.False(t, changed)
+	assert.Equal(t, body, got)
 }

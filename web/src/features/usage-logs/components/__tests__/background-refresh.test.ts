@@ -20,43 +20,124 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { describe, test } from 'node:test'
 
-const componentRoot = new URL('../', import.meta.url)
+import {
+  startUsageLogAutoRefresh,
+  USAGE_LOG_REFRESH_INTERVAL_MS,
+} from '../usage-log-auto-refresh'
+
+type ScheduledInterval = {
+  callback: () => void
+  delay: number
+}
+
+function createIntervalScheduler() {
+  let nextTimerId = 1
+  const intervals = new Map<number, ScheduledInterval>()
+
+  return {
+    scheduler: {
+      setInterval(callback: () => void, delay: number) {
+        const timerId = nextTimerId
+        nextTimerId += 1
+        intervals.set(timerId, { callback, delay })
+        return timerId
+      },
+      clearInterval(timerId: number) {
+        intervals.delete(timerId)
+      },
+    },
+    tick() {
+      for (const interval of intervals.values()) {
+        interval.callback()
+      }
+    },
+    getIntervals() {
+      return [...intervals.values()]
+    },
+  }
+}
+
+async function flushPromises() {
+  await Promise.resolve()
+  await Promise.resolve()
+}
 
 describe('usage log background refresh', () => {
-  test('keeps the table visually stable while polling', async () => {
-    const source = await readFile(
-      new URL('usage-logs-table.tsx', componentRoot),
-      'utf8'
+  test('refreshes the active list and stats queries on every interval', async () => {
+    const calls: unknown[] = []
+    const fakeQueryClient = {
+      refetchQueries(filters: unknown) {
+        calls.push(filters)
+        return Promise.resolve()
+      },
+    }
+    const intervalScheduler = createIntervalScheduler()
+
+    const stop = startUsageLogAutoRefresh(
+      fakeQueryClient,
+      intervalScheduler.scheduler
     )
 
-    assert.equal(source.includes('isFetching={isFetching}'), false)
-    assert.equal(
-      source.includes(
-        "refetchInterval: logCategory === 'common' && autoRefresh ? 3000 : false"
-      ),
-      true
-    )
+    assert.deepEqual(intervalScheduler.getIntervals(), [
+      {
+        callback: intervalScheduler.getIntervals()[0]?.callback,
+        delay: USAGE_LOG_REFRESH_INTERVAL_MS,
+      },
+    ])
+
+    intervalScheduler.tick()
+    await flushPromises()
+    intervalScheduler.tick()
+    await flushPromises()
+
+    assert.deepEqual(calls, [
+      { queryKey: ['logs'], type: 'active' },
+      { queryKey: ['usage-logs-stats'], type: 'active' },
+      { queryKey: ['logs'], type: 'active' },
+      { queryKey: ['usage-logs-stats'], type: 'active' },
+    ])
+
+    stop()
+    assert.equal(intervalScheduler.getIntervals().length, 0)
   })
 
-  test('refreshes usage RPM and TPM with the same auto-refresh toggle', async () => {
-    const statsSource = await readFile(
-      new URL('common-logs-stats.tsx', componentRoot),
-      'utf8'
-    )
-    const filterSource = await readFile(
-      new URL('common-logs-filter-bar.tsx', componentRoot),
+  test('does not overlap refresh cycles when the previous request is pending', async () => {
+    const pendingRefreshes: Array<() => void> = []
+    let calls = 0
+    const fakeQueryClient = {
+      refetchQueries() {
+        calls += 1
+        return new Promise<void>((resolve) => {
+          pendingRefreshes.push(resolve)
+        })
+      },
+    }
+    const intervalScheduler = createIntervalScheduler()
+
+    startUsageLogAutoRefresh(fakeQueryClient, intervalScheduler.scheduler)
+    intervalScheduler.tick()
+    intervalScheduler.tick()
+
+    assert.equal(calls, 2)
+
+    for (const resolve of pendingRefreshes.splice(0)) {
+      resolve()
+    }
+    await flushPromises()
+    intervalScheduler.tick()
+
+    assert.equal(calls, 4)
+  })
+
+  test('disables row entrance animation for the live usage log table', async () => {
+    const stylesheet = await readFile(
+      new URL('../../../../styles/index.css', import.meta.url),
       'utf8'
     )
 
-    assert.equal(
-      statsSource.includes(
-        'refetchInterval: props.autoRefresh === true ? 3000 : false'
-      ),
-      true
-    )
-    assert.equal(
-      filterSource.includes('<CommonLogsStats autoRefresh={autoRefresh} />'),
-      true
+    assert.match(
+      stylesheet,
+      /\.usage-logs-live-table \[data-slot='table'\] tbody tr\s*\{\s*animation: none;/
     )
   })
 })

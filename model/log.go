@@ -875,6 +875,41 @@ func GetPendingLogById(id int) (*Log, error) {
 	return &log, nil
 }
 
+func FinalizeInactivePendingLog(id int) (bool, error) {
+	if id <= 0 || !InFlightUsageLogSupported() {
+		return false, gorm.ErrRecordNotFound
+	}
+
+	var pending Log
+	if err := LOG_DB.Where("id = ? AND type = ?", id, LogTypePending).First(&pending).Error; err != nil {
+		return false, err
+	}
+
+	useTime := int(common.GetTimestamp() - pending.CreatedAt)
+	if useTime < 0 {
+		useTime = 0
+	}
+	otherMap, _ := common.StrToMap(pending.Other)
+	if otherMap == nil {
+		otherMap = map[string]interface{}{}
+	}
+	otherMap["inactive_finalized"] = true
+
+	result := LOG_DB.Model(&Log{}).
+		Where("id = ? AND type = ?", id, LogTypePending).
+		Updates(map[string]interface{}{
+			"type":     LogTypeError,
+			"content":  "request is no longer active on this instance",
+			"quota":    0,
+			"use_time": useTime,
+			"other":    common.MapToJsonStr(otherMap),
+		})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
+}
+
 func isViolationFeeLog(other map[string]interface{}) bool {
 	if other == nil {
 		return false

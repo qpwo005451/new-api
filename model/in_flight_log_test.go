@@ -155,6 +155,34 @@ func TestGetPendingLogByIdOnlyReturnsPendingRows(t *testing.T) {
 	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
 }
 
+func TestFinalizeInactivePendingLog(t *testing.T) {
+	setupInFlightLogTestDB(t)
+	pending := &Log{
+		UserId:    1,
+		CreatedAt: common.GetTimestamp() - 12,
+		Type:      LogTypePending,
+		Content:   "request in progress",
+		Other:     `{"request_path":"/v1/responses"}`,
+	}
+	require.NoError(t, LOG_DB.Create(pending).Error)
+
+	finalized, err := FinalizeInactivePendingLog(pending.Id)
+	require.NoError(t, err)
+	assert.True(t, finalized)
+
+	var row Log
+	require.NoError(t, LOG_DB.First(&row, pending.Id).Error)
+	assert.Equal(t, LogTypeError, row.Type)
+	assert.Equal(t, 0, row.Quota)
+	assert.GreaterOrEqual(t, row.UseTime, 12)
+	assert.Equal(t, "request is no longer active on this instance", row.Content)
+	assert.Contains(t, row.Other, `"inactive_finalized":true`)
+
+	finalized, err = FinalizeInactivePendingLog(pending.Id)
+	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+	assert.False(t, finalized)
+}
+
 func TestViolationFeeDoesNotFinalizePendingRequest(t *testing.T) {
 	setupInFlightLogTestDB(t)
 	c := newTestGinContext("req-violation-fee", 9)

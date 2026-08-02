@@ -178,9 +178,29 @@ func CancelInFlightLog(c *gin.Context) {
 	}
 
 	if !service.CancelInFlightRequest(logId) {
-		c.JSON(http.StatusConflict, gin.H{
-			"success": false,
-			"message": "request is not active on this instance",
+		finalized, finalizeErr := model.FinalizeInactivePendingLog(logId)
+		if finalizeErr != nil {
+			status := http.StatusInternalServerError
+			message := finalizeErr.Error()
+			if errors.Is(finalizeErr, gorm.ErrRecordNotFound) {
+				status = http.StatusConflict
+				message = "request is no longer pending"
+			}
+			c.JSON(status, gin.H{
+				"success": false,
+				"message": message,
+			})
+			return
+		}
+		if !finalized {
+			c.JSON(http.StatusConflict, gin.H{
+				"success": false,
+				"message": "request is no longer pending",
+			})
+			return
+		}
+		common.ApiSuccess(c, gin.H{
+			"finalized_inactive": true,
 		})
 		return
 	}

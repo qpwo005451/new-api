@@ -49,6 +49,7 @@ import { DetailsDialog } from './dialogs/details-dialog'
 import { TaskLogsFilterBar } from './task-logs-filter-bar'
 import { UsageLogsMobileList } from './usage-logs-mobile-card'
 import { useLogsViewScope } from './usage-logs-provider'
+import { useUsageLogAutoRefresh } from './use-usage-log-auto-refresh'
 
 const route = getRouteApi('/_authenticated/usage-logs/$section')
 
@@ -133,6 +134,9 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   const [selectedLogSnapshot, setSelectedLogSnapshot] =
     useState<UsageLog | null>(null)
   const [cancelTarget, setCancelTarget] = useState<UsageLog | null>(null)
+  const isCommon = logCategory === 'common'
+
+  useUsageLogAutoRefresh(queryClient, isCommon && autoRefresh)
 
   const { data, isLoading } = useQuery({
     queryKey: [
@@ -145,7 +149,6 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
       searchParams,
       t,
     ],
-    refetchInterval: logCategory === 'common' && autoRefresh ? 3000 : false,
     queryFn: async () => {
       const result = await fetchLogsByCategory({
         logCategory,
@@ -172,7 +175,6 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   })
 
   const logs = data?.items || []
-  const isCommon = logCategory === 'common'
 
   const liveSelectedLog =
     selectedLogId == null
@@ -248,7 +250,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
         skeletonKeyPrefix='usage-log-skeleton'
         applyHeaderSize
         tableClassName={cn(
-          '[&_[data-slot=table]]:text-[13px] [&_[data-slot=table]_td]:text-[13px] [&_[data-slot=table]_td_*]:text-[13px] [&_[data-slot=table]_th]:text-[13px] [&_[data-slot=table]_th_*]:text-[13px]'
+          'usage-logs-live-table [&_[data-slot=table]]:text-[13px] [&_[data-slot=table]_td]:text-[13px] [&_[data-slot=table]_td_*]:text-[13px] [&_[data-slot=table]_th]:text-[13px] [&_[data-slot=table]_th_*]:text-[13px]'
         )}
         mobile={
           <UsageLogsMobileList

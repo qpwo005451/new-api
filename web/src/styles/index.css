@@ -582,6 +582,10 @@ For commercial licensing, please contact support@quantumnous.com
   [data-slot='table'] tbody tr:nth-child(n + 11) {
     animation-delay: 250ms;
   }
+
+  .usage-logs-live-table [data-slot='table'] tbody tr {
+    animation: none;
+  }
 }
 
 @keyframes tableRowEnter {

@@ -746,6 +746,40 @@ function buildCommonLogsColumns(
       meta: { mobileTitle: true },
     },
     {
+      id: 'reasoning_effort',
+      header: t('Reasoning Effort'),
+      accessorFn: (row) => parseLogOther(row.other)?.reasoning_effort ?? '',
+      cell: ({ row }) => {
+        const log = row.original
+        if (!isDisplayableLogType(log.type)) return null
+
+        const reasoningEffort = parseLogOther(log.other)?.reasoning_effort
+        if (!reasoningEffort) {
+          return <span className='text-muted-foreground text-xs'>-</span>
+        }
+
+        let variant: StatusBadgeProps['variant'] = 'green'
+        if (reasoningEffort === 'high' || reasoningEffort === 'xhigh') {
+          variant = 'orange'
+        } else if (reasoningEffort === 'medium') {
+          variant = 'yellow'
+        } else if (reasoningEffort === 'max') {
+          variant = 'purple'
+        }
+
+        return (
+          <StatusBadge
+            label={reasoningEffort}
+            variant={variant}
+            size='sm'
+            copyable={false}
+          />
+        )
+      },
+      meta: { label: t('Reasoning Effort') },
+      size: 110,
+    },
+    {
       accessorKey: 'is_stream',
       header: t('Stream'),
       cell: ({ row }) => {

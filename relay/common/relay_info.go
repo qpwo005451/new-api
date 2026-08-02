@@ -444,6 +444,9 @@ func GenRelayInfoImage(c *gin.Context, request dto.Request) *RelayInfo {
 func GenRelayInfoOpenAI(c *gin.Context, request dto.Request) *RelayInfo {
 	info := genBaseRelayInfo(c, request)
 	info.RelayFormat = types.RelayFormatOpenAI
+	if openAIRequest, ok := request.(*dto.GeneralOpenAIRequest); ok {
+		info.ReasoningEffort = openAIRequest.ReasoningEffort
+	}
 	return info
 }
 

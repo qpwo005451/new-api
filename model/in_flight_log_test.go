@@ -103,7 +103,14 @@ func TestRecordPendingAndFinalizeToConsume(t *testing.T) {
 func TestRecordPendingAndFinalizeToError(t *testing.T) {
 	setupInFlightLogTestDB(t)
 	c := newTestGinContext("req-pending-err", 8)
-	RecordPendingLog(c, 8, RecordPendingLogParams{ModelName: "m", TokenName: "t", TokenId: 1})
+	RecordPendingLog(c, 8, RecordPendingLogParams{
+		ModelName: "m",
+		TokenName: "t",
+		TokenId:   1,
+		Other: map[string]interface{}{
+			"reasoning_effort": "high",
+		},
+	})
 	pendingID := common.GetContextKeyInt(c, constant.ContextKeyPendingLogId)
 	require.Greater(t, pendingID, 0)
 
@@ -114,6 +121,9 @@ func TestRecordPendingAndFinalizeToError(t *testing.T) {
 	assert.Equal(t, LogTypeError, row.Type)
 	assert.Equal(t, 0, row.Quota)
 	assert.Contains(t, row.Content, "upstream failed")
+	other, err := common.StrToMap(row.Other)
+	require.NoError(t, err)
+	assert.Equal(t, "high", other["reasoning_effort"])
 }
 
 func TestPendingLogSupportsDeferredChannelSelection(t *testing.T) {

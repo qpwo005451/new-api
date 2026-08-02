@@ -962,6 +962,18 @@ func finalizeInFlightLog(c *gin.Context, terminal *Log) bool {
 		}
 	}
 
+	pendingOther, _ := common.StrToMap(pending.Other)
+	terminalOther, _ := common.StrToMap(terminal.Other)
+	if pendingReasoningEffort, ok := pendingOther["reasoning_effort"]; ok {
+		if terminalOther == nil {
+			terminalOther = map[string]interface{}{}
+		}
+		if _, ok = terminalOther["reasoning_effort"]; !ok {
+			terminalOther["reasoning_effort"] = pendingReasoningEffort
+			terminal.Other = common.MapToJsonStr(terminalOther)
+		}
+	}
+
 	updates := map[string]interface{}{
 		"type":                terminal.Type,
 		"content":             terminal.Content,

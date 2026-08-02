@@ -59,6 +59,20 @@ func TestGenRelayInfoResponsesRecordsReasoningEffort(t *testing.T) {
 	require.Equal(t, "xhigh", info.ReasoningEffort)
 }
 
+func TestGenRelayInfoOpenAIRecordsReasoningEffort(t *testing.T) {
+	oldMode := gin.Mode()
+	gin.SetMode(gin.TestMode)
+	t.Cleanup(func() { gin.SetMode(oldMode) })
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	info := GenRelayInfoOpenAI(c, &dto.GeneralOpenAIRequest{
+		ReasoningEffort: "high",
+	})
+
+	require.Equal(t, "high", info.ReasoningEffort)
+}
+
 func TestRelayInfoMetaTypedNilReceiver(t *testing.T) {
 	var info *RelayInfo
 	var meta convmeta.Meta = info

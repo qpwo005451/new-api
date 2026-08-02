@@ -183,6 +183,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	}
 
 	if relayFormat != types.RelayFormatOpenAIRealtime {
+		pendingOther := map[string]interface{}{
+			"request_path": c.Request.URL.Path,
+		}
+		if relayInfo.ReasoningEffort != "" {
+			pendingOther["reasoning_effort"] = relayInfo.ReasoningEffort
+		}
 		model.RecordPendingLog(c, relayInfo.UserId, model.RecordPendingLogParams{
 			ChannelId: common.GetContextKeyInt(c, constant.ContextKeyChannelId),
 			ModelName: relayInfo.OriginModelName,
@@ -191,9 +197,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			IsStream:  relayInfo.IsStream,
 			Group:     relayInfo.UsingGroup,
 			Content:   "request in progress",
-			Other: map[string]interface{}{
-				"request_path": c.Request.URL.Path,
-			},
+			Other:     pendingOther,
 		})
 		pendingLogId := common.GetContextKeyInt(c, constant.ContextKeyPendingLogId)
 		if pendingLogId > 0 {

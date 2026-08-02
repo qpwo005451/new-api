@@ -157,6 +157,14 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		if removedResponseInputStatus {
 			logger.LogWarn(c, "removed response-only status fields from Responses input items")
 		}
+		var removedEncryptedContent bool
+		jsonData, removedEncryptedContent, err = relaycommon.RemoveResponsesInputEncryptedContent(jsonData)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
+		if removedEncryptedContent {
+			logger.LogWarn(c, "removed encrypted_content from Responses input before forwarding upstream")
+		}
 
 		logger.LogDebug(c, "requestBody: %s", jsonData)
 		body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)

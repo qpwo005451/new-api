@@ -1,11 +1,44 @@
 package common
 
 import (
+	"bytes"
+	"encoding/json"
 	"strconv"
 
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
+
+// RemoveResponsesInputEncryptedContent strips encrypted upstream state from the
+// input array before forwarding a Responses request. Custom-provider clients
+// may replay ciphertext from an earlier response that a different upstream
+// instance cannot decrypt.
+func RemoveResponsesInputEncryptedContent(jsonData []byte) ([]byte, bool, error) {
+	input := gjson.GetBytes(jsonData, "input")
+	if !input.Exists() || !bytes.Contains([]byte(input.Raw), []byte("encrypted_content")) {
+		return jsonData, false, nil
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader([]byte(input.Raw)))
+	decoder.UseNumber()
+	var value interface{}
+	if err := decoder.Decode(&value); err != nil {
+		return jsonData, false, err
+	}
+	stripped, changed := stripEncryptedContent(value)
+	if !changed {
+		return jsonData, false, nil
+	}
+	strippedInput, err := json.Marshal(stripped)
+	if err != nil {
+		return jsonData, false, err
+	}
+	result, err := sjson.SetRawBytes(jsonData, "input", strippedInput)
+	if err != nil {
+		return jsonData, false, err
+	}
+	return result, true, nil
+}
 
 // RemoveResponsesInputItemStatus removes response-only item status fields before
 // forwarding a create request to strict Responses-compatible upstreams.

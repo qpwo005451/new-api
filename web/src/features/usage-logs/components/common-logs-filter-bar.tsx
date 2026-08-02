@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQueryClient, useIsFetching } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate, getRouteApi } from '@tanstack/react-router'
 import type { Table } from '@tanstack/react-table'
 import { Eye, EyeOff, RefreshCw } from 'lucide-react'
@@ -122,7 +122,7 @@ export function CommonLogsFilterBar<TData>(
   const searchParams = route.useSearch()
   const { isAdminView: isAdmin } = useLogsViewScope()
   const { sensitiveVisible, setSensitiveVisible } = useUsageLogsContext()
-  const fetchingLogs = useIsFetching({ queryKey: ['logs'] })
+  const [searchLoading, setSearchLoading] = useState(false)
 
   const searchState = useMemo<CommonLogDraft>(() => {
     const { start, end } = getDefaultTimeRange()
@@ -189,20 +189,23 @@ export function CommonLogsFilterBar<TData>(
     [searchState]
   )
 
-  const handleApply = useCallback(() => {
+  const handleApply = useCallback(async () => {
+    setSearchLoading(true)
     const filterParams = buildSearchParams(filters, 'common')
-    navigate({
-      to: '/usage-logs/$section',
-      params: { section: 'common' },
-      search: {
-        ...filterParams,
-        type: [logType],
-        page: 1,
-      },
-    })
-    queryClient.invalidateQueries({ queryKey: ['logs'] })
-    queryClient.invalidateQueries({ queryKey: ['usage-logs-stats'] })
-  }, [filters, logType, navigate, queryClient])
+    try {
+      await navigate({
+        to: '/usage-logs/$section',
+        params: { section: 'common' },
+        search: {
+          ...filterParams,
+          type: [logType],
+          page: 1,
+        },
+      })
+    } finally {
+      setSearchLoading(false)
+    }
+  }, [filters, logType, navigate])
 
   const handleReset = useCallback(() => {
     const { start, end } = getDefaultTimeRange()
@@ -269,7 +272,7 @@ export function CommonLogsFilterBar<TData>(
 
   const statsBar = (
     <div className='flex flex-wrap items-center gap-2'>
-      <CommonLogsStats autoRefresh={autoRefresh} />
+      <CommonLogsStats />
     </div>
   )
   const sensitiveToggle = (
@@ -475,7 +478,7 @@ export function CommonLogsFilterBar<TData>(
       advancedFilterCount={expandedFilterCount}
       hasActiveFilters={hasAdditionalFilters}
       onSearch={handleApply}
-      searchLoading={fetchingLogs > 0}
+      searchLoading={searchLoading}
       onReset={handleReset}
     />
   )

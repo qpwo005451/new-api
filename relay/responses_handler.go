@@ -149,6 +149,14 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 				return newAPIErrorFromParamOverride(err)
 			}
 		}
+		var removedResponseInputStatus bool
+		jsonData, removedResponseInputStatus, err = relaycommon.RemoveResponsesInputItemStatus(jsonData)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
+		if removedResponseInputStatus {
+			logger.LogWarn(c, "removed response-only status fields from Responses input items")
+		}
 
 		logger.LogDebug(c, "requestBody: %s", jsonData)
 		body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)

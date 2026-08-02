@@ -240,5 +240,8 @@ func sendResponsesStreamData(c *gin.Context, streamResponse dto.ResponsesStreamR
 	if data == "" {
 		return
 	}
+	// Strip upstream encrypted_content that third-party clients (e.g. Codex
+	// on a custom provider) cannot decrypt, or they abort the whole stream.
+	data = string(relaycommon.StripResponsesEncryptedContent([]byte(data)))
 	_ = helper.ResponseChunkData(c, streamResponse, data)
 }

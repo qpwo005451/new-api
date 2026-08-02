@@ -163,6 +163,41 @@ func TestClaimModelMonitorAlertOutboxSupportsRetryAndLeaseRecovery(t *testing.T)
 	assert.Equal(t, int64(305), stored.SentAt)
 }
 
+func TestQueueDueModelMonitorTelegramRepeatsDeduplicatesIntervalAndStopsAfterRecovery(t *testing.T) {
+	setupModelMonitorTestDB(t)
+	state := ModelMonitorPathState{
+		SiteID: 2, TargetID: 7, ChannelID: 9, ModelName: "gpt-5.6-sol",
+		Status: ModelMonitorStatusUnavailable, LastTransitionAt: 100,
+		TransitionVersion: 3, LastFailureType: ModelMonitorFailureTypeTimeout,
+	}
+	require.NoError(t, DB.Create(&state).Error)
+
+	matches := func(siteID int64, channelID int, modelName string) bool {
+		return siteID == 2 && channelID == 9 && modelName == "gpt-5.6-sol"
+	}
+	created, err := QueueDueModelMonitorTelegramRepeats(999, 900, matches)
+	require.NoError(t, err)
+	assert.Zero(t, created)
+
+	created, err = QueueDueModelMonitorTelegramRepeats(1000, 900, matches)
+	require.NoError(t, err)
+	assert.Equal(t, 1, created)
+	created, err = QueueDueModelMonitorTelegramRepeats(1099, 900, matches)
+	require.NoError(t, err)
+	assert.Zero(t, created)
+	created, err = QueueDueModelMonitorTelegramRepeats(1899, 900, matches)
+	require.NoError(t, err)
+	assert.Zero(t, created)
+	created, err = QueueDueModelMonitorTelegramRepeats(1901, 900, matches)
+	require.NoError(t, err)
+	assert.Equal(t, 1, created)
+
+	require.NoError(t, DB.Model(&state).Update("status", ModelMonitorStatusAvailable).Error)
+	created, err = QueueDueModelMonitorTelegramRepeats(2800, 900, matches)
+	require.NoError(t, err)
+	assert.Zero(t, created)
+}
+
 func TestModelMonitorAggregateDeduplicatesPathsAndWeights(t *testing.T) {
 	targets := []ModelMonitorTarget{
 		{SiteID: 1, ModelName: "gpt-5", Weight: 5, Enabled: true},

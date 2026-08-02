@@ -80,11 +80,13 @@ func TestSaveModelMonitorAlertConfigPreservesTokenWhenRequestLeavesItEmpty(t *te
 	operation_setting.GetModelMonitorAlertSetting().TelegramNotifyBotToken = "stored-notification-token"
 
 	request := modelMonitorAlertConfig{
-		Enabled:         true,
-		EmailEnabled:    true,
-		EmailRecipients: "ops@example.com",
-		TelegramEnabled: true,
-		TelegramChatID:  "12345",
+		Enabled:               true,
+		EmailEnabled:          true,
+		EmailRecipients:       "ops@example.com",
+		TelegramEnabled:       true,
+		TelegramRepeatEnabled: true,
+		TelegramRepeatMinutes: 15,
+		TelegramChatID:        "12345",
 		Rules: []operation_setting.ModelMonitorAlertRule{
 			{SiteID: site.ID, ChannelID: 9, ModelPrefix: "gpt-", Enabled: true},
 			{SiteID: site.ID, ChannelID: 9, ModelName: "kimi-k2.7-code", Enabled: true},
@@ -95,6 +97,8 @@ func TestSaveModelMonitorAlertConfigPreservesTokenWhenRequestLeavesItEmpty(t *te
 	setting := operation_setting.GetModelMonitorAlertSetting()
 	assert.Equal(t, "stored-notification-token", setting.TelegramNotifyBotToken)
 	assert.Equal(t, "ops@example.com", setting.EmailRecipients)
+	assert.True(t, setting.TelegramRepeatEnabled)
+	assert.Equal(t, 15, setting.TelegramRepeatMinutes)
 	require.Len(t, setting.Rules, 2)
 
 	var tokenOption model.Option
@@ -103,6 +107,23 @@ func TestSaveModelMonitorAlertConfigPreservesTokenWhenRequestLeavesItEmpty(t *te
 	var rulesOption model.Option
 	require.NoError(t, db.Where("key = ?", "model_monitor_alert_setting.rules").First(&rulesOption).Error)
 	assert.Contains(t, rulesOption.Value, "kimi-k2.7-code")
+}
+
+func TestValidateModelMonitorAlertConfigBoundsTelegramRepeatInterval(t *testing.T) {
+	config := modelMonitorAlertConfig{
+		Enabled:               true,
+		TelegramEnabled:       true,
+		TelegramRepeatEnabled: true,
+		TelegramRepeatMinutes: 4,
+		TelegramChatID:        "12345",
+		Rules: []operation_setting.ModelMonitorAlertRule{
+			{SiteID: 2, ChannelID: 9, ModelPrefix: "gpt-", Enabled: true},
+		},
+	}
+
+	assert.ErrorContains(t, validateModelMonitorAlertConfig(config, "stored-token"), "between 5 and 1440")
+	config.TelegramRepeatMinutes = 15
+	require.NoError(t, validateModelMonitorAlertConfig(config, "stored-token"))
 }
 
 func TestValidateModelMonitorAlertConfigRequiresUsableFocusedRule(t *testing.T) {

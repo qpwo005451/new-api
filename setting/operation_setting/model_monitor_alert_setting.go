@@ -19,6 +19,8 @@ type ModelMonitorAlertSetting struct {
 	EmailEnabled           bool                    `json:"email_enabled"`
 	EmailRecipients        string                  `json:"email_recipients"`
 	TelegramEnabled        bool                    `json:"telegram_enabled"`
+	TelegramRepeatEnabled  bool                    `json:"telegram_repeat_enabled"`
+	TelegramRepeatMinutes  int                     `json:"telegram_repeat_minutes"`
 	TelegramNotifyBotToken string                  `json:"TelegramNotifyBotToken"`
 	TelegramChatID         string                  `json:"telegram_chat_id"`
 	Rules                  []ModelMonitorAlertRule `json:"rules"`
@@ -26,7 +28,8 @@ type ModelMonitorAlertSetting struct {
 
 func DefaultModelMonitorAlertSetting() ModelMonitorAlertSetting {
 	return ModelMonitorAlertSetting{
-		Rules: []ModelMonitorAlertRule{},
+		TelegramRepeatMinutes: 15,
+		Rules:                 []ModelMonitorAlertRule{},
 	}
 }
 

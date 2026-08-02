@@ -50,4 +50,22 @@ describe('model monitor alert settings', () => {
     assert.equal(source.includes('channel_id'), true)
     assert.equal(source.includes('site_id'), true)
   })
+
+  test('exposes persistent Telegram notifications with a configurable interval', async () => {
+    const source = await readFile(
+      new URL('components/alert-settings.tsx', featureRoot),
+      'utf8'
+    )
+    const pageSource = await readFile(
+      new URL('model-monitor.tsx', featureRoot),
+      'utf8'
+    )
+
+    assert.equal(source.includes('telegram_repeat_enabled'), true)
+    assert.equal(source.includes('telegram_repeat_minutes'), true)
+    assert.equal(
+      pageSource.indexOf('<AlertSettings'),
+      pageSource.lastIndexOf('<AlertSettings')
+    )
+  })
 })

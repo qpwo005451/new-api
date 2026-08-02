@@ -387,9 +387,9 @@ export function ModelMonitor() {
                   ))}
             </div>
 
-            <MonitorTasksPanel />
-
             <AlertSettings sites={config.sites} />
+
+            <MonitorTasksPanel />
 
             <Card>
               <CardHeader>

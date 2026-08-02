@@ -39,3 +39,10 @@ func TestModelMonitorAlertSettingReturnsOnlyConfiguredTransports(t *testing.T) {
 	assert.Equal(t, []string{"email", "telegram"}, setting.EnabledTransports(2, 9, "gpt-5.6-sol"))
 	assert.Empty(t, setting.EnabledTransports(2, 9, "grok-4.5"))
 }
+
+func TestDefaultModelMonitorAlertSettingUsesFifteenMinuteRepeatInterval(t *testing.T) {
+	setting := DefaultModelMonitorAlertSetting()
+
+	assert.Equal(t, 15, setting.TelegramRepeatMinutes)
+	assert.False(t, setting.TelegramRepeatEnabled)
+}

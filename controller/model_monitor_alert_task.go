@@ -17,7 +17,8 @@ func (modelMonitorAlertHandler) Type() string {
 }
 
 func (modelMonitorAlertHandler) Enabled() bool {
-	if !operation_setting.GetModelMonitorAlertSetting().Enabled {
+	setting := operation_setting.GetModelMonitorAlertSetting()
+	if !setting.Enabled {
 		return false
 	}
 	hasDue, err := model.HasDueModelMonitorAlertOutbox(common.GetTimestamp())
@@ -25,7 +26,22 @@ func (modelMonitorAlertHandler) Enabled() bool {
 		common.SysError("model monitor alert outbox lookup failed")
 		return false
 	}
-	return hasDue
+	if hasDue {
+		return true
+	}
+	if !setting.TelegramEnabled || !setting.TelegramRepeatEnabled {
+		return false
+	}
+	hasRepeatDue, err := model.HasDueModelMonitorTelegramRepeat(
+		common.GetTimestamp(),
+		int64(time.Duration(setting.TelegramRepeatMinutes)*time.Minute/time.Second),
+		setting.Matches,
+	)
+	if err != nil {
+		common.SysError("model monitor repeat alert lookup failed")
+		return false
+	}
+	return hasRepeatDue
 }
 
 func (modelMonitorAlertHandler) Interval() time.Duration {
@@ -40,6 +56,7 @@ func (modelMonitorAlertHandler) Run(ctx context.Context, task *model.SystemTask,
 	total := service.ModelMonitorAlertDispatchSummary{}
 	for {
 		summary, err := service.DispatchDueModelMonitorAlerts(ctx, runnerID, common.GetTimestamp())
+		total.Queued += summary.Queued
 		total.Claimed += summary.Claimed
 		total.Sent += summary.Sent
 		total.Retrying += summary.Retrying

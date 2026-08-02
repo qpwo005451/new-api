@@ -29,6 +29,7 @@ var (
 )
 
 type ModelMonitorAlertDispatchSummary struct {
+	Queued   int `json:"queued"`
 	Claimed  int `json:"claimed"`
 	Sent     int `json:"sent"`
 	Retrying int `json:"retrying"`
@@ -162,6 +163,18 @@ func TestModelMonitorAlertTransports(ctx context.Context) (ModelMonitorAlertTest
 
 func DispatchDueModelMonitorAlerts(ctx context.Context, runnerID string, now int64) (ModelMonitorAlertDispatchSummary, error) {
 	summary := ModelMonitorAlertDispatchSummary{}
+	setting := operation_setting.GetModelMonitorAlertSetting()
+	if setting.Enabled && setting.TelegramEnabled && setting.TelegramRepeatEnabled {
+		queued, err := model.QueueDueModelMonitorTelegramRepeats(
+			now,
+			int64(time.Duration(setting.TelegramRepeatMinutes)*time.Minute/time.Second),
+			setting.Matches,
+		)
+		if err != nil {
+			return summary, err
+		}
+		summary.Queued = queued
+	}
 	events, err := model.ClaimDueModelMonitorAlertOutbox(
 		now,
 		now+int64(modelMonitorAlertLease.Seconds()),
@@ -215,6 +228,15 @@ func DispatchDueModelMonitorAlerts(ctx context.Context, runnerID string, now int
 
 func deliverModelMonitorAlert(ctx context.Context, event model.ModelMonitorAlertOutbox) error {
 	setting := operation_setting.GetModelMonitorAlertSetting()
+	if isModelMonitorRepeatEvent(event) {
+		current, err := model.IsCurrentModelMonitorUnavailableTransition(event)
+		if err != nil {
+			return &modelMonitorAlertDeliveryError{message: "model monitor repeat state lookup failed", retryable: true}
+		}
+		if !current {
+			return nil
+		}
+	}
 	subject, text, htmlBody, err := buildModelMonitorAlertMessage(event)
 	if err != nil {
 		return &modelMonitorAlertDeliveryError{message: "model monitor alert metadata lookup failed", retryable: true}
@@ -252,14 +274,24 @@ func buildModelMonitorAlertMessage(event model.ModelMonitorAlertOutbox) (string,
 	if event.Status == model.ModelMonitorStatusAvailable {
 		stateText = "已恢复"
 		subjectState = "Recovered"
+	} else if isModelMonitorRepeatEvent(event) {
+		stateText = "持续不可用"
+		subjectState = "Still unavailable"
 	}
-	observedAt := time.Unix(event.ObservedAt, 0).In(time.Local).Format("2006-01-02 15:04:05 MST")
+	eventAt := event.ObservedAt
+	if isModelMonitorRepeatEvent(event) {
+		eventAt = event.CreatedAt
+	}
+	observedAt := time.Unix(eventAt, 0).In(time.Local).Format("2006-01-02 15:04:05 MST")
 	lines := []string{
 		fmt.Sprintf("模型监控状态：%s", stateText),
 		fmt.Sprintf("站点：%s", siteName),
 		fmt.Sprintf("渠道：%s", channelName),
 		fmt.Sprintf("模型：%s", event.ModelName),
 		fmt.Sprintf("时间：%s", observedAt),
+	}
+	if isModelMonitorRepeatEvent(event) {
+		lines = append(lines, fmt.Sprintf("已持续：%s", formatModelMonitorDownDuration(event.CreatedAt-event.ObservedAt)))
 	}
 	if event.Status == model.ModelMonitorStatusUnavailable && event.FailureType != "" {
 		lines = append(lines, fmt.Sprintf("失败类型：%s", event.FailureType))
@@ -274,6 +306,26 @@ func buildModelMonitorAlertMessage(event model.ModelMonitorAlertOutbox) (string,
 	}
 	subject := fmt.Sprintf("[NewAPI] %s: %s", subjectState, event.ModelName)
 	return subject, text, strings.Join(htmlLines, "<br>"), nil
+}
+
+func isModelMonitorRepeatEvent(event model.ModelMonitorAlertOutbox) bool {
+	return strings.HasPrefix(event.EventKey, "model-monitor-repeat:")
+}
+
+func formatModelMonitorDownDuration(seconds int64) string {
+	if seconds < 60 {
+		return "不足 1 分钟"
+	}
+	minutes := seconds / 60
+	if minutes < 60 {
+		return fmt.Sprintf("%d 分钟", minutes)
+	}
+	hours := minutes / 60
+	remainingMinutes := minutes % 60
+	if remainingMinutes == 0 {
+		return fmt.Sprintf("%d 小时", hours)
+	}
+	return fmt.Sprintf("%d 小时 %d 分钟", hours, remainingMinutes)
 }
 
 func modelMonitorAlertRetryDelay(attempt int) time.Duration {

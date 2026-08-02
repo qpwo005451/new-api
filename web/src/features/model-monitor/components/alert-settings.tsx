@@ -22,13 +22,6 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -108,11 +101,9 @@ export function AlertSettings(props: AlertSettingsProps) {
 
   if (alertQuery.isLoading || !draft) {
     return (
-      <Card>
-        <CardContent className='text-muted-foreground py-6 text-sm'>
-          {t('Loading...')}
-        </CardContent>
-      </Card>
+      <section className='border-y py-6'>
+        <p className='text-muted-foreground text-sm'>{t('Loading...')}</p>
+      </section>
     )
   }
 
@@ -123,19 +114,19 @@ export function AlertSettings(props: AlertSettingsProps) {
   }
 
   return (
-    <Card>
-      <CardHeader>
+    <section className='space-y-4 border-y py-6'>
+      <header>
         <div className='flex flex-wrap items-start justify-between gap-3'>
           <div>
-            <CardTitle className='flex items-center gap-2'>
+            <h2 className='flex items-center gap-2 text-lg font-semibold'>
               <Bell className='size-4' aria-hidden='true' />
               {t('Availability alerts')}
-            </CardTitle>
-            <CardDescription>
+            </h2>
+            <p className='text-muted-foreground text-sm'>
               {t(
                 'Notify selected transports when a monitored model becomes unavailable or recovers.'
               )}
-            </CardDescription>
+            </p>
           </div>
           <div className='flex gap-2'>
             <Button
@@ -159,8 +150,8 @@ export function AlertSettings(props: AlertSettingsProps) {
             </Button>
           </div>
         </div>
-      </CardHeader>
-      <CardContent className='space-y-4'>
+      </header>
+      <div className='space-y-4'>
         <label className='flex items-center justify-between gap-3 rounded-md border p-3'>
           <span>
             <span className='block font-medium'>{t('Alerts enabled')}</span>
@@ -251,6 +242,43 @@ export function AlertSettings(props: AlertSettingsProps) {
                 />
               </label>
             </div>
+            <label className='flex items-center justify-between gap-3 border-t pt-3'>
+              <span>
+                <span className='block text-sm font-medium'>
+                  {t('Repeat while unavailable')}
+                </span>
+                <span className='text-muted-foreground text-xs'>
+                  {t('Telegram repeats until the monitored model recovers.')}
+                </span>
+              </span>
+              <Switch
+                checked={draft.telegram_repeat_enabled}
+                disabled={!draft.telegram_enabled}
+                onCheckedChange={(telegram_repeat_enabled) =>
+                  setDraft({ ...draft, telegram_repeat_enabled })
+                }
+              />
+            </label>
+            <label className='grid gap-1.5 text-sm'>
+              <span className='font-medium'>
+                {t('Repeat interval (minutes)')}
+              </span>
+              <Input
+                type='number'
+                min={5}
+                max={1440}
+                value={draft.telegram_repeat_minutes}
+                disabled={
+                  !draft.telegram_enabled || !draft.telegram_repeat_enabled
+                }
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    telegram_repeat_minutes: Number(event.target.value),
+                  })
+                }
+              />
+            </label>
           </div>
         </div>
 
@@ -430,7 +458,7 @@ export function AlertSettings(props: AlertSettingsProps) {
             })}
           </div>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   )
 }

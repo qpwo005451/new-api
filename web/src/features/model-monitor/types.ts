@@ -71,6 +71,8 @@ export type ModelMonitorAlertConfig = {
   email_enabled: boolean
   email_recipients: string
   telegram_enabled: boolean
+  telegram_repeat_enabled: boolean
+  telegram_repeat_minutes: number
   telegram_bot_token?: string
   telegram_bot_token_configured: boolean
   telegram_chat_id: string

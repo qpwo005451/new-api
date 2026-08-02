@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -210,6 +211,126 @@ func RecordModelMonitorObservation(observation *ModelMonitorObservation, alertTr
 		return nil
 	})
 	return events, err
+}
+
+func QueueDueModelMonitorTelegramRepeats(
+	now int64,
+	intervalSeconds int64,
+	matches func(siteID int64, channelID int, modelName string) bool,
+) (int, error) {
+	if intervalSeconds <= 0 || matches == nil {
+		return 0, nil
+	}
+	var states []ModelMonitorPathState
+	if err := dueModelMonitorTelegramRepeatQuery(now, intervalSeconds).
+		Find(&states).Error; err != nil {
+		return 0, err
+	}
+
+	created := 0
+	for _, state := range states {
+		if !matches(state.SiteID, state.ChannelID, state.ModelName) {
+			continue
+		}
+		event := ModelMonitorAlertOutbox{
+			EventKey: fmt.Sprintf(
+				"model-monitor-repeat:%d:%d:%d:%d:%d:%s",
+				state.SiteID,
+				state.TargetID,
+				state.ChannelID,
+				state.TransitionVersion,
+				now,
+				ModelMonitorAlertTransportTelegram,
+			),
+			SiteID:            state.SiteID,
+			TargetID:          state.TargetID,
+			ChannelID:         state.ChannelID,
+			ModelName:         state.ModelName,
+			PreviousStatus:    ModelMonitorStatusUnavailable,
+			Status:            ModelMonitorStatusUnavailable,
+			FailureType:       state.LastFailureType,
+			ErrorSummary:      state.LastErrorSummary,
+			ObservedAt:        state.LastTransitionAt,
+			TransitionVersion: state.TransitionVersion,
+			Transport:         ModelMonitorAlertTransportTelegram,
+			DeliveryStatus:    ModelMonitorAlertDeliveryPending,
+			NextAttemptAt:     now,
+			CreatedAt:         now,
+			UpdatedAt:         now,
+		}
+		result := DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&event)
+		if result.Error != nil {
+			return created, result.Error
+		}
+		if result.RowsAffected > 0 {
+			created++
+		}
+	}
+	return created, nil
+}
+
+func HasDueModelMonitorTelegramRepeat(
+	now int64,
+	intervalSeconds int64,
+	matches func(siteID int64, channelID int, modelName string) bool,
+) (bool, error) {
+	if intervalSeconds <= 0 || matches == nil {
+		return false, nil
+	}
+	var states []ModelMonitorPathState
+	if err := dueModelMonitorTelegramRepeatQuery(now, intervalSeconds).
+		Find(&states).Error; err != nil {
+		return false, err
+	}
+	for _, state := range states {
+		if matches(state.SiteID, state.ChannelID, state.ModelName) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func dueModelMonitorTelegramRepeatQuery(now int64, intervalSeconds int64) *gorm.DB {
+	recentRepeats := DB.Model(&ModelMonitorAlertOutbox{}).
+		Select("1").
+		Where(
+			"model_monitor_alert_outboxes.site_id = model_monitor_path_states.site_id AND "+
+				"model_monitor_alert_outboxes.target_id = model_monitor_path_states.target_id AND "+
+				"model_monitor_alert_outboxes.channel_id = model_monitor_path_states.channel_id AND "+
+				"model_monitor_alert_outboxes.transition_version = model_monitor_path_states.transition_version AND "+
+				"model_monitor_alert_outboxes.transport = ? AND "+
+				"model_monitor_alert_outboxes.event_key LIKE ? AND "+
+				"model_monitor_alert_outboxes.created_at > ?",
+			ModelMonitorAlertTransportTelegram,
+			"model-monitor-repeat:%",
+			now-intervalSeconds,
+		)
+	return DB.Where(
+		"status = ? AND last_transition_at > 0 AND last_transition_at <= ? AND NOT EXISTS (?)",
+		ModelMonitorStatusUnavailable,
+		now-intervalSeconds,
+		recentRepeats,
+	)
+}
+
+func IsCurrentModelMonitorUnavailableTransition(event ModelMonitorAlertOutbox) (bool, error) {
+	var state ModelMonitorPathState
+	err := DB.
+		Where(
+			"site_id = ? AND target_id = ? AND channel_id = ?",
+			event.SiteID,
+			event.TargetID,
+			event.ChannelID,
+		).
+		First(&state).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return state.Status == ModelMonitorStatusUnavailable &&
+		state.TransitionVersion == event.TransitionVersion, nil
 }
 
 func HasDueModelMonitorAlertOutbox(now int64) (bool, error) {

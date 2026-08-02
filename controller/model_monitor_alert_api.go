@@ -20,6 +20,8 @@ type modelMonitorAlertConfig struct {
 	EmailEnabled               bool                                      `json:"email_enabled"`
 	EmailRecipients            string                                    `json:"email_recipients"`
 	TelegramEnabled            bool                                      `json:"telegram_enabled"`
+	TelegramRepeatEnabled      bool                                      `json:"telegram_repeat_enabled"`
+	TelegramRepeatMinutes      int                                       `json:"telegram_repeat_minutes"`
 	TelegramBotToken           string                                    `json:"telegram_bot_token,omitempty"`
 	TelegramBotTokenConfigured bool                                      `json:"telegram_bot_token_configured"`
 	TelegramChatID             string                                    `json:"telegram_chat_id"`
@@ -73,6 +75,8 @@ func loadModelMonitorAlertConfig() modelMonitorAlertConfig {
 		EmailEnabled:               setting.EmailEnabled,
 		EmailRecipients:            setting.EmailRecipients,
 		TelegramEnabled:            setting.TelegramEnabled,
+		TelegramRepeatEnabled:      setting.TelegramRepeatEnabled,
+		TelegramRepeatMinutes:      setting.TelegramRepeatMinutes,
 		TelegramBotTokenConfigured: strings.TrimSpace(setting.TelegramNotifyBotToken) != "",
 		TelegramChatID:             setting.TelegramChatID,
 		Rules:                      append([]operation_setting.ModelMonitorAlertRule(nil), setting.Rules...),
@@ -127,6 +131,14 @@ func validateModelMonitorAlertConfig(config modelMonitorAlertConfig, existingTel
 			return errors.New("model monitor Telegram chat id is invalid")
 		}
 	}
+	if config.TelegramRepeatEnabled {
+		if !config.TelegramEnabled {
+			return errors.New("Telegram repeat notifications require Telegram notifications")
+		}
+		if config.TelegramRepeatMinutes < 5 || config.TelegramRepeatMinutes > 1440 {
+			return errors.New("Telegram repeat interval must be between 5 and 1440 minutes")
+		}
+	}
 	if len(config.Rules) > maxAlertRules {
 		return errors.New("too many model monitor alert rules")
 	}
@@ -171,13 +183,15 @@ func saveModelMonitorAlertConfig(config modelMonitorAlertConfig) error {
 		return err
 	}
 	optionValues := map[string]string{
-		"model_monitor_alert_setting.enabled":                strconv.FormatBool(config.Enabled),
-		"model_monitor_alert_setting.email_enabled":          strconv.FormatBool(config.EmailEnabled),
-		"model_monitor_alert_setting.email_recipients":       strings.TrimSpace(config.EmailRecipients),
-		"model_monitor_alert_setting.telegram_enabled":       strconv.FormatBool(config.TelegramEnabled),
-		"model_monitor_alert_setting.TelegramNotifyBotToken": token,
-		"model_monitor_alert_setting.telegram_chat_id":       strings.TrimSpace(config.TelegramChatID),
-		"model_monitor_alert_setting.rules":                  string(rulesJSON),
+		"model_monitor_alert_setting.enabled":                 strconv.FormatBool(config.Enabled),
+		"model_monitor_alert_setting.email_enabled":           strconv.FormatBool(config.EmailEnabled),
+		"model_monitor_alert_setting.email_recipients":        strings.TrimSpace(config.EmailRecipients),
+		"model_monitor_alert_setting.telegram_enabled":        strconv.FormatBool(config.TelegramEnabled),
+		"model_monitor_alert_setting.telegram_repeat_enabled": strconv.FormatBool(config.TelegramRepeatEnabled),
+		"model_monitor_alert_setting.telegram_repeat_minutes": strconv.Itoa(config.TelegramRepeatMinutes),
+		"model_monitor_alert_setting.TelegramNotifyBotToken":  token,
+		"model_monitor_alert_setting.telegram_chat_id":        strings.TrimSpace(config.TelegramChatID),
+		"model_monitor_alert_setting.rules":                   string(rulesJSON),
 	}
 
 	err = model.DB.Transaction(func(tx *gorm.DB) error {
@@ -215,6 +229,8 @@ func saveModelMonitorAlertConfig(config modelMonitorAlertConfig) error {
 		EmailEnabled:           config.EmailEnabled,
 		EmailRecipients:        strings.TrimSpace(config.EmailRecipients),
 		TelegramEnabled:        config.TelegramEnabled,
+		TelegramRepeatEnabled:  config.TelegramRepeatEnabled,
+		TelegramRepeatMinutes:  config.TelegramRepeatMinutes,
 		TelegramNotifyBotToken: token,
 		TelegramChatID:         strings.TrimSpace(config.TelegramChatID),
 		Rules:                  rules,

@@ -145,3 +145,42 @@ func TestDispatchModelMonitorAlertsKeepsEmailAndTelegramIndependent(t *testing.T
 	require.NoError(t, db.Where("transport = ?", model.ModelMonitorAlertTransportTelegram).First(&telegram).Error)
 	assert.Equal(t, model.ModelMonitorAlertDeliverySent, telegram.DeliveryStatus)
 }
+
+func TestDispatchModelMonitorAlertsSkipsStaleTelegramRepeatAfterRecovery(t *testing.T) {
+	db := setupModelMonitorAlertTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.ModelMonitorPathState{}))
+	setting := operation_setting.GetModelMonitorAlertSetting()
+	setting.Enabled = true
+	setting.TelegramEnabled = true
+	setting.TelegramNotifyBotToken = "notify-token"
+	setting.TelegramChatID = "12345"
+
+	state := model.ModelMonitorPathState{
+		SiteID: 2, TargetID: 7, ChannelID: 9, ModelName: "gpt-5.6-sol",
+		Status: model.ModelMonitorStatusAvailable, TransitionVersion: 4,
+	}
+	require.NoError(t, db.Create(&state).Error)
+	require.NoError(t, db.Create(&model.ModelMonitorAlertOutbox{
+		EventKey: "model-monitor-repeat:2:7:9:3:1:telegram",
+		SiteID:   2, TargetID: 7, ChannelID: 9, ModelName: "gpt-5.6-sol",
+		PreviousStatus:    model.ModelMonitorStatusUnavailable,
+		Status:            model.ModelMonitorStatusUnavailable,
+		TransitionVersion: 3,
+		Transport:         model.ModelMonitorAlertTransportTelegram,
+		DeliveryStatus:    model.ModelMonitorAlertDeliveryPending, NextAttemptAt: 100,
+	}).Error)
+
+	previousTelegramSender := sendModelMonitorAlertTelegram
+	telegramCalls := 0
+	sendModelMonitorAlertTelegram = func(_ context.Context, _, _, _ string) error {
+		telegramCalls++
+		return nil
+	}
+	t.Cleanup(func() { sendModelMonitorAlertTelegram = previousTelegramSender })
+
+	summary, err := DispatchDueModelMonitorAlerts(context.Background(), "runner-a", 100)
+	require.NoError(t, err)
+	assert.Equal(t, 1, summary.Claimed)
+	assert.Equal(t, 1, summary.Sent)
+	assert.Zero(t, telegramCalls)
+}

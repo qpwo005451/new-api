@@ -40,6 +40,9 @@ func init() {
 }
 
 func GetModelMonitorAlertSetting() *ModelMonitorAlertSetting {
+	if modelMonitorAlertSetting.TelegramRepeatMinutes == 0 {
+		modelMonitorAlertSetting.TelegramRepeatMinutes = 15
+	}
 	return &modelMonitorAlertSetting
 }
 

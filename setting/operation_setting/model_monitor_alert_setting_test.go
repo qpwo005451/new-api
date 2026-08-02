@@ -46,3 +46,13 @@ func TestDefaultModelMonitorAlertSettingUsesFifteenMinuteRepeatInterval(t *testi
 	assert.Equal(t, 15, setting.TelegramRepeatMinutes)
 	assert.False(t, setting.TelegramRepeatEnabled)
 }
+
+func TestGetModelMonitorAlertSettingNormalizesMissingRepeatInterval(t *testing.T) {
+	previous := modelMonitorAlertSetting
+	modelMonitorAlertSetting = ModelMonitorAlertSetting{}
+	t.Cleanup(func() { modelMonitorAlertSetting = previous })
+
+	setting := GetModelMonitorAlertSetting()
+
+	assert.Equal(t, 15, setting.TelegramRepeatMinutes)
+}

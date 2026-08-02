@@ -34,6 +34,7 @@ $workspaceBuildArtifacts = @(
     (Join-Path $repoRoot 'web\node_modules'),
     (Join-Path $repoRoot 'web\default\node_modules'),
     (Join-Path $repoRoot 'web\classic\node_modules'),
+    (Join-Path $repoRoot 'web\dist'),
     (Join-Path $repoRoot 'web\default\dist'),
     (Join-Path $repoRoot 'web\classic\dist')
 )
@@ -98,7 +99,7 @@ function Invoke-GitWithTimeout {
     )
 
     $process = Start-Process -FilePath 'git.exe' -ArgumentList $Arguments -PassThru -WindowStyle Hidden
-    if (-not $process.WaitForExit(8000)) {
+    if (-not $process.WaitForExit(60000)) {
         try {
             $process.Kill($true)
         } catch {

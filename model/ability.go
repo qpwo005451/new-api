@@ -8,7 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/samber/lo"
@@ -127,7 +127,7 @@ func GetChannel(group string, model string, retry int, requestPath string) (*Cha
 	if err != nil {
 		return nil, err
 	}
-	abilities = filterAbilitiesForRequest(abilities, model, requestPath)
+	abilities = filterAbilitiesByRequestPathAndModel(abilities, requestPath, model)
 	channel := Channel{}
 	if len(abilities) > 0 {
 		// Randomly choose one
@@ -152,11 +152,12 @@ func GetChannel(group string, model string, retry int, requestPath string) (*Cha
 	return &channel, err
 }
 
-// filterAbilitiesByRequestPath restricts candidates by request path for the DB
-// (non-memory-cache) selection path. Only Advanced Custom (type 58) channels are
-// path-checked: kept only when one of their routes matches requestPath; all other
-// channel types always pass. When requestPath is empty, filtering is skipped.
-func filterAbilitiesForRequest(abilities []Ability, modelName string, requestPath string) []Ability {
+// filterAbilitiesByRequestPathAndModel restricts candidates by request path and
+// model for the DB (non-memory-cache) selection path. Only Advanced Custom
+// (type 58) channels are path-checked: kept only when one of their routes matches
+// requestPath and model; all other channel types always pass. When requestPath
+// is empty, only balance protection filtering is applied.
+func filterAbilitiesByRequestPathAndModel(abilities []Ability, requestPath string, model string) []Ability {
 	if len(abilities) == 0 {
 		return abilities
 	}
@@ -190,7 +191,7 @@ func filterAbilitiesForRequest(abilities []Ability, modelName string, requestPat
 
 	filtered := make([]Ability, 0, len(abilities))
 	for _, ability := range abilities {
-		if protection := protections[ability.ChannelId]; protection != nil && !protection.AllowsModel(modelName) {
+		if protection := protections[ability.ChannelId]; protection != nil && !protection.AllowsModel(model) {
 			continue
 		}
 		if requestPath == "" {
@@ -202,7 +203,7 @@ func filterAbilitiesForRequest(abilities []Ability, modelName string, requestPat
 			filtered = append(filtered, ability)
 			continue
 		}
-		if config != nil && config.SupportsPath(requestPath) {
+		if config != nil && config.SupportsPathForModel(requestPath, model) {
 			filtered = append(filtered, ability)
 		}
 	}

@@ -11,8 +11,10 @@ $toolchainRoot = Join-Path ([System.IO.Path]::GetTempPath()) "newapi-local-relea
 $releaseCacheRoot = Join-Path $toolchainRoot 'release-cache'
 $legacyCacheRoot = Join-Path $toolchainRoot 'cache'
 $goCacheRoot = Join-Path $repoRoot '.gocache'
-$frontendDistRoot = Join-Path $repoRoot 'web\default\dist'
+$frontendDistRoot = Join-Path $repoRoot 'web\dist'
 $frontendModulesRoot = Join-Path $repoRoot 'web\node_modules'
+$savedFrontendDistRoot = Join-Path $toolchainRoot 'saved-web-dist'
+$savedFrontendModulesRoot = Join-Path $toolchainRoot 'saved-web-node-modules'
 $previousToolchainRoot = $env:LOCAL_TOOLCHAIN_ROOT
 
 function Assert-True {
@@ -29,6 +31,33 @@ function Assert-True {
     }
 }
 
+function Remove-TreeIfExists {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        if (-not (Test-Path -LiteralPath $Path)) {
+            return
+        }
+        try {
+            Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+            return
+        } catch [System.IO.DirectoryNotFoundException] {
+            return
+        } catch {
+            if (-not (Test-Path -LiteralPath $Path)) {
+                return
+            }
+            if ($attempt -eq 3) {
+                throw
+            }
+            Start-Sleep -Milliseconds 250
+        }
+    }
+}
+
 try {
     $env:LOCAL_TOOLCHAIN_ROOT = $toolchainRoot
     foreach ($path in @($cleanupScript, $buildScript)) {
@@ -40,6 +69,14 @@ try {
             [ref]$errors
         ) | Out-Null
         Assert-True ($errors.Count -eq 0) "PowerShell parse errors in $path"
+    }
+
+    New-Item -ItemType Directory -Force -Path $toolchainRoot | Out-Null
+    if (Test-Path -LiteralPath $frontendDistRoot) {
+        Move-Item -LiteralPath $frontendDistRoot -Destination $savedFrontendDistRoot
+    }
+    if (Test-Path -LiteralPath $frontendModulesRoot) {
+        Move-Item -LiteralPath $frontendModulesRoot -Destination $savedFrontendModulesRoot
     }
 
     New-Item -ItemType Directory -Force -Path `
@@ -95,15 +132,19 @@ finally {
     $worktreeList = git -C $repoRoot worktree list --porcelain
     if ($worktreeList -contains "worktree $($sourceRoot.Replace('\', '/'))") {
         git -C $repoRoot worktree remove --force $sourceRoot | Out-Null
+        git -C $repoRoot worktree prune | Out-Null
     }
-    if (Test-Path -LiteralPath $releaseRoot) {
-        Remove-Item -LiteralPath $releaseRoot -Recurse -Force
+    foreach ($path in @($goCacheRoot, $frontendDistRoot, $frontendModulesRoot)) {
+        Remove-TreeIfExists -Path $path
     }
-    foreach ($path in @($toolchainRoot, $goCacheRoot, $frontendDistRoot, $frontendModulesRoot)) {
-        if (Test-Path -LiteralPath $path) {
-            Remove-Item -LiteralPath $path -Recurse -Force
-        }
+    Remove-TreeIfExists -Path $releaseRoot
+    if (Test-Path -LiteralPath $savedFrontendDistRoot) {
+        Move-Item -LiteralPath $savedFrontendDistRoot -Destination $frontendDistRoot
     }
+    if (Test-Path -LiteralPath $savedFrontendModulesRoot) {
+        Move-Item -LiteralPath $savedFrontendModulesRoot -Destination $frontendModulesRoot
+    }
+    Remove-TreeIfExists -Path $toolchainRoot
     if ($null -eq $previousToolchainRoot) {
         Remove-Item Env:\LOCAL_TOOLCHAIN_ROOT -ErrorAction SilentlyContinue
     } else {

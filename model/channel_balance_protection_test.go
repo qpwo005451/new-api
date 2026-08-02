@@ -200,8 +200,8 @@ func TestFilterChannelsForRequestFallsBackForPaidModels(t *testing.T) {
 		channel2balanceProtection = previousProtections
 	})
 
-	assert.Equal(t, []int{1, 2}, filterChannelsForRequest([]int{1, 2}, "free-model", ""))
-	assert.Equal(t, []int{2}, filterChannelsForRequest([]int{1, 2}, "paid-model", ""))
+	assert.Equal(t, []int{1, 2}, filterChannelsByRequestPathAndModel([]int{1, 2}, "", "free-model"))
+	assert.Equal(t, []int{2}, filterChannelsByRequestPathAndModel([]int{1, 2}, "", "paid-model"))
 }
 
 func TestFilterAbilitiesForRequestProtectsDirectDatabaseRouting(t *testing.T) {
@@ -214,7 +214,7 @@ func TestFilterAbilitiesForRequestProtectsDirectDatabaseRouting(t *testing.T) {
 	assert.Equal(
 		t,
 		abilities,
-		filterAbilitiesForRequest(abilities, "free-model", ""),
+		filterAbilitiesByRequestPathAndModel(abilities, "", "free-model"),
 	)
-	assert.Empty(t, filterAbilitiesForRequest(abilities, "paid-model", ""))
+	assert.Empty(t, filterAbilitiesByRequestPathAndModel(abilities, "", "paid-model"))
 }

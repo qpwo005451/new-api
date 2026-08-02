@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/types"
+	"github.com/QuantumNous/new-api/relaykit/types"
 )
 
 const (

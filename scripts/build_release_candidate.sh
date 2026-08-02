@@ -68,65 +68,46 @@ pick_bun_bin() {
 }
 
 validate_embed_assets() {
-  local default_dist="$1"
-  local classic_dist="$2"
-  local default_index_size classic_index_size default_js_sample classic_js_sample
-  [ -f "$default_dist/index.html" ] || return 1
-  [ -f "$classic_dist/index.html" ] || return 1
-  default_index_size="$(wc -c < "$default_dist/index.html")"
-  classic_index_size="$(wc -c < "$classic_dist/index.html")"
-  [ "$default_index_size" -gt 128 ] || return 1
-  [ "$classic_index_size" -gt 128 ] || return 1
+  local dist="$1"
+  local index_size js_sample
+  [ -f "$dist/index.html" ] || return 1
+  index_size="$(wc -c < "$dist/index.html")"
+  [ "$index_size" -gt 128 ] || return 1
 
-  default_js_sample="$(find "$default_dist" -type f \( -name '*.js' -o -name '*.mjs' \) -print -quit)"
-  classic_js_sample="$(find "$classic_dist" -type f \( -name '*.js' -o -name '*.mjs' \) -print -quit)"
-  [ -n "$default_js_sample" ] || return 1
-  [ -n "$classic_js_sample" ] || return 1
+  js_sample="$(find "$dist" -type f \( -name '*.js' -o -name '*.mjs' \) -print -quit)"
+  [ -n "$js_sample" ] || return 1
 }
 
 build_embed_assets() {
   local bun_bin="$1"
   local target_root="$2"
   local frontend_root="$target_root/web"
-  local default_dist="$frontend_root/default/dist"
-  local classic_dist="$frontend_root/classic/dist"
+  local dist="$frontend_root/dist"
 
   [ -f "$frontend_root/package.json" ] || fail "missing frontend workspace package.json: $frontend_root/package.json"
   [ -f "$frontend_root/bun.lock" ] || fail "missing frontend lockfile: $frontend_root/bun.lock"
-  [ -f "$frontend_root/default/package.json" ] || fail "missing default frontend package.json"
-  [ -f "$frontend_root/classic/package.json" ] || fail "missing classic frontend package.json"
 
   (
     cd "$frontend_root"
     "$bun_bin" install --frozen-lockfile
-    (
-      cd default
-      "$bun_bin" run build
-    )
-    (
-      cd classic
-      "$bun_bin" run build
-    )
+    "$bun_bin" run build
   )
 
-  validate_embed_assets "$default_dist" "$classic_dist" ||
-    fail "frontend builds did not produce valid default and classic assets"
+  validate_embed_assets "$dist" ||
+    fail "frontend build did not produce valid embedded assets"
 }
 
 restore_embed_assets_from_cache() {
   local cache_entry="$1"
   local target_root="$2"
   local frontend_root="$target_root/web"
-  local default_dist="$frontend_root/default/dist"
-  local classic_dist="$frontend_root/classic/dist"
-  local cached_default_dist="$cache_entry/default"
-  local cached_classic_dist="$cache_entry/classic"
+  local dist="$frontend_root/dist"
+  local cached_dist="$cache_entry/dist"
 
-  [ -d "$cached_default_dist" ] && [ -d "$cached_classic_dist" ] || return 1
-  rm -rf "$default_dist" "$classic_dist"
-  cp -a "$cached_default_dist" "$default_dist"
-  cp -a "$cached_classic_dist" "$classic_dist"
-  validate_embed_assets "$default_dist" "$classic_dist"
+  [ -d "$cached_dist" ] || return 1
+  rm -rf "$dist"
+  cp -a "$cached_dist" "$dist"
+  validate_embed_assets "$dist"
 }
 
 store_embed_assets_in_cache() {
@@ -140,9 +121,8 @@ store_embed_assets_in_cache() {
   [ -e "$cache_entry" ] && return 0
   mkdir -p "$cache_root"
   cache_tmp="$(mktemp -d "$cache_root/.${cache_key}.tmp.XXXXXX")"
-  cp -a "$frontend_root/default/dist" "$cache_tmp/default"
-  cp -a "$frontend_root/classic/dist" "$cache_tmp/classic"
-  validate_embed_assets "$cache_tmp/default" "$cache_tmp/classic" || {
+  cp -a "$frontend_root/dist" "$cache_tmp/dist"
+  validate_embed_assets "$cache_tmp/dist" || {
     rm -rf "$cache_tmp"
     fail "refusing to cache invalid frontend build artifacts"
   }
@@ -167,7 +147,7 @@ worktree_registered() {
 
 run_worktree_cleanup_command() {
   if command -v timeout >/dev/null 2>&1; then
-    timeout 8s "$@"
+    timeout 60s "$@"
     return
   fi
   "$@"
@@ -256,7 +236,7 @@ if restore_embed_assets_from_cache "$frontend_cache_entry" "$src_dir"; then
   frontend_cache_hit="1"
 else
   rm -rf "$frontend_cache_entry"
-  rm -rf "$src_dir/web/default/dist" "$src_dir/web/classic/dist"
+  rm -rf "$src_dir/web/dist"
   build_embed_assets "$bun_bin" "$src_dir"
   store_embed_assets_in_cache "$frontend_cache_root" "$frontend_cache_key" "$src_dir"
 fi
@@ -264,7 +244,7 @@ source_tree_commit="$(git -C "$src_dir" rev-parse HEAD)"
 
 (
   cd "$src_dir"
-  "$go_bin" build \
+  GOWORK=off "$go_bin" build \
     -ldflags "-s -w -X github.com/QuantumNous/new-api/common.Version=$release_tag" \
     -o "$bin_dir/new-api" \
     .

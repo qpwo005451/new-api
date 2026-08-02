@@ -192,11 +192,8 @@ case "${1:-}:${2:-}" in
       exit 42
     fi
     case "$PWD" in
-      */web/default)
-        marker="default"
-        ;;
-      */web/classic)
-        marker="classic"
+      */web)
+        marker="web"
         ;;
       *)
         printf 'unexpected build directory: %s\n' "$PWD" >&2
@@ -256,8 +253,9 @@ frontend_cache_key="$(sed -n 's/^FRONTEND_CACHE_KEY=//p' "$build_release_root/ma
 [ -n "$frontend_cache_key" ] || fail "release manifest did not record the frontend cache key"
 grep -Fxq "FRONTEND_CACHE_HIT=0" "$build_release_root/manifest.env" || fail "first release build unexpectedly hit the frontend cache"
 grep -Fq "install --frozen-lockfile" "$fake_bun_log" || fail "release build did not install locked frontend dependencies"
-[ "$(grep -Fc "run build" "$fake_bun_log")" -eq 2 ] || fail "release build did not build both frontend themes"
+[ "$(grep -Fc "run build" "$fake_bun_log")" -eq 1 ] || fail "release build did not build the frontend"
 grep -Fq "build " "$fake_go_log" || fail "release build did not invoke Go"
+grep -Fq "GOWORK=off" "$script_dir/build_release_candidate.sh" || fail "release build does not force GOWORK=off"
 
 : >"$fake_bun_log"
 : >"$fake_go_log"

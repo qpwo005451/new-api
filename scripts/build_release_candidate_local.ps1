@@ -136,6 +136,7 @@ $env:BUN_BIN = $bun.Replace('\', '/')
 $env:GOOS = 'linux'
 $env:GOARCH = 'amd64'
 $env:CGO_ENABLED = '0'
+$env:GOWORK = 'off'
 $env:GOMODCACHE = (Join-Path $goCacheRoot 'mod').Replace('\', '/')
 $env:GOCACHE = (Join-Path $goCacheRoot 'build').Replace('\', '/')
 $env:GOPATH = (Join-Path $goCacheRoot 'path').Replace('\', '/')

@@ -93,6 +93,8 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	}
 
 	var requestBody io.Reader
+	var requestBodyStorage common.BodyStorage
+	var requestBodyCloser io.Closer
 
 	if passThroughGlobal || info.ChannelSetting.PassThroughBodyEnabled {
 		storage, err := common.GetBodyStorage(c)
@@ -104,6 +106,10 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 				logger.LogDebug(c, "requestBody: %s", debugBytes)
 			}
 		}
+		if _, err := storage.Seek(0, io.SeekStart); err != nil {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		requestBodyStorage = storage
 		requestBody = common.ReaderOnly(storage)
 	} else {
 		convertedRequest, err := adaptor.ConvertOpenAIRequest(c, info, request)
@@ -179,7 +185,11 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
-		defer closer.Close()
+		requestBodyCloser = closer
+		if storage, ok := closer.(common.BodyStorage); ok {
+			requestBodyStorage = storage
+		}
+		defer requestBodyCloser.Close()
 		jsonData = nil
 		info.UpstreamRequestBodySize = size
 		requestBody = body
@@ -202,6 +212,13 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 			// reset status code 重置状态码
 			service.ResetStatusCode(newApiErr, statusCodeMappingStr)
 			return newApiErr
+		}
+	}
+	if shouldUseBufferedOpencodeStreamRetry(c, info) && requestBodyStorage != nil {
+		var bufferedErr *types.NewAPIError
+		httpResp, bufferedErr = doBufferedOpencodeStreamRetry(c, info, adaptor, requestBodyStorage, httpResp, statusCodeMappingStr)
+		if bufferedErr != nil {
+			return bufferedErr
 		}
 	}
 

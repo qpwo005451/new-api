@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/channel/openrouter"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
@@ -119,6 +120,7 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	var usage = &dto.Usage{}
 	var lastStreamData string
 	var secondLastStreamData string // 存储倒数第二个stream data，用于音频模型
+	var receivedFinishReason bool
 	seenStreamToolCalls := make(map[string]struct{})
 	var streamFunctionCallNames []string
 
@@ -139,6 +141,9 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 			}
 
 			lastStreamData = data
+			if streamChunkHasFinishReason(info.RelayMode, data) {
+				receivedFinishReason = true
+			}
 			collectStreamFunctionCallNames(data, seenStreamToolCalls, &streamFunctionCallNames)
 			if err := processTokenData(info.RelayMode, data, &responseTextBuilder, &toolCount); err != nil {
 				logger.LogError(c, "error processing stream token data: "+err.Error())
@@ -163,6 +168,16 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 					usage.InputTokens, usage.OutputTokens)
 			}
 		}
+	}
+
+	if !receivedFinishReason {
+		sendOpenAIStreamError(c, info)
+		if !containStreamUsage {
+			usage = service.ResponseText2Usage(c, responseTextBuilder.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())
+			usage.CompletionTokens += toolCount * 7
+		}
+		applyUsagePostProcessing(info, usage, common.StringToByteSlice(lastStreamData))
+		return usage, nil
 	}
 
 	// 处理最后的响应
@@ -192,6 +207,42 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
 
 	return usage, nil
+}
+
+func streamChunkHasFinishReason(relayMode int, data string) bool {
+	switch relayMode {
+	case relayconstant.RelayModeChatCompletions:
+		var streamResponse dto.ChatCompletionsStreamResponse
+		if err := common.UnmarshalJsonStr(data, &streamResponse); err != nil {
+			return false
+		}
+		return streamResponse.IsFinished()
+	case relayconstant.RelayModeCompletions:
+		var streamResponse dto.CompletionsStreamResponse
+		if err := common.UnmarshalJsonStr(data, &streamResponse); err != nil {
+			return false
+		}
+		for _, choice := range streamResponse.Choices {
+			if choice.FinishReason != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func sendOpenAIStreamError(c *gin.Context, info *relaycommon.RelayInfo) {
+	message := "upstream stream terminated unexpectedly"
+	if info != nil && info.StreamStatus != nil && info.StreamStatus.EndError != nil {
+		message += ": " + info.StreamStatus.EndError.Error()
+	}
+	_ = helper.ObjectData(c, map[string]any{
+		"error": map[string]any{
+			"message": message,
+			"type":    "upstream_stream_error",
+			"code":    "upstream_stream_terminated",
+		},
+	})
 }
 
 func collectStreamFunctionCallNames(data string, seen map[string]struct{}, names *[]string) {

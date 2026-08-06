@@ -95,3 +95,17 @@ func TestShouldRetryStopsWhenRelayContextIsDone(t *testing.T) {
 		})
 	}
 }
+
+func TestShouldRetryAllowsTransportFailureWhileRetriesRemain(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	apiErr := types.NewErrorWithStatusCode(
+		io.EOF,
+		types.ErrorCodeDoRequestFailed,
+		http.StatusBadGateway,
+	)
+
+	assert.True(t, shouldRetry(ctx, apiErr, 1))
+	assert.False(t, shouldRetry(ctx, apiErr, 0))
+}

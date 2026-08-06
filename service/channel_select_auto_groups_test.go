@@ -280,7 +280,7 @@ func TestRetryParamVirtualRouteWithNoAvailableChannelsExhaustsImmediately(t *tes
 	assert.Nil(t, channel)
 }
 
-func TestCacheGetRandomSatisfiedChannelVirtualRouteSupportsAutoGroupsWithoutDuplicates(t *testing.T) {
+func TestCacheGetRandomSatisfiedChannelVirtualRouteDeduplicatesChannelsAcrossAutoGroups(t *testing.T) {
 	db := setupChannelSelectAutoGroupsTest(t)
 
 	retrySetting := operation_setting.GetModelRetryPolicySetting()

@@ -213,6 +213,9 @@ func validateOptionValue(key string, value string) error {
 	if key == "MaxTokenAutoGroups" {
 		return setting.ValidateMaxTokenAutoGroups(value)
 	}
+	if key == "model_retry_policy_setting.virtual_model_routes" {
+		return operation_setting.ValidateVirtualModelRoutes(value)
+	}
 	return nil
 }
 

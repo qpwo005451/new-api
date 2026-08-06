@@ -227,7 +227,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
 
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+	for ; retryParam.GetRetry() <= retryParam.RetryLimit(common.RetryTimes); retryParam.IncreaseRetry() {
 		if service.IsInFlightRequestCancelled(c) {
 			newAPIError = service.NewInFlightRequestCancelledError()
 			relayInfo.LastError = newAPIError
@@ -381,7 +381,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			))
 		}
 
-		willRetry := shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())
+		willRetry := shouldRetry(c, newAPIError, retryParam.RetryLimit(common.RetryTimes)-retryParam.GetRetry())
 		if willRetry {
 			if inputTransientCooldown == 0 && upstreamRateLimitCooldown == 0 {
 				willRetry = waitTransientRetryBackoff(c, newAPIError.StatusCode, retryParam.GetRetry())
@@ -462,7 +462,8 @@ func fastTokenCountMetaForPricing(request dto.Request) *types.TokenCountMeta {
 }
 
 func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError) {
-	if info.ChannelMeta == nil {
+	_, specificChannel := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId)
+	if info.ChannelMeta == nil && (!retryParam.UsesVirtualRoute() || specificChannel) {
 		autoBan := c.GetBool("auto_ban")
 		autoBanInt := 1
 		if !autoBan {
@@ -792,7 +793,7 @@ func RelayTask(c *gin.Context) {
 		Retry:       common.GetPointer(0),
 	}
 
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+	for ; retryParam.GetRetry() <= retryParam.RetryLimit(common.RetryTimes); retryParam.IncreaseRetry() {
 		var channel *model.Channel
 
 		if lockedCh, ok := relayInfo.LockedChannel.(*model.Channel); ok && lockedCh != nil {
@@ -841,7 +842,7 @@ func RelayTask(c *gin.Context) {
 				false)
 		}
 
-		if !shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry()) {
+		if !shouldRetryTaskRelay(c, channel.Id, taskErr, retryParam.RetryLimit(common.RetryTimes)-retryParam.GetRetry()) {
 			break
 		}
 	}

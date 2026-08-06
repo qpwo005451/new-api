@@ -223,6 +223,40 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 	return nil, errors.New("channel not found")
 }
 
+func GetOrderedSatisfiedChannels(group string, model string, requestPath string) ([]*Channel, error) {
+	if !common.MemoryCacheEnabled {
+		return getOrderedSatisfiedChannels(group, model, requestPath)
+	}
+
+	channelSyncLock.RLock()
+	defer channelSyncLock.RUnlock()
+
+	channelIds := filterChannelsByRequestPathAndModel(group2model2channels[group][model], requestPath, model)
+	if len(channelIds) == 0 {
+		normalizedModel := ratio_setting.FormatMatchingModelName(model)
+		channelIds = filterChannelsByRequestPathAndModel(group2model2channels[group][normalizedModel], requestPath, model)
+	}
+
+	channels := make([]*Channel, 0, len(channelIds))
+	for _, channelId := range channelIds {
+		channel, ok := channelsIDM[channelId]
+		if !ok {
+			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelId)
+		}
+		channels = append(channels, channel)
+	}
+	sort.SliceStable(channels, func(i, j int) bool {
+		if channels[i].GetPriority() != channels[j].GetPriority() {
+			return channels[i].GetPriority() > channels[j].GetPriority()
+		}
+		if channels[i].GetWeight() != channels[j].GetWeight() {
+			return channels[i].GetWeight() > channels[j].GetWeight()
+		}
+		return channels[i].Id < channels[j].Id
+	})
+	return channels, nil
+}
+
 // filterChannelsByRequestPathAndModel restricts candidates by request path and
 // model. Only Advanced Custom (type 58) channels are path-checked: they are kept
 // only when one of their configured routes matches requestPath and model. All

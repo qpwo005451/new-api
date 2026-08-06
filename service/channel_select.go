@@ -2,11 +2,13 @@ package service
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 )
 
@@ -16,7 +18,17 @@ type RetryParam struct {
 	ModelName    string
 	RequestPath  string
 	Retry        *int
+	virtualRoute []virtualRouteCandidate
+	virtualReady bool
+	virtualErr   error
 	resetNextTry bool
+}
+
+type virtualRouteCandidate struct {
+	channel         *model.Channel
+	upstreamModel   string
+	reasoningEffort string
+	group           string
 }
 
 func (p *RetryParam) GetRetry() int {
@@ -43,6 +55,108 @@ func (p *RetryParam) IncreaseRetry() {
 
 func (p *RetryParam) ResetRetryNextTry() {
 	p.resetNextTry = true
+}
+
+func (p *RetryParam) RetryLimit(defaultLimit int) int {
+	if err := p.prepareVirtualRoute(); err == nil && p.virtualReady {
+		if len(p.virtualRoute) == 0 {
+			return 0
+		}
+		return len(p.virtualRoute) - 1
+	}
+	return defaultLimit
+}
+
+func (p *RetryParam) prepareVirtualRoute() error {
+	if p.virtualReady {
+		return p.virtualErr
+	}
+	route := operation_setting.GetVirtualModelRoute(p.ModelName)
+	if len(route) == 0 {
+		return nil
+	}
+
+	p.virtualReady = true
+	groups := []string{p.TokenGroup}
+	if p.TokenGroup == "auto" {
+		userGroup := common.GetContextKeyString(p.Ctx, constant.ContextKeyUserGroup)
+		groups = GetRequestAutoGroups(p.Ctx, userGroup)
+		if len(groups) == 0 {
+			p.virtualErr = errors.New("auto groups is not enabled")
+			return p.virtualErr
+		}
+	}
+	reasoningEffort := getRequestReasoningEffort(p.Ctx)
+	for _, target := range route {
+		upstreamModel := strings.TrimSpace(target.Model)
+		if upstreamModel == "" {
+			continue
+		}
+		mappedReasoningEffort := operation_setting.MapVirtualModelReasoningEffort(target, reasoningEffort)
+		seenChannels := make(map[int]struct{})
+		for _, group := range groups {
+			channels, err := model.GetOrderedSatisfiedChannels(group, upstreamModel, p.RequestPath)
+			if err != nil {
+				p.virtualErr = err
+				return err
+			}
+			for _, channel := range channels {
+				if _, exists := seenChannels[channel.Id]; exists {
+					continue
+				}
+				seenChannels[channel.Id] = struct{}{}
+				p.virtualRoute = append(p.virtualRoute, virtualRouteCandidate{
+					channel:         channel,
+					upstreamModel:   upstreamModel,
+					reasoningEffort: mappedReasoningEffort,
+					group:           group,
+				})
+			}
+		}
+	}
+	return nil
+}
+
+func (p *RetryParam) UsesVirtualRoute() bool {
+	return len(operation_setting.GetVirtualModelRoute(p.ModelName)) > 0
+}
+
+func (p *RetryParam) getVirtualRouteChannel() (*model.Channel, string, bool, error) {
+	if err := p.prepareVirtualRoute(); err != nil {
+		return nil, p.TokenGroup, true, err
+	}
+	if !p.virtualReady {
+		return nil, p.TokenGroup, false, nil
+	}
+	if p.GetRetry() >= len(p.virtualRoute) {
+		return nil, p.TokenGroup, true, model.ErrPriorityFallbackExhausted
+	}
+	candidate := p.virtualRoute[p.GetRetry()]
+	common.SetContextKey(p.Ctx, constant.ContextKeyVirtualUpstreamModel, candidate.upstreamModel)
+	common.SetContextKey(p.Ctx, constant.ContextKeyVirtualReasoningEffort, candidate.reasoningEffort)
+	if p.TokenGroup == "auto" {
+		common.SetContextKey(p.Ctx, constant.ContextKeyAutoGroup, candidate.group)
+	}
+	return candidate.channel, candidate.group, true, nil
+}
+
+func getRequestReasoningEffort(c *gin.Context) string {
+	if c == nil || c.Request == nil || !strings.HasPrefix(c.Request.Header.Get("Content-Type"), "application/json") {
+		return ""
+	}
+	var body struct {
+		Reasoning *struct {
+			Effort string `json:"effort"`
+		} `json:"reasoning"`
+		ReasoningEffort string `json:"reasoning_effort"`
+	}
+	if err := common.UnmarshalBodyReusable(c, &body); err != nil {
+		return ""
+	}
+	if body.Reasoning != nil && strings.TrimSpace(body.Reasoning.Effort) != "" {
+		return strings.ToLower(strings.TrimSpace(body.Reasoning.Effort))
+	}
+	return strings.ToLower(strings.TrimSpace(body.ReasoningEffort))
 }
 
 // CacheGetRandomSatisfiedChannel tries to get a random channel that satisfies the requirements.
@@ -85,6 +199,10 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 	var err error
 	selectGroup := param.TokenGroup
 	userGroup := common.GetContextKeyString(param.Ctx, constant.ContextKeyUserGroup)
+
+	if virtualChannel, virtualGroup, handled, virtualErr := param.getVirtualRouteChannel(); handled {
+		return virtualChannel, virtualGroup, virtualErr
+	}
 
 	if param.TokenGroup == "auto" {
 		autoGroups := GetRequestAutoGroups(param.Ctx, userGroup)

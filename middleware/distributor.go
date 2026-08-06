@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
@@ -111,34 +112,37 @@ func Distribute() func(c *gin.Context) {
 					}
 				}
 
-				if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
-					affinityUsable := false
-					preferred, err := model.CacheGetChannel(preferredChannelID)
-					if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled &&
-						channelSupportsRequestPath(preferred, c.Request.URL.Path, modelRequest.Model) &&
-						model.IsChannelModelAllowed(preferred.Id, modelRequest.Model) {
-						if usingGroup == "auto" {
-							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-							autoGroups := service.GetRequestAutoGroups(c, userGroup)
-							for _, g := range autoGroups {
-								if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
-									selectGroup = g
-									common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
-									channel = preferred
-									affinityUsable = true
-									service.MarkChannelAffinityUsed(c, g, preferred.Id)
-									break
+				virtualRoute := operation_setting.GetVirtualModelRoute(modelRequest.Model)
+				if len(virtualRoute) == 0 {
+					if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
+						affinityUsable := false
+						preferred, err := model.CacheGetChannel(preferredChannelID)
+						if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled &&
+							channelSupportsRequestPath(preferred, c.Request.URL.Path, modelRequest.Model) &&
+							model.IsChannelModelAllowed(preferred.Id, modelRequest.Model) {
+							if usingGroup == "auto" {
+								userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+								autoGroups := service.GetRequestAutoGroups(c, userGroup)
+								for _, g := range autoGroups {
+									if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
+										selectGroup = g
+										common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
+										channel = preferred
+										affinityUsable = true
+										service.MarkChannelAffinityUsed(c, g, preferred.Id)
+										break
+									}
 								}
+							} else if model.IsChannelEnabledForGroupModel(usingGroup, modelRequest.Model, preferred.Id) {
+								channel = preferred
+								selectGroup = usingGroup
+								affinityUsable = true
+								service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
 							}
-						} else if model.IsChannelEnabledForGroupModel(usingGroup, modelRequest.Model, preferred.Id) {
-							channel = preferred
-							selectGroup = usingGroup
-							affinityUsable = true
-							service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
 						}
-					}
-					if !affinityUsable && !service.ShouldKeepChannelAffinityOnChannelDisabled() {
-						service.ClearCurrentChannelAffinityCache(c)
+						if !affinityUsable && !service.ShouldKeepChannelAffinityOnChannelDisabled() {
+							service.ClearCurrentChannelAffinityCache(c)
+						}
 					}
 				}
 
@@ -473,7 +477,12 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 		common.SetContextKey(c, constant.ContextKeyChannelOrganization, *channel.OpenAIOrganization)
 	}
 	common.SetContextKey(c, constant.ContextKeyChannelAutoBan, channel.GetAutoBan())
-	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, channel.GetModelMapping())
+	modelMapping := channel.GetModelMapping()
+	virtualUpstreamModel := common.GetContextKeyString(c, constant.ContextKeyVirtualUpstreamModel)
+	if virtualUpstreamModel != "" {
+		modelMapping = mergeVirtualModelMapping(modelMapping, modelName, virtualUpstreamModel)
+	}
+	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, modelMapping)
 	common.SetContextKey(c, constant.ContextKeyChannelStatusCodeMapping, channel.GetStatusCodeMapping())
 
 	key, index, newAPIError := channel.GetNextEnabledKey()
@@ -513,6 +522,21 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 		c.Set("bot_id", channel.Other)
 	}
 	return nil
+}
+
+func mergeVirtualModelMapping(modelMapping string, modelName string, upstreamModel string) string {
+	mapping := make(map[string]string)
+	if strings.TrimSpace(modelMapping) != "" {
+		if err := common.UnmarshalJsonStr(modelMapping, &mapping); err != nil {
+			mapping = make(map[string]string)
+		}
+	}
+	mapping[modelName] = upstreamModel
+	encoded, err := common.Marshal(mapping)
+	if err != nil {
+		return modelMapping
+	}
+	return string(encoded)
 }
 
 // extractModelNameFromGeminiPath 从 Gemini API URL 路径中提取模型名

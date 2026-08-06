@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -150,6 +151,42 @@ func GetChannel(group string, model string, retry int, requestPath string) (*Cha
 	}
 	err = DB.First(&channel, "id = ?", channel.Id).Error
 	return &channel, err
+}
+
+func getOrderedSatisfiedChannels(group string, model string, requestPath string) ([]*Channel, error) {
+	var abilities []Ability
+	if err := DB.Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, model, true).
+		Find(&abilities).Error; err != nil {
+		return nil, err
+	}
+	abilities = filterAbilitiesByRequestPathAndModel(abilities, requestPath, model)
+	sort.SliceStable(abilities, func(i, j int) bool {
+		leftPriority := int64(0)
+		rightPriority := int64(0)
+		if abilities[i].Priority != nil {
+			leftPriority = *abilities[i].Priority
+		}
+		if abilities[j].Priority != nil {
+			rightPriority = *abilities[j].Priority
+		}
+		if leftPriority != rightPriority {
+			return leftPriority > rightPriority
+		}
+		if abilities[i].Weight != abilities[j].Weight {
+			return abilities[i].Weight > abilities[j].Weight
+		}
+		return abilities[i].ChannelId < abilities[j].ChannelId
+	})
+
+	channels := make([]*Channel, 0, len(abilities))
+	for _, ability := range abilities {
+		channel := &Channel{}
+		if err := DB.First(channel, "id = ?", ability.ChannelId).Error; err != nil {
+			return nil, err
+		}
+		channels = append(channels, channel)
+	}
+	return channels, nil
 }
 
 // filterAbilitiesByRequestPathAndModel restricts candidates by request path and

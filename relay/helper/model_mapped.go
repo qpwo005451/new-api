@@ -6,16 +6,18 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/QuantumNous/new-api/relay/common"
+	hostcommon "github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 )
 
-func ModelMappedHelper(c *gin.Context, info *common.RelayInfo, request dto.Request) error {
+func ModelMappedHelper(c *gin.Context, info *relaycommon.RelayInfo, request dto.Request) error {
 	if info.ChannelMeta == nil {
-		info.ChannelMeta = &common.ChannelMeta{}
+		info.ChannelMeta = &relaycommon.ChannelMeta{}
 	}
 
 	isResponsesCompact := info.RelayMode == relayconstant.RelayModeResponsesCompact
@@ -73,6 +75,18 @@ func ModelMappedHelper(c *gin.Context, info *common.RelayInfo, request dto.Reque
 		}
 		info.UpstreamModelName = finalUpstreamModelName
 		info.OriginModelName = ratio_setting.WithCompactModelSuffix(finalUpstreamModelName)
+	}
+	if effort := hostcommon.GetContextKeyString(c, constant.ContextKeyVirtualReasoningEffort); effort != "" {
+		switch typedRequest := request.(type) {
+		case *dto.OpenAIResponsesRequest:
+			if typedRequest.Reasoning == nil {
+				typedRequest.Reasoning = &dto.Reasoning{}
+			}
+			typedRequest.Reasoning.Effort = effort
+		case *dto.GeneralOpenAIRequest:
+			typedRequest.ReasoningEffort = effort
+		}
+		info.ReasoningEffort = effort
 	}
 	if request != nil {
 		request.SetModelName(info.UpstreamModelName)

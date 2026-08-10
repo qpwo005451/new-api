@@ -150,6 +150,7 @@ assert_contains "$script_dir/cutover_release.sh" "validate_release_id"
 assert_contains "$script_dir/cutover_release.sh" "realpath -m"
 assert_contains "$script_dir/cutover_release.sh" "refusing symlinked live database"
 assert_contains "$script_dir/cutover_release.sh" "wait_for_http_ready"
+assert_contains "$script_dir/cutover_release.sh" ".timeout 30000"
 
 assert_contains "$script_dir/rollback_release.sh" "cutover-backup.env"
 assert_contains "$script_dir/rollback_release.sh" "RESTORE_DB"

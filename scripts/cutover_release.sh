@@ -98,7 +98,7 @@ ensure_release_path "$runtime_root"
 
 mkdir -p "$runtime_root"
 cp "$live_binary" "$backup_bin"
-sqlite3 "$live_db" ".backup '$backup_db'"
+sqlite3 "$live_db" ".timeout 30000" ".backup '$backup_db'"
 
 previous_binary_sha256="$(sha256sum "$live_binary" | awk '{print $1}')"
 candidate_binary_sha256="$(sha256sum "$candidate_bin" | awk '{print $1}')"

@@ -152,10 +152,11 @@ func TestBufferedOpencodeStreamRetryDoesNotRetryFinishedStreamWithUnexpectedEOF(
 	assert.Contains(t, string(body), `"finish_reason":"stop"`)
 }
 
-func TestBufferedOpencodeStreamRetryAcceptsDoneWithoutFinishReason(t *testing.T) {
+func TestBufferedOpencodeStreamRetryNormalizesDoneWithoutFinishReason(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	setBufferedRetryTestTimeout(t)
 
-	c, _, info := newBufferedRetryTestContext("opencode-go", "deepseek-v4-flash", "https://api.opencode.ai")
+	c, recorder, info := newBufferedRetryTestContext("opencode-go", "deepseek-v4-flash", "https://api.opencode.ai")
 	storage, err := common.CreateBodyStorage([]byte(`{"model":"deepseek-v4-flash"}`))
 	require.NoError(t, err)
 	defer storage.Close()
@@ -183,9 +184,12 @@ func TestBufferedOpencodeStreamRetryAcceptsDoneWithoutFinishReason(t *testing.T)
 	require.Nil(t, newAPIError)
 	require.NotNil(t, bufferedResp)
 	assert.Equal(t, 0, adaptor.calls)
-	body, err := io.ReadAll(bufferedResp.Body)
-	require.NoError(t, err)
-	assert.Contains(t, string(body), "data: [DONE]")
+	usage, newAPIError := openairelay.OaiStreamHandler(c, info, bufferedResp)
+	require.Nil(t, newAPIError)
+	require.NotNil(t, usage)
+	assert.Contains(t, recorder.Body.String(), `"finish_reason":"stop"`)
+	assert.Contains(t, recorder.Body.String(), "data: [DONE]")
+	assert.NotContains(t, recorder.Body.String(), "upstream stream terminated unexpectedly")
 }
 
 func TestShouldUseBufferedOpencodeStreamRetryTargetsOnlyFlashOpenCodeStreams(t *testing.T) {

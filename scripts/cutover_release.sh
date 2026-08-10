@@ -18,6 +18,8 @@ backup_env="$runtime_root/cutover-backup.env"
 ts="$(date -u +%Y%m%d-%H%M%S)"
 backup_bin="$runtime_root/live-new-api.$ts.bak"
 backup_db="$runtime_root/live-new-api.db.$ts.bak"
+service_stopped="0"
+runtime_replaced="0"
 
 fail() {
   printf 'ERROR: %s\n' "$1" >&2
@@ -51,10 +53,41 @@ ensure_release_path() {
 
 restart_service() {
   if [ "$systemctl_bin" = "systemctl" ]; then
-    systemctl restart new-api
+    if ! systemctl restart new-api; then
+      return 1
+    fi
   else
-    "$systemctl_bin" restart new-api
+    if ! "$systemctl_bin" restart new-api; then
+      return 1
+    fi
   fi
+  service_stopped="0"
+}
+
+stop_service() {
+  if [ "$systemctl_bin" = "systemctl" ]; then
+    if ! systemctl stop new-api; then
+      return 1
+    fi
+  else
+    if ! "$systemctl_bin" stop new-api; then
+      return 1
+    fi
+  fi
+  service_stopped="1"
+}
+
+start_service() {
+  if [ "$systemctl_bin" = "systemctl" ]; then
+    if ! systemctl start new-api; then
+      return 1
+    fi
+  else
+    if ! "$systemctl_bin" start new-api; then
+      return 1
+    fi
+  fi
+  service_stopped="0"
 }
 
 wait_for_http_ready() {
@@ -73,12 +106,31 @@ wait_for_http_ready() {
 restore_runtime_after_failure() {
   local restore_db="$1"
 
+  stop_service
   install -m 755 "$backup_bin" "$live_binary"
+  runtime_replaced="0"
   if [ "$restore_db" = "1" ]; then
     sqlite3 "$backup_db" ".backup '$live_db'"
   fi
-  restart_service || true
+  restart_service
 }
+
+recover_on_exit() {
+  local exit_code="$?"
+  trap - EXIT
+  if [ "$exit_code" -ne 0 ]; then
+    if [ "$runtime_replaced" = "1" ] && [ -f "$backup_bin" ]; then
+      install -m 755 "$backup_bin" "$live_binary" || true
+      runtime_replaced="0"
+    fi
+    if [ "$service_stopped" = "1" ]; then
+      start_service || true
+    fi
+  fi
+  exit "$exit_code"
+}
+
+trap recover_on_exit EXIT
 
 [ -n "$release_id" ] || usage
 validate_release_id
@@ -98,10 +150,12 @@ ensure_release_path "$runtime_root"
 
 mkdir -p "$runtime_root"
 cp "$live_binary" "$backup_bin"
-sqlite3 "$live_db" ".backup '$backup_db'"
-
 previous_binary_sha256="$(sha256sum "$live_binary" | awk '{print $1}')"
 candidate_binary_sha256="$(sha256sum "$candidate_bin" | awk '{print $1}')"
+
+stop_service
+sqlite3 "$live_db" ".timeout 30000" ".backup '$backup_db'"
+
 live_schema_sha256="$(sqlite3 "$live_db" '.schema' | sha256sum | awk '{print $1}')"
 
 cat >"$backup_env" <<EOF
@@ -118,14 +172,15 @@ CREATED_AT=$(date -Iseconds)
 EOF
 
 install -m 755 "$candidate_bin" "$live_binary"
+runtime_replaced="1"
 
 if ! restart_service; then
-  restore_runtime_after_failure 0
+  restore_runtime_after_failure 0 || true
   fail "systemctl restart new-api failed during cutover"
 fi
 
 if ! wait_for_http_ready; then
-  restore_runtime_after_failure 0
+  restore_runtime_after_failure 0 || true
   fail "new-api did not become ready after cutover; restored previous runtime"
 fi
 
@@ -147,8 +202,9 @@ if ! bash "$script_dir/smoke_release.sh" "$prod_base_url" "$live_db" fast; then
       ;;
   esac
 
-  restore_runtime_after_failure "$restore_db"
+  restore_runtime_after_failure "$restore_db" || true
   fail "post-cutover fast smoke failed; restored previous runtime"
 fi
 
+runtime_replaced="0"
 printf '%s\n' "$backup_env"

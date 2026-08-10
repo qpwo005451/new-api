@@ -150,6 +150,10 @@ assert_contains "$script_dir/cutover_release.sh" "validate_release_id"
 assert_contains "$script_dir/cutover_release.sh" "realpath -m"
 assert_contains "$script_dir/cutover_release.sh" "refusing symlinked live database"
 assert_contains "$script_dir/cutover_release.sh" "wait_for_http_ready"
+assert_contains "$script_dir/cutover_release.sh" ".timeout 30000"
+assert_contains "$script_dir/cutover_release.sh" "trap recover_on_exit EXIT"
+assert_contains "$script_dir/cutover_release.sh" "stop new-api"
+assert_contains "$script_dir/cutover_release.sh" "start new-api"
 
 assert_contains "$script_dir/rollback_release.sh" "cutover-backup.env"
 assert_contains "$script_dir/rollback_release.sh" "RESTORE_DB"
@@ -449,6 +453,10 @@ case "$query" in
     printf 'create table test(id integer);\n'
     ;;
   ".backup "*)
+    if [ "${FAIL_CUTOVER_BACKUP:-0}" = "1" ]; then
+      printf 'database is locked\n' >&2
+      exit 5
+    fi
     target="${query#".backup "}"
     target="${target#\'}"
     target="${target%\'}"
@@ -505,8 +513,27 @@ CUTOVER_CURL_STATE="$cutover_curl_state" \
 "$script_dir/cutover_release.sh" "$cutover_release_id" >/dev/null
 
 cmp -s "$cutover_release_root/bin/new-api" "$cutover_app_root/new-api" || fail "cutover did not install the candidate binary"
-[ "$(wc -l <"$cutover_restart_log")" -eq 1 ] || fail "cutover rolled back instead of waiting for service readiness"
+[ "$(sed -n '1p' "$cutover_restart_log")" = "stop new-api" ] || fail "cutover did not stop the service before the database backup"
+[ "$(sed -n '2p' "$cutover_restart_log")" = "restart new-api" ] || fail "cutover did not restart the service after installing the candidate"
+[ "$(wc -l <"$cutover_restart_log")" -eq 2 ] || fail "cutover performed unexpected service operations"
 [ "$(cat "$cutover_curl_state")" -ge 3 ] || fail "cutover did not retry the readiness endpoint"
+
+printf '#!/usr/bin/env bash\nprintf old-runtime\n' >"$cutover_app_root/new-api"
+chmod +x "$cutover_app_root/new-api"
+: >"$cutover_restart_log"
+assert_fails_with "database is locked" env \
+  PATH="$fake_bin:$PATH" \
+  APP_ROOT="$cutover_app_root" \
+  PROD_BASE_URL="http://cutover.test" \
+  SYSTEMCTL_BIN="$fake_bin/systemctl" \
+  CUTOVER_RESTART_LOG="$cutover_restart_log" \
+  CUTOVER_CURL_STATE="$cutover_curl_state" \
+  FAIL_CUTOVER_BACKUP=1 \
+  "$script_dir/cutover_release.sh" "$cutover_release_id"
+[ "$(sed -n '1p' "$cutover_restart_log")" = "stop new-api" ] || fail "backup failure did not stop the service"
+[ "$(sed -n '2p' "$cutover_restart_log")" = "start new-api" ] || fail "backup failure did not restart the original service"
+[ "$(wc -l <"$cutover_restart_log")" -eq 2 ] || fail "backup failure performed unexpected service operations"
+grep -Fq "old-runtime" "$cutover_app_root/new-api" || fail "backup failure changed the live binary"
 
 finalize_release_id="test-helper-finalize-$$"
 finalize_release_root="$repo_root/releases/$finalize_release_id"

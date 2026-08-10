@@ -115,28 +115,60 @@ func readCompleteChatCompletionSSE(body io.Reader, relayMode int) (string, bool,
 	scanner.Split(bufio.ScanLines)
 	var builder strings.Builder
 	receivedFinishReason := false
+	receivedDone := false
+	var lastStreamResponse dto.ChatCompletionsStreamResponse
+	hasLastStreamResponse := false
 	for scanner.Scan() {
 		line := scanner.Text()
-		builder.WriteString(line)
-		builder.WriteByte('\n')
-		if len(line) < 6 {
-			continue
-		}
-		if line[:5] != "data:" && line[:6] != "[DONE]" {
+		if !strings.HasPrefix(line, "data:") {
+			builder.WriteString(line)
+			builder.WriteByte('\n')
 			continue
 		}
 		data := strings.TrimSpace(line[5:])
-		if data == "" || strings.HasPrefix(data, "[DONE]") {
+		if data == "[DONE]" {
+			receivedDone = true
+			if !receivedFinishReason && hasLastStreamResponse {
+				stopResponse := helper.GenerateStopResponse(
+					lastStreamResponse.Id,
+					lastStreamResponse.Created,
+					lastStreamResponse.Model,
+					"stop",
+				)
+				stopData, err := common.Marshal(stopResponse)
+				if err != nil {
+					return builder.String(), false, err
+				}
+				builder.WriteString("data: ")
+				builder.Write(stopData)
+				builder.WriteString("\n\n")
+				receivedFinishReason = true
+			}
+			builder.WriteString(line)
+			builder.WriteByte('\n')
+			continue
+		}
+		builder.WriteString(line)
+		builder.WriteByte('\n')
+		if data == "" {
 			continue
 		}
 		if bufferedStreamChunkHasFinishReason(relayMode, data) {
 			receivedFinishReason = true
 		}
+		if relayMode == relayconstant.RelayModeChatCompletions {
+			var streamResponse dto.ChatCompletionsStreamResponse
+			if common.UnmarshalJsonStr(data, &streamResponse) == nil {
+				lastStreamResponse = streamResponse
+				hasLastStreamResponse = true
+			}
+		}
 	}
-	if err := scanner.Err(); err != nil && err != io.EOF && !receivedFinishReason {
+	complete := receivedDone || receivedFinishReason
+	if err := scanner.Err(); err != nil && err != io.EOF && !complete {
 		return builder.String(), false, err
 	}
-	return builder.String(), receivedFinishReason, nil
+	return builder.String(), complete, nil
 }
 
 func bufferedStreamChunkHasFinishReason(relayMode int, data string) bool {

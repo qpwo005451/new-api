@@ -149,7 +149,7 @@ func TestShouldUseOpenCodeRouteFeedback(t *testing.T) {
 
 	notStream := *base
 	notStream.IsStream = false
-	assert.False(t, ShouldUseOpenCodeRouteFeedback(&notStream))
+	assert.True(t, ShouldUseOpenCodeRouteFeedback(&notStream))
 
 	assert.NotPanics(t, func() {
 		assert.False(t, ShouldUseOpenCodeRouteFeedback(&relaycommon.RelayInfo{

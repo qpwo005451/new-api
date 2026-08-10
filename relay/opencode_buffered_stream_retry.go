@@ -115,28 +115,31 @@ func readCompleteChatCompletionSSE(body io.Reader, relayMode int) (string, bool,
 	scanner.Split(bufio.ScanLines)
 	var builder strings.Builder
 	receivedFinishReason := false
+	receivedDone := false
 	for scanner.Scan() {
 		line := scanner.Text()
 		builder.WriteString(line)
 		builder.WriteByte('\n')
-		if len(line) < 6 {
-			continue
-		}
-		if line[:5] != "data:" && line[:6] != "[DONE]" {
+		if !strings.HasPrefix(line, "data:") {
 			continue
 		}
 		data := strings.TrimSpace(line[5:])
-		if data == "" || strings.HasPrefix(data, "[DONE]") {
+		if data == "[DONE]" {
+			receivedDone = true
+			continue
+		}
+		if data == "" {
 			continue
 		}
 		if bufferedStreamChunkHasFinishReason(relayMode, data) {
 			receivedFinishReason = true
 		}
 	}
-	if err := scanner.Err(); err != nil && err != io.EOF && !receivedFinishReason {
+	complete := receivedDone || receivedFinishReason
+	if err := scanner.Err(); err != nil && err != io.EOF && !complete {
 		return builder.String(), false, err
 	}
-	return builder.String(), receivedFinishReason, nil
+	return builder.String(), complete, nil
 }
 
 func bufferedStreamChunkHasFinishReason(relayMode int, data string) bool {

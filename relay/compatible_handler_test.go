@@ -152,6 +152,42 @@ func TestBufferedOpencodeStreamRetryDoesNotRetryFinishedStreamWithUnexpectedEOF(
 	assert.Contains(t, string(body), `"finish_reason":"stop"`)
 }
 
+func TestBufferedOpencodeStreamRetryAcceptsDoneWithoutFinishReason(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	c, _, info := newBufferedRetryTestContext("opencode-go", "deepseek-v4-flash", "https://api.opencode.ai")
+	storage, err := common.CreateBodyStorage([]byte(`{"model":"deepseek-v4-flash"}`))
+	require.NoError(t, err)
+	defer storage.Close()
+
+	completeWithDone := strings.Join([]string{
+		`data: {"id":"chatcmpl-done","object":"chat.completion.chunk","created":1710000000,"model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}`,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+	adaptor := &bufferedRetryTestAdaptor{
+		responses: []*http.Response{
+			newBufferedRetryTestResponse("should-not-be-used"),
+		},
+	}
+
+	bufferedResp, newAPIError := doBufferedOpencodeStreamRetry(
+		c,
+		info,
+		adaptor,
+		storage,
+		newBufferedRetryTestResponseBody(&bufferedRetryUnexpectedEOFReader{data: []byte(completeWithDone)}),
+		"",
+	)
+
+	require.Nil(t, newAPIError)
+	require.NotNil(t, bufferedResp)
+	assert.Equal(t, 0, adaptor.calls)
+	body, err := io.ReadAll(bufferedResp.Body)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), "data: [DONE]")
+}
+
 func TestShouldUseBufferedOpencodeStreamRetryTargetsOnlyFlashOpenCodeStreams(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

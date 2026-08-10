@@ -80,11 +80,14 @@ func doBufferedOpencodeStreamRetry(
 		body, complete, readErr := readCompleteChatCompletionSSE(resp.Body, info.RelayMode)
 		service.CloseResponseBodyGracefully(resp)
 		if complete {
+			info.OpenCodeStreamRetryCount = attempt
+			info.OpenCodeRecoveredAfterRetry = attempt > 0
 			logger.LogInfo(c, fmt.Sprintf("opencode buffered stream completed on attempt %d", attempt+1))
 			resp.Body = io.NopCloser(strings.NewReader(body))
 			return resp, nil
 		}
 		if attempt >= opencodeBufferedStreamRetryAttempts {
+			info.OpenCodeStreamRetryCount = attempt
 			message := "upstream stream terminated unexpectedly before finish_reason"
 			if readErr != nil {
 				message += ": " + readErr.Error()

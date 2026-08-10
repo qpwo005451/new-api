@@ -80,6 +80,15 @@ type TokenCountMeta struct {
 	estimatePromptTokens int
 }
 
+type OpenCodeRouteLease struct {
+	LeaseID         string  `json:"lease_id"`
+	Service         string  `json:"service"`
+	RouteKey        string  `json:"route_key"`
+	RouteGeneration int64   `json:"route_generation"`
+	AcquiredAt      float64 `json:"acquired_at"`
+	ExpiresAt       float64 `json:"expires_at"`
+}
+
 type RelayInfo struct {
 	TokenId           int
 	TokenKey          string
@@ -147,6 +156,9 @@ type RelayInfo struct {
 	IsChannelTest                         bool // channel test request
 	RetryIndex                            int
 	LastError                             *types.NewAPIError
+	OpenCodeRouteLease                    *OpenCodeRouteLease
+	OpenCodeStreamRetryCount              int
+	OpenCodeRecoveredAfterRetry           bool
 	RuntimeHeadersOverride                map[string]interface{}
 	UseRuntimeHeadersOverride             bool
 	ParamOverrideAudit                    []string

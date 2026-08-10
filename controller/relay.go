@@ -335,6 +335,15 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
 
+		if service.ShouldUseOpenCodeRouteFeedback(relayInfo) {
+			lease, leaseErr := service.AcquireOpenCodeRouteLease(service.RelayRequestContext(c), relayInfo.RequestId)
+			if leaseErr != nil {
+				logger.LogWarn(c, "OpenCode route lease unavailable: "+leaseErr.Error())
+			} else {
+				relayInfo.OpenCodeRouteLease = lease
+			}
+		}
+
 		switch relayFormat {
 		case types.RelayFormatOpenAIRealtime:
 			newAPIError = relay.WssHelper(c, relayInfo)
@@ -351,11 +360,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		if newAPIError == nil {
 			relayInfo.LastError = nil
+			service.ReportOpenCodeRouteFeedback(relayInfo, true)
 			return
 		}
 
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
+		service.ReportOpenCodeRouteFeedback(relayInfo, false)
 
 		inputTransientCooldown := time.Duration(0)
 		if inputTransientRetryTarget &&

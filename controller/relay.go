@@ -335,6 +335,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
 
+		relayInfo.InitChannelMeta(c)
 		if service.ShouldUseOpenCodeRouteFeedback(relayInfo) {
 			lease, leaseErr := service.AcquireOpenCodeRouteLease(service.RelayRequestContext(c), relayInfo.RequestId)
 			if leaseErr != nil {

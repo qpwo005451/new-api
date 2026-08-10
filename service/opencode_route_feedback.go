@@ -168,7 +168,7 @@ func AcquireOpenCodeRouteLease(ctx context.Context, requestID string) (*OpenCode
 }
 
 func ShouldUseOpenCodeRouteFeedback(info *relaycommon.RelayInfo) bool {
-	if info == nil || !info.IsStream || strings.TrimSpace(info.ChannelSetting.Proxy) == "" {
+	if info == nil || !info.IsStream || info.ChannelMeta == nil || strings.TrimSpace(info.ChannelSetting.Proxy) == "" {
 		return false
 	}
 	model := strings.ToLower(strings.TrimSpace(info.OriginModelName))

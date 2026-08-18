@@ -281,8 +281,10 @@ func (s *ChatToResponsesStreamState) doneDeltaEvents() []ChatToResponsesStreamEv
 			continue
 		}
 		tool.Done = true
+		arguments := tool.Arguments.String()
 		events = append(events, responsesStreamEvent(responsesEventFunctionArgsDone, dto.ResponsesStreamResponse{
 			Type:        responsesEventFunctionArgsDone,
+			Arguments:   &arguments,
 			OutputIndex: intPtr(tool.OutputIndex),
 			ItemID:      tool.ID,
 		}))

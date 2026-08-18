@@ -15,6 +15,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
+import { useQuery } from '@tanstack/react-query'
 import { RefreshCw, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -38,15 +39,48 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import { fetchUpstreamModels } from '@/features/channels/api'
+import { fetchUpstreamModels, getChannels } from '@/features/channels/api'
 
 import type { ModelMonitorSiteConfig, ModelMonitorTarget } from '../types'
 
-function parseNumbers(value: string): number[] {
-  return value
-    .split(',')
-    .map((item) => Number(item.trim()))
-    .filter((item) => Number.isInteger(item) && item > 0)
+const MODEL_MONITOR_CHANNEL_PAGE_SIZE = 100
+
+async function fetchModelMonitorChannels() {
+  const firstResponse = await getChannels({
+    p: 1,
+    page_size: MODEL_MONITOR_CHANNEL_PAGE_SIZE,
+    id_sort: true,
+    sort_by: 'id',
+    sort_order: 'asc',
+  })
+  if (!firstResponse.success || !firstResponse.data) {
+    throw new Error(firstResponse.message || 'Failed to load channels')
+  }
+
+  const totalPages = Math.ceil(
+    firstResponse.data.total /
+      Math.max(firstResponse.data.page_size, MODEL_MONITOR_CHANNEL_PAGE_SIZE)
+  )
+  const remainingResponses = await Promise.all(
+    Array.from({ length: Math.max(0, totalPages - 1) }, (_, index) =>
+      getChannels({
+        p: index + 2,
+        page_size: MODEL_MONITOR_CHANNEL_PAGE_SIZE,
+        id_sort: true,
+        sort_by: 'id',
+        sort_order: 'asc',
+      })
+    )
+  )
+  for (const response of remainingResponses) {
+    if (!response.success || !response.data) {
+      throw new Error(response.message || 'Failed to load channels')
+    }
+  }
+
+  return [firstResponse, ...remainingResponses].flatMap(
+    (response) => response.data?.items ?? []
+  )
 }
 
 type SiteEditorProps = {
@@ -59,6 +93,33 @@ export function SiteEditor(props: SiteEditorProps) {
   const { t } = useTranslation()
   const [isFetchingModels, setIsFetchingModels] = useState(false)
   const [discoveredModels, setDiscoveredModels] = useState<string[]>([])
+  const channelsQuery = useQuery({
+    queryKey: ['model-monitor', 'channels'],
+    queryFn: fetchModelMonitorChannels,
+    retry: false,
+  })
+  const channelOptions = useMemo(() => {
+    const options = new Map(
+      (channelsQuery.data ?? []).map((channel) => [
+        channel.id,
+        {
+          label: `#${channel.id} - ${channel.name}`,
+          value: String(channel.id),
+        },
+      ])
+    )
+    for (const channelId of props.site.channel_ids) {
+      if (!options.has(channelId)) {
+        options.set(channelId, {
+          label: `#${channelId}`,
+          value: String(channelId),
+        })
+      }
+    }
+    return [...options.values()].sort(
+      (left, right) => Number(left.value) - Number(right.value)
+    )
+  }, [channelsQuery.data, props.site.channel_ids])
   const enabledTargets = props.site.targets.filter((target) => target.enabled)
   const selectedModels = enabledTargets.map((target) => target.model_name)
   const modelOptions = useMemo(() => {
@@ -179,15 +240,21 @@ export function SiteEditor(props: SiteEditorProps) {
         </label>
         <label className='grid gap-1.5 text-sm'>
           <span className='font-medium'>{t('Channel IDs')}</span>
-          <Input
-            value={props.site.channel_ids.join(', ')}
-            placeholder='9, 11, 27'
-            onChange={(event) =>
+          <MultiSelect
+            options={channelOptions}
+            selected={props.site.channel_ids.map(String)}
+            onChange={(values) =>
               props.onChange({
                 ...props.site,
-                channel_ids: parseNumbers(event.target.value),
+                channel_ids: values
+                  .map(Number)
+                  .filter(
+                    (channelId) => Number.isInteger(channelId) && channelId > 0
+                  ),
               })
             }
+            placeholder={t('Channel IDs')}
+            emptyText={t('No channels found')}
           />
         </label>
         <label className='grid gap-1.5 text-sm'>

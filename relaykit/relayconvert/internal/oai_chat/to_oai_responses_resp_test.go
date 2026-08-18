@@ -1,6 +1,7 @@
 package oaichat
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -36,9 +37,80 @@ func TestChatCompletionsResponseToResponsesPreservesTextToolCallsAndUsage(t *tes
 	assert.Equal(t, responsesOutputTypeMessage, resp.Output[0].Type)
 	assert.Equal(t, "I will call.", resp.Output[0].Content[0].Text)
 	assert.Equal(t, responsesOutputTypeFunctionCall, resp.Output[1].Type)
+	assert.True(t, strings.HasPrefix(resp.Output[1].ID, "fc_"))
 	assert.Equal(t, "call_1", resp.Output[1].CallId)
 	assert.Equal(t, "lookup", resp.Output[1].Name)
 	assert.Equal(t, `"{\"q\":\"x\"}"`, string(resp.Output[1].Arguments))
+}
+
+func TestResponsesFunctionCallItemIDIsStableAndBounded(t *testing.T) {
+	callID := "call/with spaces"
+	itemID := responsesFunctionCallItemID(callID)
+
+	assert.True(t, strings.HasPrefix(itemID, "fc_"))
+	assert.LessOrEqual(t, len(itemID), 64)
+	assert.Equal(t, itemID, responsesFunctionCallItemID(callID))
+}
+
+func TestChatCompletionsResponseToResponsesPreservesCustomToolItemID(t *testing.T) {
+	output, err := chatToolCallToResponsesOutput(dto.ToolCallRequest{
+		ID:     "custom_call_1",
+		Type:   dto.CustomType,
+		Custom: []byte(`{"input":"x"}`),
+	}, "resp_1", 0, "completed")
+	require.NoError(t, err)
+
+	assert.Equal(t, "custom_call_1", output.ID)
+	assert.Equal(t, "custom_call_1", output.CallId)
+}
+
+func TestChatCompletionsStreamToResponsesDefersToolUntilCallID(t *testing.T) {
+	state := NewChatToResponsesStreamState("resp_1", "gpt-test")
+	toolIndex := 0
+
+	first := mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{
+			Delta: dto.ChatCompletionsStreamResponseChoiceDelta{ToolCalls: []dto.ToolCallResponse{{
+				Index: &toolIndex,
+				Function: dto.FunctionResponse{
+					Name:      "lookup",
+					Arguments: `{"q":"x"}`,
+				},
+			}}},
+		}},
+	})
+	require.Len(t, first, 1)
+	assert.Equal(t, responsesEventCreated, first[0].Type)
+
+	second := mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{
+			Delta: dto.ChatCompletionsStreamResponseChoiceDelta{ToolCalls: []dto.ToolCallResponse{{
+				Index: &toolIndex,
+				ID:    "call_actual",
+			}}},
+		}},
+	})
+	require.Len(t, second, 2)
+	require.NotNil(t, second[0].Payload.Item)
+	assert.Equal(t, responsesEventOutputItemAdded, second[0].Type)
+	assert.Equal(t, "call_actual", second[0].Payload.Item.CallId)
+	assert.True(t, strings.HasPrefix(second[0].Payload.Item.ID, "fc_"))
+	assert.Equal(t, responsesEventFunctionArgsDelta, second[1].Type)
+	assert.Equal(t, `{"q":"x"}`, second[1].Payload.Delta)
+}
+
+func TestChatCompletionsResponseToResponsesNormalizesLongFunctionCallID(t *testing.T) {
+	longCallID := "call_" + strings.Repeat("x", 80)
+	output, err := chatToolCallToResponsesOutput(dto.ToolCallRequest{
+		ID:   longCallID,
+		Type: "function",
+	}, "resp_1", 0, "completed")
+	require.NoError(t, err)
+
+	assert.True(t, strings.HasPrefix(output.ID, "fc_"))
+	assert.True(t, strings.HasPrefix(output.CallId, "call_"))
+	assert.LessOrEqual(t, len(output.ID), 64)
+	assert.LessOrEqual(t, len(output.CallId), 64)
 }
 
 func TestChatCompletionsResponseToResponsesMapsIncompleteFinishReasons(t *testing.T) {
@@ -119,6 +191,10 @@ func TestChatCompletionsStreamToResponsesEventsAggregatesUsageAndToolArgs(t *tes
 	events = append(events, FinalizeChatCompletionsStreamToResponses(state)...)
 
 	require.Len(t, events, 10)
+	require.NotNil(t, events[3].Payload.Item)
+	assert.Equal(t, "fc_call_1", events[3].Payload.ItemID)
+	assert.Equal(t, "fc_call_1", events[3].Payload.Item.ID)
+	assert.Equal(t, "call_1", events[3].Payload.Item.CallId)
 	var functionArgsDone *ChatToResponsesStreamEvent
 	for i := range events {
 		if events[i].Type == responsesEventFunctionArgsDone {
@@ -127,6 +203,7 @@ func TestChatCompletionsStreamToResponsesEventsAggregatesUsageAndToolArgs(t *tes
 		}
 	}
 	require.NotNil(t, functionArgsDone)
+	assert.Equal(t, "fc_call_1", functionArgsDone.Payload.ItemID)
 	require.NotNil(t, functionArgsDone.Payload.Arguments)
 	assert.Equal(t, `{"q":"x"}`, *functionArgsDone.Payload.Arguments)
 	assert.Equal(t, responsesEventCreated, events[0].Type)
@@ -139,6 +216,8 @@ func TestChatCompletionsStreamToResponsesEventsAggregatesUsageAndToolArgs(t *tes
 	assert.Equal(t, 6, events[9].Payload.Response.Usage.TotalTokens)
 	require.Len(t, events[9].Payload.Response.Output, 2)
 	assert.Equal(t, "hello", events[9].Payload.Response.Output[0].Content[0].Text)
+	assert.Equal(t, "fc_call_1", events[9].Payload.Response.Output[1].ID)
+	assert.Equal(t, "call_1", events[9].Payload.Response.Output[1].CallId)
 	assert.Equal(t, `"{\"q\":\"x\"}"`, string(events[9].Payload.Response.Output[1].Arguments))
 }
 

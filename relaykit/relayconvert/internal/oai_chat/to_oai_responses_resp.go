@@ -1,6 +1,8 @@
 package oaichat
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -175,9 +177,10 @@ func chatToolCallToResponsesOutput(toolCall dto.ToolCallRequest, responseID stri
 		callID = fmt.Sprintf("%s_call_%d", responseID, index)
 	}
 	if toolCall.Type == "" || toolCall.Type == "function" {
+		callID = responsesFunctionCallCallID(callID)
 		return dto.ResponsesOutput{
 			Type:      responsesOutputTypeFunctionCall,
-			ID:        callID,
+			ID:        responsesFunctionCallItemID(callID),
 			Status:    status,
 			CallId:    callID,
 			Name:      toolCall.Function.Name,
@@ -191,6 +194,35 @@ func chatToolCallToResponsesOutput(toolCall dto.ToolCallRequest, responseID stri
 		CallId:    callID,
 		Arguments: toolCall.Custom,
 	}, nil
+}
+
+func responsesFunctionCallCallID(callID string) string {
+	callID = strings.TrimSpace(callID)
+	if len(callID) <= 64 && responsesIDPartIsSafe(callID) {
+		return callID
+	}
+	sum := sha256.Sum256([]byte(callID))
+	return "call_" + hex.EncodeToString(sum[:])[:59]
+}
+
+func responsesFunctionCallItemID(callID string) string {
+	callID = responsesFunctionCallCallID(callID)
+	itemID := "fc_" + callID
+	if len(itemID) <= 64 && responsesIDPartIsSafe(itemID) {
+		return itemID
+	}
+	sum := sha256.Sum256([]byte(callID))
+	return "fc_" + hex.EncodeToString(sum[:])[:61]
+}
+
+func responsesIDPartIsSafe(value string) bool {
+	for _, char := range value {
+		if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '_' || char == '-') {
+			return false
+		}
+	}
+	return value != ""
 }
 
 func chatArgumentsRawMessage(arguments string) []byte {

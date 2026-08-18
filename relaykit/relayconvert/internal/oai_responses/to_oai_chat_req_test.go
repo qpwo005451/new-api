@@ -134,6 +134,7 @@ func TestResponsesRequestToChatCompletionsRequestAssistantTextAndFunctionCallCoe
 			},
 			{
 				"type":      "function_call",
+				"id":        "fc_call_1",
 				"call_id":   "call_1",
 				"name":      "lookup",
 				"arguments": map[string]any{"q": "x"},
@@ -159,6 +160,11 @@ func TestResponsesRequestToChatCompletionsRequestAssistantTextAndFunctionCallCoe
 	assert.Equal(t, "tool", got.Messages[1].Role)
 	assert.Equal(t, "call_1", got.Messages[1].ToolCallId)
 	assert.JSONEq(t, `{"ok":true}`, got.Messages[1].StringContent())
+
+	encoded, err := json.Marshal(got)
+	require.NoError(t, err)
+	assert.Equal(t, "call_1", gjson.GetBytes(encoded, "messages.0.tool_calls.0.id").String())
+	assert.Equal(t, "call_1", gjson.GetBytes(encoded, "messages.1.tool_call_id").String())
 }
 
 func TestResponsesRequestToChatCompletionsRequestOnlyFunctionCallCreatesAssistant(t *testing.T) {

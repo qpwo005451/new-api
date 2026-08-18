@@ -211,6 +211,16 @@ func TestChatCompletionsStreamToResponsesEventsAggregatesUsageAndToolArgs(t *tes
 	assert.Equal(t, "hello", events[2].Payload.Delta)
 	assert.Equal(t, responsesEventFunctionArgsDelta, events[4].Type)
 	assert.Equal(t, `{"q":"x"}`, events[4].Payload.Delta)
+	var functionItemDone *ChatToResponsesStreamEvent
+	for i := range events {
+		if events[i].Type == responsesEventOutputItemDone && events[i].Payload.Item != nil && events[i].Payload.Item.Type == responsesOutputTypeFunctionCall {
+			functionItemDone = &events[i]
+			break
+		}
+	}
+	require.NotNil(t, functionItemDone)
+	assert.Equal(t, "fc_call_1", functionItemDone.Payload.Item.ID)
+	assert.Equal(t, "call_1", functionItemDone.Payload.Item.CallId)
 	assert.Equal(t, responsesEventCompleted, events[9].Type)
 	require.NotNil(t, events[9].Payload.Response)
 	assert.Equal(t, 6, events[9].Payload.Response.Usage.TotalTokens)

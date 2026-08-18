@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -43,6 +44,20 @@ func TestChatCompletionsResponseToResponsesPreservesTextToolCallsAndUsage(t *tes
 	assert.Equal(t, `"{\"q\":\"x\"}"`, string(resp.Output[1].Arguments))
 }
 
+func TestChatCompletionsResponseToResponsesPreservesReasoningTextAlias(t *testing.T) {
+	var chat dto.OpenAITextResponse
+	err := kitutil.Unmarshal([]byte(`{"id":"chatcmpl_1","model":"deepseek-v4-flash","choices":[{"index":0,"message":{"role":"assistant","reasoning_text":"thinking","content":"answer"},"finish_reason":"stop"}]}`), &chat)
+	require.NoError(t, err)
+
+	resp, _, err := ChatCompletionsResponseToResponsesResponse(&chat, "resp_1")
+	require.NoError(t, err)
+	require.Len(t, resp.Output, 2)
+	assert.Equal(t, responsesOutputTypeMessage, resp.Output[0].Type)
+	assert.Equal(t, responsesOutputTypeReasoning, resp.Output[1].Type)
+	require.Len(t, resp.Output[1].Content, 1)
+	assert.Equal(t, "thinking", resp.Output[1].Content[0].Text)
+}
+
 func TestResponsesFunctionCallItemIDIsStableAndBounded(t *testing.T) {
 	callID := "call/with spaces"
 	itemID := responsesFunctionCallItemID(callID)
@@ -62,6 +77,20 @@ func TestChatCompletionsResponseToResponsesPreservesCustomToolItemID(t *testing.
 
 	assert.Equal(t, "custom_call_1", output.ID)
 	assert.Equal(t, "custom_call_1", output.CallId)
+}
+
+func TestChatCompletionsStreamToResponsesPreservesReasoningTextAlias(t *testing.T) {
+	var chunk dto.ChatCompletionsStreamResponse
+	err := kitutil.Unmarshal([]byte(`{"choices":[{"index":0,"delta":{"reasoning_text":"thinking"}}]}`), &chunk)
+	require.NoError(t, err)
+
+	events := mustResponsesEventsFromChatChunk(t, NewChatToResponsesStreamState("resp_1", "deepseek-v4-flash"), &chunk)
+	require.Len(t, events, 3)
+	assert.Equal(t, responsesEventCreated, events[0].Type)
+	assert.Equal(t, responsesEventOutputItemAdded, events[1].Type)
+	assert.Equal(t, responsesOutputTypeReasoning, events[1].Payload.Item.Type)
+	assert.Equal(t, responsesEventReasoningSummaryDelta, events[2].Type)
+	assert.Equal(t, "thinking", events[2].Payload.Delta)
 }
 
 func TestChatCompletionsStreamToResponsesDefersToolUntilCallID(t *testing.T) {

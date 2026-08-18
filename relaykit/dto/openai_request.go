@@ -306,6 +306,7 @@ type Message struct {
 	Name             *string         `json:"name,omitempty"`
 	Prefix           *bool           `json:"prefix,omitempty"`
 	ReasoningContent *string         `json:"reasoning_content,omitempty"`
+	ReasoningText    *string         `json:"reasoning_text,omitempty"`
 	Reasoning        *string         `json:"reasoning,omitempty"`
 	ToolCalls        json.RawMessage `json:"tool_calls,omitempty"`
 	ToolCallId       string          `json:"tool_call_id,omitempty"`
@@ -458,13 +459,16 @@ const (
 )
 
 func (m *Message) GetReasoningContent() string {
-	if m.ReasoningContent == nil && m.Reasoning == nil {
-		return ""
-	}
 	if m.ReasoningContent != nil {
 		return *m.ReasoningContent
 	}
-	return *m.Reasoning
+	if m.ReasoningText != nil {
+		return *m.ReasoningText
+	}
+	if m.Reasoning != nil {
+		return *m.Reasoning
+	}
+	return ""
 }
 
 func (m *Message) GetPrefix() bool {

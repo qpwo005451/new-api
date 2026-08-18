@@ -119,6 +119,16 @@ func TestChatCompletionsStreamToResponsesEventsAggregatesUsageAndToolArgs(t *tes
 	events = append(events, FinalizeChatCompletionsStreamToResponses(state)...)
 
 	require.Len(t, events, 10)
+	var functionArgsDone *ChatToResponsesStreamEvent
+	for i := range events {
+		if events[i].Type == responsesEventFunctionArgsDone {
+			functionArgsDone = &events[i]
+			break
+		}
+	}
+	require.NotNil(t, functionArgsDone)
+	require.NotNil(t, functionArgsDone.Payload.Arguments)
+	assert.Equal(t, `{"q":"x"}`, *functionArgsDone.Payload.Arguments)
 	assert.Equal(t, responsesEventCreated, events[0].Type)
 	assert.Equal(t, responsesEventOutputTextDelta, events[2].Type)
 	assert.Equal(t, "hello", events[2].Payload.Delta)

@@ -5306,6 +5306,10 @@
     "Previous Response ID": "前のレスポンス ID",
     "Stream Events": "ストリームイベント",
     "First Events": "最初のイベント",
-    "Present": "あり"
+    "Present": "あり",
+    "Retry overloaded Responses streams": "過負荷の Responses ストリームを再試行",
+    "Retry the same channel and request when an OpenAI Responses stream reports overload before producing output.": "OpenAI Responses ストリームが出力前に過負荷を報告した場合、同じチャネルで元のリクエストを再試行します。",
+    "Overload retry limit": "過負荷時の再試行上限",
+    "Maximum same-channel retries before returning the original upstream error (1-5).": "元のアップストリームエラーを返すまでに、同じチャネルで再試行する最大回数（1-5）。"
   }
 }

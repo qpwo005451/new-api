@@ -5340,6 +5340,9 @@
     "Save alerts": "Save alerts",
     "Alert settings saved": "Alert settings saved",
     "Failed to save alert settings": "Failed to save alert settings",
-    "Sending...": "Sending..."
+    "Retry overloaded Responses streams": "Retry overloaded Responses streams",
+    "Retry the same channel and request when an OpenAI Responses stream reports overload before producing output.": "Retry the same channel and request when an OpenAI Responses stream reports overload before producing output.",
+    "Overload retry limit": "Overload retry limit",
+    "Maximum same-channel retries before returning the original upstream error (1-5).": "Maximum same-channel retries before returning the original upstream error (1-5)."
   }
 }

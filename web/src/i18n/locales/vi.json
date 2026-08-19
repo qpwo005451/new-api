@@ -5306,6 +5306,10 @@
     "Previous Response ID": "ID phản hồi trước",
     "Stream Events": "Sự kiện luồng",
     "First Events": "Các sự kiện đầu tiên",
-    "Present": "Có"
+    "Present": "Có",
+    "Retry overloaded Responses streams": "Thử lại luồng Responses bị quá tải",
+    "Retry the same channel and request when an OpenAI Responses stream reports overload before producing output.": "Thử lại yêu cầu gốc trên cùng kênh khi luồng OpenAI Responses báo quá tải trước khi tạo đầu ra.",
+    "Overload retry limit": "Giới hạn thử lại khi quá tải",
+    "Maximum same-channel retries before returning the original upstream error (1-5).": "Số lần thử lại tối đa trên cùng kênh trước khi trả về lỗi gốc từ thượng nguồn (1-5)."
   }
 }

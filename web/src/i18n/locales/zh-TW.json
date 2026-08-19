@@ -5312,6 +5312,10 @@
     "Previous Response ID": "上一回應 ID",
     "Stream Events": "串流事件",
     "First Events": "前幾個事件",
-    "Present": "存在"
+    "Present": "存在",
+    "Retry overloaded Responses streams": "重試過載的 Responses 串流",
+    "Retry the same channel and request when an OpenAI Responses stream reports overload before producing output.": "當 OpenAI Responses 串流在產生輸出前回報過載時，使用相同渠道重試原請求。",
+    "Overload retry limit": "過載重試上限",
+    "Maximum same-channel retries before returning the original upstream error (1-5).": "傳回原始上游錯誤前，在相同渠道上的最大重試次數（1-5）。"
   }
 }

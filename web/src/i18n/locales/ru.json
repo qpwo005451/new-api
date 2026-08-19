@@ -5306,6 +5306,10 @@
     "Previous Response ID": "ID предыдущего ответа",
     "Stream Events": "События потока",
     "First Events": "Первые события",
-    "Present": "Есть"
+    "Present": "Есть",
+    "Retry overloaded Responses streams": "Повторять перегруженные потоки Responses",
+    "Retry the same channel and request when an OpenAI Responses stream reports overload before producing output.": "Повторяет исходный запрос через тот же канал, если поток OpenAI Responses сообщает о перегрузке до начала вывода.",
+    "Overload retry limit": "Лимит повторов при перегрузке",
+    "Maximum same-channel retries before returning the original upstream error (1-5).": "Максимальное число повторов через тот же канал перед возвратом исходной ошибки сервера (1-5)."
   }
 }

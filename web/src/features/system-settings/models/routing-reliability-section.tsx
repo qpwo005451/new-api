@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMemo, useRef } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import * as z from 'zod'
@@ -75,6 +75,10 @@ const routingReliabilitySchema = z
     AutomaticDisableKeywords: z.string(),
     AutomaticDisableStatusCodes: z.string(),
     AutomaticRetryStatusCodes: z.string(),
+    responses_overload_retry_setting: z.object({
+      enabled: z.boolean(),
+      max_retries: z.coerce.number().int().min(1).max(5),
+    }),
     monitor_setting: z.object({
       auto_test_channel_enabled: z.boolean(),
       auto_test_channel_minutes: z.coerce
@@ -124,6 +128,8 @@ type RoutingReliabilitySectionProps = {
     AutomaticDisableKeywords: string
     AutomaticDisableStatusCodes: string
     AutomaticRetryStatusCodes: string
+    'responses_overload_retry_setting.enabled': boolean
+    'responses_overload_retry_setting.max_retries': number
     'monitor_setting.auto_test_channel_enabled': boolean
     'monitor_setting.auto_test_channel_minutes': number
     'monitor_setting.channel_test_mode': ChannelTestMode
@@ -142,6 +148,8 @@ type NormalizedRoutingReliabilityValues = {
   AutomaticDisableKeywords: string
   AutomaticDisableStatusCodes: string
   AutomaticRetryStatusCodes: string
+  'responses_overload_retry_setting.enabled': boolean
+  'responses_overload_retry_setting.max_retries': number
   'monitor_setting.auto_test_channel_enabled': boolean
   'monitor_setting.auto_test_channel_minutes': number
   'monitor_setting.channel_test_mode': ChannelTestMode
@@ -163,6 +171,10 @@ const buildFormDefaults = (
   ),
   AutomaticDisableStatusCodes: defaults.AutomaticDisableStatusCodes ?? '',
   AutomaticRetryStatusCodes: defaults.AutomaticRetryStatusCodes ?? '',
+  responses_overload_retry_setting: {
+    enabled: defaults['responses_overload_retry_setting.enabled'] ?? false,
+    max_retries: defaults['responses_overload_retry_setting.max_retries'] ?? 2,
+  },
   monitor_setting: {
     auto_test_channel_enabled:
       defaults['monitor_setting.auto_test_channel_enabled'],
@@ -190,6 +202,10 @@ const normalizeDefaults = (
   AutomaticRetryStatusCodes: parseHttpStatusCodeRules(
     defaults.AutomaticRetryStatusCodes ?? ''
   ).normalized,
+  'responses_overload_retry_setting.enabled':
+    defaults['responses_overload_retry_setting.enabled'] ?? false,
+  'responses_overload_retry_setting.max_retries':
+    defaults['responses_overload_retry_setting.max_retries'] ?? 2,
   'monitor_setting.auto_test_channel_enabled':
     defaults['monitor_setting.auto_test_channel_enabled'],
   'monitor_setting.auto_test_channel_minutes':
@@ -215,6 +231,10 @@ const normalizeFormValues = (
   AutomaticRetryStatusCodes: parseHttpStatusCodeRules(
     values.AutomaticRetryStatusCodes
   ).normalized,
+  'responses_overload_retry_setting.enabled':
+    values.responses_overload_retry_setting.enabled,
+  'responses_overload_retry_setting.max_retries':
+    values.responses_overload_retry_setting.max_retries,
   'monitor_setting.auto_test_channel_enabled':
     values.monitor_setting.auto_test_channel_enabled,
   'monitor_setting.auto_test_channel_minutes':
@@ -249,6 +269,10 @@ export function RoutingReliabilitySection({
 
   const autoDisableStatusCodes = form.watch('AutomaticDisableStatusCodes')
   const autoRetryStatusCodes = form.watch('AutomaticRetryStatusCodes')
+  const overloadRetryEnabled = useWatch({
+    control: form.control,
+    name: 'responses_overload_retry_setting.enabled',
+  })
   const channelTestMode = form.watch('monitor_setting.channel_test_mode')
   const autoDisableParsed = useMemo(
     () => parseHttpStatusCodeRules(autoDisableStatusCodes),
@@ -341,6 +365,59 @@ export function RoutingReliabilitySection({
                             {t('Normalized:')} {autoRetryParsed.normalized}
                           </span>
                         )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            <div className='grid min-w-0 gap-6 xl:grid-cols-[minmax(12rem,24rem)_minmax(0,1fr)]'>
+              <FormField
+                control={form.control}
+                name='responses_overload_retry_setting.enabled'
+                render={({ field }) => (
+                  <SettingsSwitchItem>
+                    <SettingsSwitchContent>
+                      <FormLabel>
+                        {t('Retry overloaded Responses streams')}
+                      </FormLabel>
+                      <FormDescription>
+                        {t(
+                          'Retry the same channel and request when an OpenAI Responses stream reports overload before producing output.'
+                        )}
+                      </FormDescription>
+                    </SettingsSwitchContent>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                  </SettingsSwitchItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='responses_overload_retry_setting.max_retries'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Overload retry limit')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min={1}
+                        max={5}
+                        step={1}
+                        disabled={!overloadRetryEnabled}
+                        {...safeNumberFieldProps(field)}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Maximum same-channel retries before returning the original upstream error (1-5).'
+                      )}
                     </FormDescription>
                     <FormMessage />
                   </FormItem>

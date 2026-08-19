@@ -80,6 +80,10 @@ const MODELS_SECTIONS = [
           AutomaticDisableKeywords: settings.AutomaticDisableKeywords,
           AutomaticDisableStatusCodes: settings.AutomaticDisableStatusCodes,
           AutomaticRetryStatusCodes: settings.AutomaticRetryStatusCodes,
+          'responses_overload_retry_setting.enabled':
+            settings['responses_overload_retry_setting.enabled'],
+          'responses_overload_retry_setting.max_retries':
+            settings['responses_overload_retry_setting.max_retries'],
           'monitor_setting.auto_test_channel_enabled':
             settings['monitor_setting.auto_test_channel_enabled'],
           'monitor_setting.auto_test_channel_minutes':

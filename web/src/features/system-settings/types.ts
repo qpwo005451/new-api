@@ -233,6 +233,8 @@ export type ModelSettings = {
   AutomaticDisableKeywords: string
   AutomaticDisableStatusCodes: string
   AutomaticRetryStatusCodes: string
+  'responses_overload_retry_setting.enabled': boolean
+  'responses_overload_retry_setting.max_retries': number
   'monitor_setting.auto_test_channel_enabled': boolean
   'monitor_setting.auto_test_channel_minutes': number
   'monitor_setting.channel_test_mode': 'scheduled_all' | 'passive_recovery'

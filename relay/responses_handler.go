@@ -118,13 +118,18 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		return types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
 	}
 	adaptor.Init(info)
+	maxOverloadRetries, overloadRetryEnabled := shouldUseResponsesOverloadRetry(info)
 	var requestBody io.Reader
+	var requestBodyStorage common.BodyStorage
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
 		}
 		requestBody = common.ReaderOnly(storage)
+		if overloadRetryEnabled {
+			requestBodyStorage = storage
+		}
 	} else {
 		convertedRequest, err := adaptor.ConvertOpenAIResponsesRequest(c, info, *request)
 		if err != nil {
@@ -168,18 +173,33 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		}
 
 		logger.LogDebug(c, "requestBody: %s", jsonData)
-		body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		if overloadRetryEnabled {
+			requestBodyStorage, err = common.CreateBodyStorage(jsonData)
+			if err != nil {
+				return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+			}
+			defer requestBodyStorage.Close()
+			info.UpstreamRequestBodySize = requestBodyStorage.Size()
+			requestBody = common.ReaderOnly(requestBodyStorage)
+		} else {
+			body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+			if err != nil {
+				return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+			}
+			defer closer.Close()
+			info.UpstreamRequestBodySize = size
+			requestBody = body
 		}
-		defer closer.Close()
 		jsonData = nil
-		info.UpstreamRequestBodySize = size
-		requestBody = body
 	}
 
 	var httpResp *http.Response
-	resp, err := adaptor.DoRequest(c, info, requestBody)
+	var resp any
+	if overloadRetryEnabled {
+		resp, err = doResponsesRequestWithOverloadRetry(c, info, adaptor, requestBodyStorage, maxOverloadRetries)
+	} else {
+		resp, err = adaptor.DoRequest(c, info, requestBody)
+	}
 	if err != nil {
 		return types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
 	}

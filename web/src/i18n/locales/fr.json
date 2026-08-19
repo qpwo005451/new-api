@@ -5306,6 +5306,10 @@
     "Previous Response ID": "ID de réponse précédente",
     "Stream Events": "Événements de flux",
     "First Events": "Premiers événements",
-    "Present": "Présent"
+    "Present": "Présent",
+    "Retry overloaded Responses streams": "Réessayer les flux Responses surchargés",
+    "Retry the same channel and request when an OpenAI Responses stream reports overload before producing output.": "Réessaie la requête sur le même canal si un flux OpenAI Responses signale une surcharge avant toute sortie.",
+    "Overload retry limit": "Limite de tentatives après surcharge",
+    "Maximum same-channel retries before returning the original upstream error (1-5).": "Nombre maximal de tentatives sur le même canal avant de renvoyer l’erreur amont d’origine (1-5)."
   }
 }

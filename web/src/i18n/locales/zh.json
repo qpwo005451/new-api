@@ -5414,6 +5414,9 @@
     "Save alerts": "保存告警",
     "Alert settings saved": "告警设置已保存",
     "Failed to save alert settings": "保存告警设置失败",
-    "Sending...": "发送中..."
+    "Retry overloaded Responses streams": "重试过载的 Responses 流",
+    "Retry the same channel and request when an OpenAI Responses stream reports overload before producing output.": "当 OpenAI Responses 流在产生输出前报告过载时，使用同一渠道重试原请求。",
+    "Overload retry limit": "过载重试上限",
+    "Maximum same-channel retries before returning the original upstream error (1-5).": "返回原始上游错误前，在同一渠道上的最大重试次数（1-5）。"
   }
 }

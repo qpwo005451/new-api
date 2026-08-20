@@ -167,6 +167,101 @@ func TestResponsesRequestToChatCompletionsRequestAssistantTextAndFunctionCallCoe
 	assert.Equal(t, "call_1", gjson.GetBytes(encoded, "messages.1.tool_call_id").String())
 }
 
+func TestResponsesRequestToChatCompletionsRequestPassesReasoningBackToAssistant(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
+		Model: "deepseek-v4-flash",
+		Input: mustRawMessage(t, []map[string]any{
+			{
+				"type": "reasoning",
+				"content": []map[string]any{
+					{"type": "reasoning_text", "text": "first thought"},
+				},
+				"summary": []map[string]any{
+					{"type": "summary_text", "text": " and summary"},
+				},
+			},
+			{
+				"type": "message",
+				"role": "assistant",
+				"content": []map[string]any{
+					{"type": "output_text", "text": "I will call."},
+				},
+			},
+			{
+				"type":      "function_call",
+				"call_id":   "call_1",
+				"name":      "lookup",
+				"arguments": `{"q":"x"}`,
+			},
+			{
+				"type":    "function_call_output",
+				"call_id": "call_1",
+				"output":  "result",
+			},
+			{
+				"type":    "message",
+				"role":    "user",
+				"content": "continue",
+			},
+		}),
+	})
+	require.NoError(t, err)
+
+	require.Len(t, got.Messages, 3)
+	assert.Equal(t, "assistant", got.Messages[0].Role)
+	assert.Equal(t, "first thought", got.Messages[0].GetReasoningContent())
+	assert.Equal(t, "I will call.", got.Messages[0].StringContent())
+	require.Len(t, got.Messages[0].ParseToolCalls(), 1)
+	assert.Equal(t, "tool", got.Messages[1].Role)
+	assert.Equal(t, "user", got.Messages[2].Role)
+
+	encoded, err := kitutil.Marshal(got)
+	require.NoError(t, err)
+	assert.Equal(t, "first thought", gjson.GetBytes(encoded, "messages.0.reasoning_content").String())
+}
+
+func TestResponsesRequestToChatCompletionsRequestMergesTrailingReasoning(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
+		Model: "deepseek-v4-flash",
+		Input: mustRawMessage(t, []map[string]any{
+			{
+				"type":    "message",
+				"role":    "assistant",
+				"content": "answer",
+			},
+			{
+				"type": "reasoning",
+				"summary": []map[string]any{
+					{"type": "summary_text", "text": "thought"},
+				},
+			},
+		}),
+	})
+	require.NoError(t, err)
+	require.Len(t, got.Messages, 1)
+	assert.Equal(t, "answer", got.Messages[0].StringContent())
+	assert.Equal(t, "thought", got.Messages[0].GetReasoningContent())
+}
+
+func TestResponsesRequestToChatCompletionsRequestPreservesEmptyReasoningField(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
+		Model: "deepseek-v4-flash",
+		Input: mustRawMessage(t, []map[string]any{
+			{"type": "reasoning", "encrypted_content": "ciphertext"},
+			{"type": "message", "role": "assistant", "content": "answer"},
+		}),
+	})
+	require.NoError(t, err)
+	require.Len(t, got.Messages, 1)
+	require.NotNil(t, got.Messages[0].ReasoningContent)
+	assert.Empty(t, got.Messages[0].GetReasoningContent())
+
+	encoded, err := kitutil.Marshal(got)
+	require.NoError(t, err)
+	assert.True(t, gjson.GetBytes(encoded, "messages.0.reasoning_content").Exists())
+	assert.Equal(t, "", gjson.GetBytes(encoded, "messages.0.reasoning_content").String())
+}
+
 func TestResponsesRequestToChatCompletionsRequestOnlyFunctionCallCreatesAssistant(t *testing.T) {
 	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
 		Model: "gpt-test",

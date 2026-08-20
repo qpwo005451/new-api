@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -140,6 +141,36 @@ func TestInputDeepSeekV4FlashResponsesRequestConvertsToChat(t *testing.T) {
 	assert.Equal(t, "reply with OK", chatRequest.Messages[0].StringContent())
 	require.NotNil(t, chatRequest.MaxCompletionTokens)
 	assert.Equal(t, uint(32), *chatRequest.MaxCompletionTokens)
+}
+
+func TestInputDeepSeekV4FlashResponsesRequestPassesReasoningBackToChatUpstream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	info := inputDeepSeekV4FlashInfo("https://ai.input.im")
+	request := dto.OpenAIResponsesRequest{
+		Model: inputDeepSeekV4FlashModel,
+		Input: []byte(`[
+			{"type":"reasoning","summary":[{"type":"summary_text","text":"prior thought"}]},
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"prior answer"}]},
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}
+		]`),
+	}
+
+	converted, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(c, info, request)
+	require.NoError(t, err)
+	chatRequest, ok := converted.(*dto.GeneralOpenAIRequest)
+	require.True(t, ok, "%T", converted)
+	require.Len(t, chatRequest.Messages, 2)
+	require.NotNil(t, chatRequest.Messages[0].ReasoningContent)
+	assert.Equal(t, "prior thought", chatRequest.Messages[0].GetReasoningContent())
+	assert.Equal(t, "prior answer", chatRequest.Messages[0].StringContent())
+	assert.Equal(t, "user", chatRequest.Messages[1].Role)
+
+	body, err := common.Marshal(chatRequest)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), `"reasoning_content":"prior thought"`)
 }
 
 func TestInputDeepSeekV4FlashDoResponseKeepsResponsesProtocol(t *testing.T) {

@@ -15,6 +15,7 @@ const (
 	responsesInputTypeFunctionCallOutput = "function_call_output"
 	responsesInputTypeCustomToolCall     = "custom_tool_call"
 	responsesInputTypeCustomToolOutput   = "custom_tool_call_output"
+	responsesInputTypeReasoning          = "reasoning"
 )
 
 const (
@@ -183,6 +184,8 @@ func responsesInputItemToChatMessages(item map[string]any, messages []dto.Messag
 		callID := strings.TrimSpace(kitutil.Interface2String(item["call_id"]))
 		content := responseToolOutputToChatContent(item["output"])
 		return append(messages, dto.Message{Role: "tool", ToolCallId: callID, Content: content}), nil
+	case responsesInputTypeReasoning:
+		return appendReasoningToAdjacentAssistant(messages, responsesReasoningItemText(item)), nil
 	}
 
 	role := strings.TrimSpace(kitutil.Interface2String(item["role"]))
@@ -193,7 +196,64 @@ func responsesInputItemToChatMessages(item map[string]any, messages []dto.Messag
 	if err != nil {
 		return nil, err
 	}
+	if role == "assistant" && len(messages) > 0 {
+		last := &messages[len(messages)-1]
+		if last.Role == "assistant" && last.ReasoningContent != nil && last.Content == nil {
+			last.Content = content
+			return messages, nil
+		}
+	}
 	return append(messages, dto.Message{Role: role, Content: content}), nil
+}
+
+func appendReasoningToAdjacentAssistant(messages []dto.Message, reasoning string) []dto.Message {
+	if len(messages) == 0 || messages[len(messages)-1].Role != "assistant" {
+		return append(messages, dto.Message{Role: "assistant", ReasoningContent: &reasoning})
+	}
+
+	last := &messages[len(messages)-1]
+	if last.ReasoningContent == nil {
+		last.ReasoningContent = &reasoning
+	} else {
+		*last.ReasoningContent += reasoning
+	}
+	return messages
+}
+
+func responsesReasoningItemText(item map[string]any) string {
+	for _, key := range []string{"content", "summary"} {
+		var text strings.Builder
+		value, ok := item[key]
+		if !ok {
+			continue
+		}
+		switch parts := value.(type) {
+		case string:
+			text.WriteString(parts)
+		case []any:
+			for _, rawPart := range parts {
+				part, ok := rawPart.(map[string]any)
+				if !ok {
+					continue
+				}
+				partType := strings.TrimSpace(kitutil.Interface2String(part["type"]))
+				if partType == "reasoning_text" || partType == "summary_text" || partType == "text" {
+					text.WriteString(kitutil.Interface2String(part["text"]))
+				}
+			}
+		case []map[string]any:
+			for _, part := range parts {
+				partType := strings.TrimSpace(kitutil.Interface2String(part["type"]))
+				if partType == "reasoning_text" || partType == "summary_text" || partType == "text" {
+					text.WriteString(kitutil.Interface2String(part["text"]))
+				}
+			}
+		}
+		if text.Len() > 0 {
+			return text.String()
+		}
+	}
+	return ""
 }
 
 func responsesInputContentToChatContent(content any) (any, error) {

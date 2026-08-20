@@ -183,6 +183,38 @@ func TestResponsesOverloadRetryReturnsLastHTTPErrorAfterExhaustion(t *testing.T)
 	assert.Equal(t, errorBody, string(body))
 }
 
+func TestResponsesOverloadRetryReplaysServerErrorMessageBeforeOutput(t *testing.T) {
+	requestJSON := `{"model":"gpt-5.6-luna","stream":true}`
+	storage, err := common.CreateBodyStorage([]byte(requestJSON))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, storage.Close()) })
+
+	overloadStream := "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_failed\"}}\n\n" +
+		"data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_failed\",\"error\":{\"code\":\"server_error\",\"message\":\"Our servers are currently overloaded. Please try again later.\"}}}\n\n"
+	successStream := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n"
+	adaptor := &responsesOverloadRetryTestAdaptor{responses: []*http.Response{
+		responsesRetryTestResponse(overloadStream),
+		responsesRetryTestResponse(successStream),
+	}}
+
+	responseAny, err := doResponsesRequestWithOverloadRetry(
+		responsesRetryTestContext(),
+		&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelId: 36}},
+		adaptor,
+		storage,
+		1,
+	)
+	require.NoError(t, err)
+	require.Len(t, adaptor.bodies, 2)
+	assert.Equal(t, requestJSON, adaptor.bodies[0])
+	assert.Equal(t, adaptor.bodies[0], adaptor.bodies[1])
+
+	response := responseAny.(*http.Response)
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	assert.Equal(t, successStream, string(body))
+}
+
 func TestResponsesOverloadRetryReturnsLastStreamAfterExhaustion(t *testing.T) {
 	requestJSON := `{"model":"gpt-5.6-sol","stream":true}`
 	storage, err := common.CreateBodyStorage([]byte(requestJSON))

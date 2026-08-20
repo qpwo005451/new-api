@@ -105,12 +105,14 @@ func doResponsesRequestWithOverloadRetry(
 	info *relaycommon.RelayInfo,
 	adaptor responsesOverloadRetryAdaptor,
 	requestBodyStorage common.BodyStorage,
-	maxRetries int,
+	maxOverloadRetries int,
 ) (any, error) {
 	originalCloseUpstreamConnection := info.CloseUpstreamConnection
 	defer func() { info.CloseUpstreamConnection = originalCloseUpstreamConnection }()
 	closeUpstreamConnection := false
-	for attempt := 0; ; attempt++ {
+	overloadRetries := 0
+	inputReasoningPassbackRetries := 0
+	for {
 		info.CloseUpstreamConnection = originalCloseUpstreamConnection || closeUpstreamConnection
 		if _, err := requestBodyStorage.Seek(0, io.SeekStart); err != nil {
 			return nil, fmt.Errorf("seek Responses request body for overload retry: %w", err)
@@ -127,17 +129,24 @@ func doResponsesRequestWithOverloadRetry(
 
 		retryReason := responsesPreOutputRetryNone
 		if httpResp.StatusCode == http.StatusOK {
-			if maxRetries > 0 && bufferResponsesStreamUntilProgress(httpResp) {
+			if maxOverloadRetries > 0 && bufferResponsesStreamUntilProgress(httpResp) {
 				retryReason = responsesPreOutputRetryOverload
 			}
 		} else {
 			retryReason = bufferResponsesHTTPError(httpResp, info)
 		}
-		retryLimit := maxRetries
-		if retryReason == responsesPreOutputRetryInputReasoningPassback {
+
+		retryIndex := 0
+		retryLimit := 0
+		switch retryReason {
+		case responsesPreOutputRetryOverload:
+			retryIndex = overloadRetries
+			retryLimit = maxOverloadRetries
+		case responsesPreOutputRetryInputReasoningPassback:
+			retryIndex = inputReasoningPassbackRetries
 			retryLimit = inputReasoningPassbackMaxRetries
 		}
-		if retryReason == responsesPreOutputRetryNone || attempt >= retryLimit {
+		if retryReason == responsesPreOutputRetryNone || retryIndex >= retryLimit {
 			if retryReason == responsesPreOutputRetryInputReasoningPassback {
 				c.Set(inputReasoningPassbackRetryExhaustedKey, true)
 			}
@@ -146,18 +155,22 @@ func doResponsesRequestWithOverloadRetry(
 
 		service.CloseResponseBodyGracefully(httpResp)
 		message := "OpenAI Responses overload before output"
-		if retryReason == responsesPreOutputRetryInputReasoningPassback {
+		switch retryReason {
+		case responsesPreOutputRetryOverload:
+			overloadRetries++
+		case responsesPreOutputRetryInputReasoningPassback:
 			message = "Input reasoning passback rejected before output"
+			inputReasoningPassbackRetries++
+			closeUpstreamConnection = true
 		}
 		logger.LogWarn(c, fmt.Sprintf(
 			"%s; retrying same channel and request body (attempt %d/%d, channel #%d)",
 			message,
-			attempt+1,
+			retryIndex+1,
 			retryLimit,
 			info.ChannelId,
 		))
-		closeUpstreamConnection = retryReason == responsesPreOutputRetryInputReasoningPassback
-		if !waitResponsesPreOutputRetry(c, retryReason, attempt, httpResp.Header.Get("Retry-After")) {
+		if !waitResponsesPreOutputRetry(c, retryReason, retryIndex, httpResp.Header.Get("Retry-After")) {
 			return nil, service.RelayRequestContext(c).Err()
 		}
 	}

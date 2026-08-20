@@ -13,6 +13,8 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -322,6 +324,35 @@ func TestResponsesOverloadRetryDoesNotReplayOtherBadRequests(t *testing.T) {
 	}
 }
 
+func TestResponsesOverloadRetryKeepsIndependentBudgetsForMixedErrors(t *testing.T) {
+	requestJSON := `{"model":"deepseek-v4-flash","stream":true}`
+	storage, err := common.CreateBodyStorage([]byte(requestJSON))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, storage.Close()) })
+	passbackBody := `{"message":"The ` + "`reasoning_content`" + ` in the thinking mode must be passed back to the API."}`
+	overloadBody := `{"error":{"type":"service_unavailable_error","code":"server_is_overloaded"}}`
+	adaptor := &responsesOverloadRetryTestAdaptor{responses: []*http.Response{
+		{StatusCode: http.StatusBadRequest, Body: io.NopCloser(strings.NewReader(passbackBody))},
+		{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader(overloadBody))},
+		{StatusCode: http.StatusBadRequest, Body: io.NopCloser(strings.NewReader(passbackBody))},
+		responsesRetryTestResponse("data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n"),
+	}}
+	c := responsesRetryTestContext()
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType: constant.ChannelTypeOpenAI, ChannelId: 9,
+			ChannelBaseUrl: "https://ai.input.im", UpstreamModelName: "deepseek-v4-flash",
+		},
+		RelayMode: relayconstant.RelayModeResponses,
+	}
+
+	_, err = doResponsesRequestWithOverloadRetry(c, info, adaptor, storage, 1)
+	require.NoError(t, err)
+	assert.Len(t, adaptor.bodies, 4)
+	assert.Equal(t, []bool{false, true, true, true}, adaptor.closeUpstreamConnections)
+	assert.False(t, c.GetBool(inputReasoningPassbackRetryExhaustedKey))
+}
+
 func TestResponsesOverloadRetryMarksExhaustedInputReasoningPassbackError(t *testing.T) {
 	storage, err := common.CreateBodyStorage([]byte(`{"model":"deepseek-v4-flash"}`))
 	require.NoError(t, err)
@@ -349,6 +380,25 @@ func TestResponsesOverloadRetryMarksExhaustedInputReasoningPassbackError(t *test
 		assert.True(t, closeConnection)
 	}
 	assert.False(t, info.CloseUpstreamConnection)
+
+	baseErr := types.NewErrorWithStatusCode(
+		assert.AnError,
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusBadRequest,
+	)
+	originalAutomaticDisable := common.AutomaticDisableChannelEnabled
+	originalDisableRanges := operation_setting.AutomaticDisableStatusCodeRanges
+	common.AutomaticDisableChannelEnabled = true
+	operation_setting.AutomaticDisableStatusCodeRanges = []operation_setting.StatusCodeRange{{Start: http.StatusBadRequest, End: http.StatusBadRequest}}
+	t.Cleanup(func() {
+		common.AutomaticDisableChannelEnabled = originalAutomaticDisable
+		operation_setting.AutomaticDisableStatusCodeRanges = originalDisableRanges
+	})
+	assert.True(t, service.ShouldDisableChannel(baseErr))
+
+	finalErr := markInputReasoningPassbackRetryExhaustedError(c, baseErr)
+	assert.True(t, types.IsSkipRetryError(finalErr))
+	assert.False(t, service.ShouldDisableChannel(finalErr))
 }
 
 func TestResponsesOverloadRetryReturnsLastHTTPErrorAfterExhaustion(t *testing.T) {

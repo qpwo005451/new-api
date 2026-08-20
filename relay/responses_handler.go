@@ -60,6 +60,13 @@ func filterImageGenerationTool(jsonData []byte) []byte {
 	return result
 }
 
+func markInputReasoningPassbackRetryExhaustedError(c *gin.Context, err *types.NewAPIError) *types.NewAPIError {
+	if err == nil || !c.GetBool(inputReasoningPassbackRetryExhaustedKey) {
+		return err
+	}
+	return types.NewError(err, err.GetErrorCode(), types.ErrOptionWithSkipRetry())
+}
+
 func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 	info.InitChannelMeta(c)
 	if info.RelayMode == relayconstant.RelayModeResponsesCompact &&
@@ -211,9 +218,7 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 
 		if httpResp.StatusCode != http.StatusOK {
 			newAPIError = service.RelayErrorHandler(c.Request.Context(), httpResp, false)
-			if c.GetBool(inputReasoningPassbackRetryExhaustedKey) {
-				newAPIError = types.NewError(newAPIError, newAPIError.GetErrorCode(), types.ErrOptionWithSkipRetry())
-			}
+			newAPIError = markInputReasoningPassbackRetryExhaustedError(c, newAPIError)
 			service.RecordModelMonitorPassiveHTTPFailureAsync(info, httpResp.StatusCode)
 			// reset status code 重置状态码
 			service.ResetStatusCode(newAPIError, statusCodeMappingStr)

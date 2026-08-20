@@ -45,6 +45,13 @@ func applyUpstreamContentLength(req *http.Request, info *common.RelayInfo) {
 	}
 }
 
+func applyUpstreamConnectionPolicy(req *http.Request, info *common.RelayInfo) {
+	if req == nil || info == nil {
+		return
+	}
+	req.Close = info.CloseUpstreamConnection
+}
+
 func SetupApiRequestHeader(info *common.RelayInfo, c *gin.Context, req *http.Header) {
 	if info.RelayMode == constant.RelayModeAudioTranscription || info.RelayMode == constant.RelayModeAudioTranslation {
 		// multipart/form-data
@@ -318,7 +325,7 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
 	applyUpstreamContentLength(req, info)
-	req.Close = info.CloseUpstreamConnection
+	applyUpstreamConnectionPolicy(req, info)
 	headers := req.Header
 	err = a.SetupRequestHeader(c, &headers, info)
 	if err != nil {

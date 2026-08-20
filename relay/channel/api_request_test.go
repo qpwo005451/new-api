@@ -21,6 +21,18 @@ func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
+func TestApplyUpstreamConnectionPolicy(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "https://example.com/v1/responses", nil)
+	info := &relaycommon.RelayInfo{CloseUpstreamConnection: true}
+
+	applyUpstreamConnectionPolicy(req, info)
+	require.True(t, req.Close)
+
+	info.CloseUpstreamConnection = false
+	applyUpstreamConnectionPolicy(req, info)
+	require.False(t, req.Close)
+}
+
 func TestProcessHeaderOverride_ChannelTestSkipsPassthroughRules(t *testing.T) {
 	t.Parallel()
 

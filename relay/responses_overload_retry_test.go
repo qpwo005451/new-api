@@ -46,6 +46,10 @@ func responsesRetryTestContext() *gin.Context {
 	return context
 }
 
+func skipResponsesPreOutputRetryWait(_ *gin.Context, _ responsesPreOutputRetryReason, _ int, _ string) bool {
+	return true
+}
+
 func responsesRetryTestResponse(body string) *http.Response {
 	return &http.Response{
 		StatusCode: http.StatusOK,
@@ -248,12 +252,13 @@ func TestResponsesOverloadRetryReplaysInputReasoningPassbackError(t *testing.T) 
 		RelayMode: relayconstant.RelayModeResponses,
 	}
 
-	responseAny, err := doResponsesRequestWithOverloadRetry(
+	responseAny, err := doResponsesRequestWithOverloadRetryWait(
 		responsesRetryTestContext(),
 		info,
 		adaptor,
 		storage,
 		1,
+		skipResponsesPreOutputRetryWait,
 	)
 	require.NoError(t, err)
 	require.Len(t, adaptor.bodies, 2)
@@ -346,7 +351,7 @@ func TestResponsesOverloadRetryKeepsIndependentBudgetsForMixedErrors(t *testing.
 		RelayMode: relayconstant.RelayModeResponses,
 	}
 
-	_, err = doResponsesRequestWithOverloadRetry(c, info, adaptor, storage, 1)
+	_, err = doResponsesRequestWithOverloadRetryWait(c, info, adaptor, storage, 1, skipResponsesPreOutputRetryWait)
 	require.NoError(t, err)
 	assert.Len(t, adaptor.bodies, 4)
 	assert.Equal(t, []bool{false, true, true, true}, adaptor.closeUpstreamConnections)
@@ -371,7 +376,7 @@ func TestResponsesOverloadRetryMarksExhaustedInputReasoningPassbackError(t *test
 		ChannelType: constant.ChannelTypeOpenAI, ChannelId: 9, ChannelBaseUrl: "https://ai.input.im", UpstreamModelName: "deepseek-v4-flash",
 	}, RelayMode: relayconstant.RelayModeResponses}
 
-	_, err = doResponsesRequestWithOverloadRetry(c, info, adaptor, storage, 0)
+	_, err = doResponsesRequestWithOverloadRetryWait(c, info, adaptor, storage, 0, skipResponsesPreOutputRetryWait)
 	require.NoError(t, err)
 	assert.True(t, c.GetBool(inputReasoningPassbackRetryExhaustedKey))
 	assert.Len(t, adaptor.bodies, inputReasoningPassbackMaxRetries+1)
@@ -493,6 +498,27 @@ func TestResponsesOverloadRetryReturnsLastStreamAfterExhaustion(t *testing.T) {
 	body, err := io.ReadAll(response.Body)
 	require.NoError(t, err)
 	assert.Equal(t, lastStream, string(body))
+}
+
+func TestInputReasoningPassbackRetryDelayIsBounded(t *testing.T) {
+	tests := []struct {
+		retryIndex int
+		min        time.Duration
+		max        time.Duration
+	}{
+		{retryIndex: 0, min: 500 * time.Millisecond, max: 625 * time.Millisecond},
+		{retryIndex: 1, min: time.Second, max: 1250 * time.Millisecond},
+		{retryIndex: 2, min: 2 * time.Second, max: 2500 * time.Millisecond},
+		{retryIndex: 9, min: 3 * time.Second, max: 3750 * time.Millisecond},
+	}
+
+	for _, tt := range tests {
+		for range 20 {
+			delay := inputReasoningPassbackRetryDelay(tt.retryIndex)
+			assert.GreaterOrEqual(t, delay, tt.min)
+			assert.LessOrEqual(t, delay, tt.max)
+		}
+	}
 }
 
 func TestResponsesRetryAfterDelay(t *testing.T) {

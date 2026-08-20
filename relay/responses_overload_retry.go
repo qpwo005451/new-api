@@ -32,7 +32,7 @@ const (
 	inputDeepSeekV4FlashModel               = "deepseek-v4-flash"
 	inputAPIHost                            = "ai.input.im"
 	inputReasoningPassbackRetryExhaustedKey = "input_reasoning_passback_retry_exhausted"
-	inputReasoningPassbackMaxRetries        = 5
+	inputReasoningPassbackMaxRetries        = 10
 )
 
 type responsesPreOutputRetryReason int
@@ -100,12 +100,27 @@ func isInputReasoningPassbackRetryTarget(info *relaycommon.RelayInfo) bool {
 	return strings.EqualFold(parsed.Hostname(), inputAPIHost)
 }
 
+type responsesPreOutputRetryWaitFunc func(*gin.Context, responsesPreOutputRetryReason, int, string) bool
+
 func doResponsesRequestWithOverloadRetry(
 	c *gin.Context,
 	info *relaycommon.RelayInfo,
 	adaptor responsesOverloadRetryAdaptor,
 	requestBodyStorage common.BodyStorage,
 	maxOverloadRetries int,
+) (any, error) {
+	return doResponsesRequestWithOverloadRetryWait(
+		c, info, adaptor, requestBodyStorage, maxOverloadRetries, waitResponsesPreOutputRetry,
+	)
+}
+
+func doResponsesRequestWithOverloadRetryWait(
+	c *gin.Context,
+	info *relaycommon.RelayInfo,
+	adaptor responsesOverloadRetryAdaptor,
+	requestBodyStorage common.BodyStorage,
+	maxOverloadRetries int,
+	waitForRetry responsesPreOutputRetryWaitFunc,
 ) (any, error) {
 	originalCloseUpstreamConnection := info.CloseUpstreamConnection
 	defer func() { info.CloseUpstreamConnection = originalCloseUpstreamConnection }()
@@ -170,7 +185,7 @@ func doResponsesRequestWithOverloadRetry(
 			retryLimit,
 			info.ChannelId,
 		))
-		if !waitResponsesPreOutputRetry(c, retryReason, retryIndex, httpResp.Header.Get("Retry-After")) {
+		if !waitForRetry(c, retryReason, retryIndex, httpResp.Header.Get("Retry-After")) {
 			return nil, service.RelayRequestContext(c).Err()
 		}
 	}
@@ -185,8 +200,7 @@ func waitResponsesPreOutputRetry(
 	if reason != responsesPreOutputRetryInputReasoningPassback {
 		return waitResponsesOverloadRetry(c, retryIndex, retryAfter)
 	}
-	delay := 100*time.Millisecond + time.Duration(rand.Int64N(int64(200*time.Millisecond)+1))
-	timer := time.NewTimer(delay)
+	timer := time.NewTimer(inputReasoningPassbackRetryDelay(retryIndex))
 	defer timer.Stop()
 	select {
 	case <-timer.C:
@@ -194,6 +208,14 @@ func waitResponsesPreOutputRetry(
 	case <-service.RelayRequestContext(c).Done():
 		return false
 	}
+}
+
+func inputReasoningPassbackRetryDelay(retryIndex int) time.Duration {
+	baseDelay := 500 * time.Millisecond * time.Duration(1<<min(retryIndex, 3))
+	if baseDelay > 3*time.Second {
+		baseDelay = 3 * time.Second
+	}
+	return baseDelay + time.Duration(rand.Int64N(int64(baseDelay/4)+1))
 }
 
 func waitResponsesOverloadRetry(c *gin.Context, retryIndex int, retryAfter string) bool {

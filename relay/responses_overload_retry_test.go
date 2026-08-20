@@ -9,23 +9,28 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 type responsesOverloadRetryTestAdaptor struct {
-	responses []*http.Response
-	bodies    []string
+	responses                []*http.Response
+	bodies                   []string
+	closeUpstreamConnections []bool
 }
 
-func (adaptor *responsesOverloadRetryTestAdaptor) DoRequest(_ *gin.Context, _ *relaycommon.RelayInfo, body io.Reader) (any, error) {
+func (adaptor *responsesOverloadRetryTestAdaptor) DoRequest(_ *gin.Context, info *relaycommon.RelayInfo, body io.Reader) (any, error) {
 	requestBody, err := io.ReadAll(body)
 	if err != nil {
 		return nil, err
 	}
 	adaptor.bodies = append(adaptor.bodies, string(requestBody))
+	adaptor.closeUpstreamConnections = append(adaptor.closeUpstreamConnections, info.CloseUpstreamConnection)
 	response := adaptor.responses[0]
 	adaptor.responses = adaptor.responses[1:]
 	return response, nil
@@ -147,6 +152,203 @@ func TestResponsesOverloadRetryReplaysHTTPErrorBeforeOutput(t *testing.T) {
 	body, err := io.ReadAll(response.Body)
 	require.NoError(t, err)
 	assert.Equal(t, successStream, string(body))
+}
+
+func TestShouldUseResponsesOverloadRetryIncludesNonStreamingInputReasoningPassback(t *testing.T) {
+	inputInfo := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:       constant.ChannelTypeOpenAI,
+			ChannelBaseUrl:    "https://ai.input.im/api",
+			UpstreamModelName: "deepseek-v4-flash",
+		},
+		RelayFormat: types.RelayFormatOpenAIResponses,
+		IsStream:    false,
+		RelayMode:   relayconstant.RelayModeResponses,
+	}
+	_, enabled := shouldUseResponsesOverloadRetry(inputInfo)
+	assert.True(t, enabled)
+
+	ordinaryInfo := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelBaseUrl:    "https://api.openai.com",
+			UpstreamModelName: "gpt-5.6-sol",
+		},
+		RelayFormat: types.RelayFormatOpenAIResponses,
+		IsStream:    false,
+		RelayMode:   relayconstant.RelayModeResponses,
+	}
+	_, enabled = shouldUseResponsesOverloadRetry(ordinaryInfo)
+	assert.False(t, enabled)
+}
+
+func TestResponsesInputPassbackRetryDoesNotBufferSuccessfulStreamWhenOverloadRetryDisabled(t *testing.T) {
+	storage, err := common.CreateBodyStorage([]byte(`{"model":"deepseek-v4-flash"}`))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, storage.Close()) })
+	streamBody := &countingReadCloser{Reader: strings.NewReader("data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n")}
+	adaptor := &responsesOverloadRetryTestAdaptor{responses: []*http.Response{
+		{StatusCode: http.StatusOK, Body: streamBody},
+	}}
+
+	responseAny, err := doResponsesRequestWithOverloadRetry(
+		responsesRetryTestContext(),
+		&relaycommon.RelayInfo{
+			ChannelMeta: &relaycommon.ChannelMeta{
+				ChannelType: constant.ChannelTypeOpenAI, ChannelId: 9,
+				ChannelBaseUrl: "https://ai.input.im", UpstreamModelName: "deepseek-v4-flash",
+			},
+			RelayMode: relayconstant.RelayModeResponses,
+		},
+		adaptor,
+		storage,
+		0,
+	)
+	require.NoError(t, err)
+	assert.Zero(t, streamBody.reads)
+	assert.Same(t, streamBody, responseAny.(*http.Response).Body)
+}
+
+type countingReadCloser struct {
+	io.Reader
+	reads int
+}
+
+func (body *countingReadCloser) Read(p []byte) (int, error) {
+	body.reads++
+	return body.Reader.Read(p)
+}
+
+func (body *countingReadCloser) Close() error { return nil }
+
+func TestResponsesOverloadRetryReplaysInputReasoningPassbackError(t *testing.T) {
+	requestJSON := `{"model":"deepseek-v4-flash","messages":[{"role":"assistant","reasoning_content":"prior thought","tool_calls":[]}],"stream":true}`
+	storage, err := common.CreateBodyStorage([]byte(requestJSON))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, storage.Close()) })
+
+	errorBody := `{"message":"The ` + "`reasoning_content`" + ` in the thinking mode must be passed back to the API.","type":"invalid_request_error","param":"","code":null}`
+	successStream := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n"
+	adaptor := &responsesOverloadRetryTestAdaptor{responses: []*http.Response{
+		{
+			StatusCode: http.StatusBadRequest,
+			Body:       io.NopCloser(strings.NewReader(errorBody)),
+		},
+		responsesRetryTestResponse(successStream),
+	}}
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:       constant.ChannelTypeOpenAI,
+			ChannelId:         9,
+			ChannelBaseUrl:    "https://ai.input.im",
+			UpstreamModelName: "deepseek-v4-flash",
+		},
+		IsStream:  true,
+		RelayMode: relayconstant.RelayModeResponses,
+	}
+
+	responseAny, err := doResponsesRequestWithOverloadRetry(
+		responsesRetryTestContext(),
+		info,
+		adaptor,
+		storage,
+		1,
+	)
+	require.NoError(t, err)
+	require.Len(t, adaptor.bodies, 2)
+	assert.Equal(t, requestJSON, adaptor.bodies[0])
+	assert.Equal(t, adaptor.bodies[0], adaptor.bodies[1])
+	assert.Equal(t, []bool{false, true}, adaptor.closeUpstreamConnections)
+	assert.False(t, info.CloseUpstreamConnection)
+
+	response := responseAny.(*http.Response)
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	assert.Equal(t, successStream, string(body))
+}
+
+func TestResponsesOverloadRetryDoesNotReplayOtherBadRequests(t *testing.T) {
+	tests := []struct {
+		name    string
+		baseURL string
+		model   string
+		body    string
+	}{
+		{
+			name:    "different host",
+			baseURL: "https://input.codes",
+			model:   "deepseek-v4-flash",
+			body:    `{"message":"The ` + "`reasoning_content`" + ` in the thinking mode must be passed back to the API."}`,
+		},
+		{
+			name:    "different model",
+			baseURL: "https://ai.input.im",
+			model:   "gpt-5.6-luna",
+			body:    `{"message":"The ` + "`reasoning_content`" + ` in the thinking mode must be passed back to the API."}`,
+		},
+		{
+			name:    "different message",
+			baseURL: "https://ai.input.im",
+			model:   "deepseek-v4-flash",
+			body:    `{"message":"reasoning_content is invalid"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			storage, err := common.CreateBodyStorage([]byte(`{"model":"deepseek-v4-flash"}`))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, storage.Close()) })
+			adaptor := &responsesOverloadRetryTestAdaptor{responses: []*http.Response{
+				{StatusCode: http.StatusBadRequest, Body: io.NopCloser(strings.NewReader(tt.body))},
+				responsesRetryTestResponse("unused"),
+			}}
+
+			responseAny, err := doResponsesRequestWithOverloadRetry(
+				responsesRetryTestContext(),
+				&relaycommon.RelayInfo{
+					ChannelMeta: &relaycommon.ChannelMeta{
+						ChannelType: constant.ChannelTypeOpenAI, ChannelId: 9, ChannelBaseUrl: tt.baseURL, UpstreamModelName: tt.model,
+					},
+					RelayMode: relayconstant.RelayModeResponses,
+				},
+				adaptor,
+				storage,
+				1,
+			)
+			require.NoError(t, err)
+			assert.Len(t, adaptor.bodies, 1)
+			assert.Equal(t, http.StatusBadRequest, responseAny.(*http.Response).StatusCode)
+		})
+	}
+}
+
+func TestResponsesOverloadRetryMarksExhaustedInputReasoningPassbackError(t *testing.T) {
+	storage, err := common.CreateBodyStorage([]byte(`{"model":"deepseek-v4-flash"}`))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, storage.Close()) })
+	errorBody := `{"message":"The ` + "`reasoning_content`" + ` in the thinking mode must be passed back to the API."}`
+	responses := make([]*http.Response, inputReasoningPassbackMaxRetries+1)
+	for i := range responses {
+		responses[i] = &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Body:       io.NopCloser(strings.NewReader(errorBody)),
+		}
+	}
+	adaptor := &responsesOverloadRetryTestAdaptor{responses: responses}
+	c := responsesRetryTestContext()
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
+		ChannelType: constant.ChannelTypeOpenAI, ChannelId: 9, ChannelBaseUrl: "https://ai.input.im", UpstreamModelName: "deepseek-v4-flash",
+	}, RelayMode: relayconstant.RelayModeResponses}
+
+	_, err = doResponsesRequestWithOverloadRetry(c, info, adaptor, storage, 0)
+	require.NoError(t, err)
+	assert.True(t, c.GetBool(inputReasoningPassbackRetryExhaustedKey))
+	assert.Len(t, adaptor.bodies, inputReasoningPassbackMaxRetries+1)
+	assert.False(t, adaptor.closeUpstreamConnections[0])
+	for _, closeConnection := range adaptor.closeUpstreamConnections[1:] {
+		assert.True(t, closeConnection)
+	}
+	assert.False(t, info.CloseUpstreamConnection)
 }
 
 func TestResponsesOverloadRetryReturnsLastHTTPErrorAfterExhaustion(t *testing.T) {

@@ -7,22 +7,41 @@ import (
 	"io"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
 )
 
-const responsesOverloadRetryPrefixLimit = 1 << 20
+const (
+	responsesOverloadRetryPrefixLimit       = 1 << 20
+	inputReasoningPassbackErrorMessage      = "The `reasoning_content` in the thinking mode must be passed back to the API."
+	inputDeepSeekV4FlashModel               = "deepseek-v4-flash"
+	inputAPIHost                            = "ai.input.im"
+	inputReasoningPassbackRetryExhaustedKey = "input_reasoning_passback_retry_exhausted"
+	inputReasoningPassbackMaxRetries        = 5
+)
+
+type responsesPreOutputRetryReason int
+
+const (
+	responsesPreOutputRetryNone responsesPreOutputRetryReason = iota
+	responsesPreOutputRetryOverload
+	responsesPreOutputRetryInputReasoningPassback
+)
 
 type responsesOverloadRetryAdaptor interface {
 	DoRequest(*gin.Context, *relaycommon.RelayInfo, io.Reader) (any, error)
@@ -48,11 +67,37 @@ func (body *prefixedResponseBody) Close() error {
 }
 
 func shouldUseResponsesOverloadRetry(info *relaycommon.RelayInfo) (int, bool) {
-	setting := operation_setting.GetResponsesOverloadRetrySetting()
-	if !setting.Enabled || info == nil || !info.IsStream || info.RelayFormat != types.RelayFormatOpenAIResponses {
+	if info == nil || info.RelayFormat != types.RelayFormatOpenAIResponses {
 		return 0, false
 	}
-	return setting.MaxRetries, true
+	inputReasoningRetry := isInputReasoningPassbackRetryTarget(info)
+	setting := operation_setting.GetResponsesOverloadRetrySetting()
+	if setting.Enabled && info.IsStream {
+		return setting.MaxRetries, true
+	}
+	if inputReasoningRetry {
+		return 0, true
+	}
+	return 0, false
+}
+
+func isInputReasoningPassbackRetryTarget(info *relaycommon.RelayInfo) bool {
+	if info == nil || info.RelayMode != relayconstant.RelayModeResponses ||
+		info.ChannelType != constant.ChannelTypeOpenAI ||
+		model_setting.GetGlobalSettings().PassThroughRequestEnabled ||
+		info.ChannelSetting.PassThroughBodyEnabled ||
+		!strings.EqualFold(strings.TrimSpace(info.UpstreamModelName), inputDeepSeekV4FlashModel) {
+		return false
+	}
+	baseURL := strings.TrimSpace(info.ChannelBaseUrl)
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Hostname() == "" {
+		parsed, err = url.Parse("//" + baseURL)
+		if err != nil {
+			return false
+		}
+	}
+	return strings.EqualFold(parsed.Hostname(), inputAPIHost)
 }
 
 func doResponsesRequestWithOverloadRetry(
@@ -62,7 +107,11 @@ func doResponsesRequestWithOverloadRetry(
 	requestBodyStorage common.BodyStorage,
 	maxRetries int,
 ) (any, error) {
+	originalCloseUpstreamConnection := info.CloseUpstreamConnection
+	defer func() { info.CloseUpstreamConnection = originalCloseUpstreamConnection }()
+	closeUpstreamConnection := false
 	for attempt := 0; ; attempt++ {
+		info.CloseUpstreamConnection = originalCloseUpstreamConnection || closeUpstreamConnection
 		if _, err := requestBodyStorage.Seek(0, io.SeekStart); err != nil {
 			return nil, fmt.Errorf("seek Responses request body for overload retry: %w", err)
 		}
@@ -76,26 +125,61 @@ func doResponsesRequestWithOverloadRetry(
 			return resp, nil
 		}
 
-		overloaded := false
+		retryReason := responsesPreOutputRetryNone
 		if httpResp.StatusCode == http.StatusOK {
-			overloaded = bufferResponsesStreamUntilProgress(httpResp)
+			if maxRetries > 0 && bufferResponsesStreamUntilProgress(httpResp) {
+				retryReason = responsesPreOutputRetryOverload
+			}
 		} else {
-			overloaded = bufferResponsesHTTPError(httpResp)
+			retryReason = bufferResponsesHTTPError(httpResp, info)
 		}
-		if !overloaded || attempt >= maxRetries {
+		retryLimit := maxRetries
+		if retryReason == responsesPreOutputRetryInputReasoningPassback {
+			retryLimit = inputReasoningPassbackMaxRetries
+		}
+		if retryReason == responsesPreOutputRetryNone || attempt >= retryLimit {
+			if retryReason == responsesPreOutputRetryInputReasoningPassback {
+				c.Set(inputReasoningPassbackRetryExhaustedKey, true)
+			}
 			return httpResp, nil
 		}
 
 		service.CloseResponseBodyGracefully(httpResp)
+		message := "OpenAI Responses overload before output"
+		if retryReason == responsesPreOutputRetryInputReasoningPassback {
+			message = "Input reasoning passback rejected before output"
+		}
 		logger.LogWarn(c, fmt.Sprintf(
-			"OpenAI Responses overload before output; retrying same channel (attempt %d/%d, channel #%d)",
+			"%s; retrying same channel and request body (attempt %d/%d, channel #%d)",
+			message,
 			attempt+1,
-			maxRetries,
+			retryLimit,
 			info.ChannelId,
 		))
-		if !waitResponsesOverloadRetry(c, attempt, httpResp.Header.Get("Retry-After")) {
+		closeUpstreamConnection = retryReason == responsesPreOutputRetryInputReasoningPassback
+		if !waitResponsesPreOutputRetry(c, retryReason, attempt, httpResp.Header.Get("Retry-After")) {
 			return nil, service.RelayRequestContext(c).Err()
 		}
+	}
+}
+
+func waitResponsesPreOutputRetry(
+	c *gin.Context,
+	reason responsesPreOutputRetryReason,
+	retryIndex int,
+	retryAfter string,
+) bool {
+	if reason != responsesPreOutputRetryInputReasoningPassback {
+		return waitResponsesOverloadRetry(c, retryIndex, retryAfter)
+	}
+	delay := 100*time.Millisecond + time.Duration(rand.Int64N(int64(200*time.Millisecond)+1))
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-service.RelayRequestContext(c).Done():
+		return false
 	}
 }
 
@@ -140,9 +224,9 @@ func responsesRetryAfterDelay(value string, now time.Time) time.Duration {
 // bufferResponsesStreamUntilProgress keeps lifecycle-only events away from the
 // client until the stream either produces meaningful output or reports an
 // overload. The original bytes are restored before returning in every case.
-func bufferResponsesHTTPError(resp *http.Response) bool {
+func bufferResponsesHTTPError(resp *http.Response, info *relaycommon.RelayInfo) responsesPreOutputRetryReason {
 	if resp == nil || resp.Body == nil {
-		return false
+		return responsesPreOutputRetryNone
 	}
 	originalBody := resp.Body
 	body, err := io.ReadAll(io.LimitReader(originalBody, responsesOverloadRetryPrefixLimit+1))
@@ -151,14 +235,31 @@ func bufferResponsesHTTPError(resp *http.Response) bool {
 		closer: originalBody,
 	}
 	if err != nil || len(body) > responsesOverloadRetryPrefixLimit {
-		return false
+		return responsesPreOutputRetryNone
 	}
 	var envelope responsesStreamErrorEnvelope
 	if common.Unmarshal(body, &envelope) != nil {
-		return false
+		return responsesPreOutputRetryNone
 	}
-	return isResponsesOverloadError(envelope.Code, envelope.Type+" "+envelope.Message, envelope.Error) ||
-		(envelope.Response != nil && isResponsesOverloadError(nil, "", envelope.Response.Error))
+	if isResponsesOverloadError(envelope.Code, envelope.Type+" "+envelope.Message, envelope.Error) ||
+		(envelope.Response != nil && isResponsesOverloadError(nil, "", envelope.Response.Error)) {
+		return responsesPreOutputRetryOverload
+	}
+	if resp.StatusCode == http.StatusBadRequest && isInputReasoningPassbackRetryTarget(info) &&
+		isInputReasoningPassbackError(envelope) {
+		return responsesPreOutputRetryInputReasoningPassback
+	}
+	return responsesPreOutputRetryNone
+}
+
+func isInputReasoningPassbackError(envelope responsesStreamErrorEnvelope) bool {
+	if strings.TrimSpace(envelope.Message) == inputReasoningPassbackErrorMessage {
+		return true
+	}
+	if openAIErr := dto.GetOpenAIError(envelope.Error); openAIErr != nil {
+		return strings.TrimSpace(openAIErr.Message) == inputReasoningPassbackErrorMessage
+	}
+	return false
 }
 
 func bufferResponsesStreamUntilProgress(resp *http.Response) bool {

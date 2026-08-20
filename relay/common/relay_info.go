@@ -197,6 +197,8 @@ type RelayInfo struct {
 	// convOptions caches the converter settings snapshot (see ConvOptions).
 	convOptions *convmeta.Options
 
+	CloseUpstreamConnection bool
+
 	ThinkingContentInfo
 	TokenCountMeta
 	*ClaudeConvertInfo

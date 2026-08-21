@@ -235,6 +235,36 @@ func TestModelMonitorAggregateKeepsAllAvailablePathsNormal(t *testing.T) {
 	assert.Equal(t, ModelMonitorSiteHealthNormal, summary.Health)
 }
 
+func TestModelMonitorSummaryFromPathsUsesPersistedStateAndRecentQuality(t *testing.T) {
+	now := int64(200_000)
+	targets := []ModelMonitorTarget{{ID: 1, ModelName: "gpt-5", Weight: 5, Enabled: true}}
+	paths := []ModelMonitorSummaryPath{
+		{
+			TargetID: 1, ChannelID: 9, ModelName: "gpt-5",
+			Status: ModelMonitorStatusAvailable, LastObservedAt: now - 30, LastObservationID: 10,
+			LatestStatus: ModelMonitorStatusUnavailable, LatestError: "older at same second",
+		},
+		{
+			TargetID: 1, ChannelID: 10, ModelName: "gpt-5",
+			Status: ModelMonitorStatusAvailable, LastObservedAt: now - 30, LastObservationID: 11,
+			LatestStatus: ModelMonitorStatusAvailable,
+		},
+	}
+	recent := []ModelMonitorObservation{
+		{TargetID: 1, ChannelID: 9, ModelName: "gpt-5", Status: ModelMonitorStatusAvailable, ObservedAt: now - 60},
+		{TargetID: 1, ChannelID: 9, ModelName: "gpt-5", Status: ModelMonitorStatusUnavailable, ObservedAt: now - 30},
+		{TargetID: 1, ChannelID: 9, ModelName: "gpt-5", Status: ModelMonitorStatusUnavailable, ObservedAt: now - 25*60*60},
+	}
+
+	summary := BuildModelMonitorSiteSummaryFromPaths(targets, paths, recent, now, 300)
+	require.Len(t, summary.Models, 1)
+	assert.Equal(t, ModelMonitorStatusAvailable, summary.Models[0].Status)
+	assert.Equal(t, ModelMonitorStatusAvailable, summary.Models[0].LatestStatus)
+	assert.Empty(t, summary.Models[0].LatestErrorSummary)
+	assert.Equal(t, 50, summary.Score)
+	assert.Equal(t, ModelMonitorSiteHealthDegraded, summary.Health)
+}
+
 func TestModelMonitorAggregateCapsScoreByRecentQuality(t *testing.T) {
 	targets := []ModelMonitorTarget{
 		{ID: 1, SiteID: 1, ModelName: "gpt-5", Weight: 5, Enabled: true},

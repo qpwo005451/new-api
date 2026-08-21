@@ -261,67 +261,148 @@ func buildModelMonitorSiteResponse(siteID int64, includeHistory bool) (modelMoni
 	if err := model.DB.Where("site_id = ? AND enabled = ?", siteID, true).Order("model_name ASC").Find(&targets).Error; err != nil {
 		return modelMonitorSiteAPIResponse{}, err
 	}
-	observations := make([]model.ModelMonitorObservation, 0)
-	query := model.DB.Where("site_id = ?", siteID).Order("observed_at DESC, id DESC")
-	if err := query.Find(&observations).Error; err != nil {
-		return modelMonitorSiteAPIResponse{}, err
-	}
 	siteChannels, channelIDs, err := loadModelMonitorSiteChannels(siteID)
 	if err != nil {
 		return modelMonitorSiteAPIResponse{}, err
 	}
-	channelsByID := make(map[int]model.Channel, len(siteChannels))
-	for _, channel := range siteChannels {
-		channelsByID[channel.Id] = channel
-	}
-	filteredObservations := make([]model.ModelMonitorObservation, 0, len(observations))
-	for _, observation := range observations {
-		channel, ok := channelsByID[observation.ChannelID]
-		if ok && channel.SupportsModel(observation.ModelName) {
-			filteredObservations = append(filteredObservations, observation)
+
+	now := common.GetTimestamp()
+	recentObservations := make([]model.ModelMonitorObservation, 0)
+	observationQuery, hasEligiblePaths := modelMonitorObservationQuery(siteID, targets, siteChannels)
+	if hasEligiblePaths {
+		if err := observationQuery.
+			Where("observed_at >= ?", now-24*60*60).
+			Order("observed_at DESC, id DESC").
+			Find(&recentObservations).Error; err != nil {
+			return modelMonitorSiteAPIResponse{}, err
 		}
 	}
-	observations = filteredObservations
-	if includeHistory && len(observations) > 200 {
-		observations = observations[:200]
-	}
-	current := latestModelMonitorPathObservations(observations)
 
+	paths, err := loadModelMonitorSummaryPaths(siteID, targets, siteChannels)
+	if err != nil {
+		return modelMonitorSiteAPIResponse{}, err
+	}
 	response := modelMonitorSiteAPIResponse{
 		Site:       site,
-		Summary:    model.BuildModelMonitorSiteSummary(targets, observations, common.GetTimestamp(), int64(operation_setting.GetModelMonitorSetting().UnknownGraceMinutes*60)),
+		Summary:    model.BuildModelMonitorSiteSummaryFromPaths(targets, paths, recentObservations, now, int64(operation_setting.GetModelMonitorSetting().UnknownGraceMinutes*60)),
 		ChannelIDs: channelIDs,
 	}
-	for _, observation := range current {
-		if observation.ObservedAt > response.LatestObservedAt {
-			response.LatestObservedAt = observation.ObservedAt
+	for _, path := range paths {
+		if path.LastObservedAt > response.LatestObservedAt {
+			response.LatestObservedAt = path.LastObservedAt
 		}
 	}
 	if response.LatestObservedAt > 0 {
-		freshness := common.GetTimestamp() - response.LatestObservedAt
+		freshness := now - response.LatestObservedAt
 		if freshness < 0 {
 			freshness = 0
 		}
 		response.FreshnessSeconds = &freshness
 	}
-	if includeHistory {
+	if includeHistory && hasEligiblePaths {
+		observations := make([]model.ModelMonitorObservation, 0, 200)
+		historyQuery, _ := modelMonitorObservationQuery(siteID, targets, siteChannels)
+		if err := historyQuery.
+			Order("observed_at DESC, id DESC").
+			Limit(200).
+			Find(&observations).Error; err != nil {
+			return modelMonitorSiteAPIResponse{}, err
+		}
 		response.Observations = observations
 	}
 	return response, nil
 }
 
-func latestModelMonitorPathObservations(observations []model.ModelMonitorObservation) []model.ModelMonitorObservation {
-	latest := make([]model.ModelMonitorObservation, 0)
-	seen := make(map[[2]int64]struct{})
-	for _, observation := range observations {
-		key := [2]int64{observation.TargetID, int64(observation.ChannelID)}
-		if _, ok := seen[key]; ok {
+func modelMonitorObservationQuery(
+	siteID int64,
+	targets []model.ModelMonitorTarget,
+	channels []model.Channel,
+) (*gorm.DB, bool) {
+	conditions := make([]string, 0, len(channels))
+	args := make([]any, 0, len(channels)*2)
+	for _, channel := range channels {
+		models := make([]string, 0, len(targets))
+		for _, target := range targets {
+			if target.Enabled && channel.SupportsModel(target.ModelName) {
+				models = append(models, target.ModelName)
+			}
+		}
+		if len(models) == 0 {
 			continue
 		}
-		seen[key] = struct{}{}
-		latest = append(latest, observation)
+		conditions = append(conditions, "(channel_id = ? AND model_name IN ?)")
+		args = append(args, channel.Id, models)
 	}
-	return latest
+	query := model.DB.Where("site_id = ?", siteID)
+	if len(conditions) == 0 {
+		return query, false
+	}
+	return query.Where("("+strings.Join(conditions, " OR ")+")", args...), true
+}
+
+func loadModelMonitorSummaryPaths(
+	siteID int64,
+	targets []model.ModelMonitorTarget,
+	channels []model.Channel,
+) ([]model.ModelMonitorSummaryPath, error) {
+	paths := make([]model.ModelMonitorSummaryPath, 0)
+	statusValues := []string{
+		model.ModelMonitorStatusAvailable,
+		model.ModelMonitorStatusLimited,
+		model.ModelMonitorStatusUnavailable,
+	}
+	for _, target := range targets {
+		if !target.Enabled {
+			continue
+		}
+		for _, channel := range channels {
+			if !channel.SupportsModel(target.ModelName) {
+				continue
+			}
+			pathQuery := model.DB.Where(
+				"site_id = ? AND target_id = ? AND channel_id = ? AND model_name = ?",
+				siteID,
+				target.ID,
+				channel.Id,
+				target.ModelName,
+			)
+			var latest model.ModelMonitorObservation
+			if err := pathQuery.Order("observed_at DESC, id DESC").Limit(1).Find(&latest).Error; err != nil {
+				return nil, err
+			}
+			if latest.ID == 0 {
+				continue
+			}
+
+			observations := make([]model.ModelMonitorObservation, 0, 4)
+			if err := model.DB.Where(
+				"site_id = ? AND target_id = ? AND channel_id = ? AND model_name = ? AND status IN ?",
+				siteID,
+				target.ID,
+				channel.Id,
+				target.ModelName,
+				statusValues,
+			).Order("observed_at DESC, id DESC").Limit(4).Find(&observations).Error; err != nil {
+				return nil, err
+			}
+			path := model.ModelMonitorSummaryPath{
+				TargetID:  target.ID,
+				ChannelID: channel.Id,
+				ModelName: target.ModelName,
+				Status:    model.ModelMonitorStatusUnknown,
+			}
+			if replayed := model.BuildModelMonitorSummaryPaths(observations); len(replayed) > 0 {
+				path = replayed[0]
+			}
+			path.LastObservedAt = latest.ObservedAt
+			path.LastObservationID = latest.ID
+			path.LatestStatus = latest.Status
+			path.LatestFailureType = latest.FailureType
+			path.LatestError = latest.ErrorSummary
+			paths = append(paths, path)
+		}
+	}
+	return paths, nil
 }
 
 func loadModelMonitorSiteChannels(siteID int64) ([]model.Channel, []int, error) {

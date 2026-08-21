@@ -25,7 +25,14 @@ import {
   Save,
   Server,
 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import {
+  Component,
+  lazy,
+  type ReactNode,
+  Suspense,
+  useMemo,
+  useState,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -38,7 +45,15 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
@@ -55,10 +70,43 @@ import {
 } from './components/model-summary-card'
 import { MonitorTasksPanel } from './components/monitor-tasks-panel'
 import { RunMonitorDialog } from './components/run-monitor-dialog'
-import { SiteDetailDialog } from './components/site-detail-dialog'
-import { SiteEditor } from './components/site-editor'
 import { SiteSummaryCard } from './components/site-summary-card'
 import type { ModelMonitorConfig, ModelMonitorSiteConfig } from './types'
+
+const SiteDetailDialog = lazy(() =>
+  import('./components/site-detail-dialog').then((module) => ({
+    default: module.SiteDetailDialog,
+  }))
+)
+const SiteEditor = lazy(() =>
+  import('./components/site-editor').then((module) => ({
+    default: module.SiteEditor,
+  }))
+)
+
+interface LazyLoadBoundaryProps {
+  children: ReactNode
+  fallback: ReactNode
+}
+
+interface LazyLoadBoundaryState {
+  failed: boolean
+}
+
+class LazyLoadBoundary extends Component<
+  LazyLoadBoundaryProps,
+  LazyLoadBoundaryState
+> {
+  state: LazyLoadBoundaryState = { failed: false }
+
+  static getDerivedStateFromError(): LazyLoadBoundaryState {
+    return { failed: true }
+  }
+
+  render() {
+    return this.state.failed ? this.props.fallback : this.props.children
+  }
+}
 
 function createSite(): ModelMonitorSiteConfig {
   return {
@@ -91,11 +139,14 @@ export function ModelMonitor() {
     queryKey: ['model-monitor', 'sites'],
     queryFn: getModelMonitorSites,
     retry: false,
+    staleTime: 30_000,
     refetchInterval: 30_000,
+    refetchOnWindowFocus: false,
   })
   const config = draft ?? configQuery.data?.data
   const sites = useMemo(() => sitesQuery.data?.data ?? [], [sitesQuery.data])
   const modelSummaries = useMemo(() => {
+    if (viewMode !== 'models') return []
     const models = new Map<
       string,
       { modelName: string; weight: number; sites: ModelSummarySite[] }
@@ -129,7 +180,7 @@ export function ModelMonitor() {
           right.weight - left.weight ||
           left.modelName.localeCompare(right.modelName)
       )
-  }, [sites])
+  }, [sites, viewMode])
 
   const invalidate = async () => {
     await Promise.all([
@@ -426,23 +477,53 @@ export function ModelMonitor() {
                   )}
                 </div>
                 {showEditor && (
-                  <div className='space-y-3'>
-                    {config.sites.map((site, index) => (
-                      <SiteEditor
-                        key={site.id ?? `new-${index}`}
-                        site={site}
-                        onChange={(next) => replaceSite(index, next)}
-                        onRemove={() =>
-                          setDraft({
-                            ...config,
-                            sites: config.sites.filter(
-                              (_, itemIndex) => itemIndex !== index
-                            ),
-                          })
-                        }
-                      />
-                    ))}
-                  </div>
+                  <LazyLoadBoundary
+                    fallback={
+                      <div className='flex items-center gap-2'>
+                        <p className='text-destructive text-sm'>
+                          {t('Failed to load')}
+                        </p>
+                        <Button
+                          variant='outline'
+                          size='sm'
+                          onClick={() => window.location.reload()}
+                        >
+                          <RefreshCw
+                            data-icon='inline-start'
+                            aria-hidden='true'
+                          />
+                          {t('Retry')}
+                        </Button>
+                      </div>
+                    }
+                  >
+                    <Suspense
+                      fallback={
+                        <div className='text-muted-foreground flex items-center gap-2 text-sm'>
+                          <Spinner aria-hidden='true' />
+                          {t('Loading...')}
+                        </div>
+                      }
+                    >
+                      <div className='space-y-3'>
+                        {config.sites.map((site, index) => (
+                          <SiteEditor
+                            key={site.id ?? `new-${index}`}
+                            site={site}
+                            onChange={(next) => replaceSite(index, next)}
+                            onRemove={() =>
+                              setDraft({
+                                ...config,
+                                sites: config.sites.filter(
+                                  (_, itemIndex) => itemIndex !== index
+                                ),
+                              })
+                            }
+                          />
+                        ))}
+                      </div>
+                    </Suspense>
+                  </LazyLoadBoundary>
                 )}
               </CardContent>
             </Card>
@@ -455,11 +536,48 @@ export function ModelMonitor() {
         onOpenChange={setRunDialogOpen}
         onConfirm={() => runMutation.mutate()}
       />
-      <SiteDetailDialog
-        siteId={detailSelection?.siteId ?? null}
-        modelName={detailSelection?.modelName}
-        onOpenChange={(open) => !open && setDetailSelection(null)}
-      />
+      {detailSelection && (
+        <LazyLoadBoundary
+          fallback={
+            <Dialog open onOpenChange={() => setDetailSelection(null)}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>{t('Failed to load')}</DialogTitle>
+                  <DialogDescription>
+                    {t('Oops! Something went wrong')}
+                  </DialogDescription>
+                </DialogHeader>
+                <Button onClick={() => window.location.reload()}>
+                  <RefreshCw data-icon='inline-start' aria-hidden='true' />
+                  {t('Retry')}
+                </Button>
+              </DialogContent>
+            </Dialog>
+          }
+        >
+          <Suspense
+            fallback={
+              <Dialog open onOpenChange={() => setDetailSelection(null)}>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>{t('Loading...')}</DialogTitle>
+                  </DialogHeader>
+                  <div className='text-muted-foreground flex items-center gap-2'>
+                    <Spinner aria-hidden='true' />
+                    <span>{t('Loading...')}</span>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            }
+          >
+            <SiteDetailDialog
+              siteId={detailSelection.siteId}
+              modelName={detailSelection.modelName}
+              onOpenChange={(open) => !open && setDetailSelection(null)}
+            />
+          </Suspense>
+        </LazyLoadBoundary>
+      )}
     </>
   )
 }

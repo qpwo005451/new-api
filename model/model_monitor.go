@@ -109,11 +109,11 @@ type ModelMonitorPriceSnapshot struct {
 }
 
 type ModelMonitorObservation struct {
-	ID                  int64  `json:"id" gorm:"primaryKey"`
-	SiteID              int64  `json:"site_id" gorm:"not null;index:idx_model_monitor_observation_site_model_time,priority:1"`
-	ChannelID           int    `json:"channel_id" gorm:"not null;index:idx_model_monitor_observation_channel_time,priority:1"`
-	TargetID            int64  `json:"target_id" gorm:"index"`
-	ModelName           string `json:"model_name" gorm:"type:varchar(255);not null;index:idx_model_monitor_observation_site_model_time,priority:2"`
+	ID                  int64  `json:"id" gorm:"primaryKey;index:idx_model_monitor_observation_site_time,priority:3;index:idx_model_monitor_observation_path_time,priority:6"`
+	SiteID              int64  `json:"site_id" gorm:"not null;index:idx_model_monitor_observation_site_model_time,priority:1;index:idx_model_monitor_observation_site_time,priority:1;index:idx_model_monitor_observation_path_time,priority:1"`
+	ChannelID           int    `json:"channel_id" gorm:"not null;index:idx_model_monitor_observation_channel_time,priority:1;index:idx_model_monitor_observation_path_time,priority:3"`
+	TargetID            int64  `json:"target_id" gorm:"index;index:idx_model_monitor_observation_path_time,priority:2"`
+	ModelName           string `json:"model_name" gorm:"type:varchar(255);not null;index:idx_model_monitor_observation_site_model_time,priority:2;index:idx_model_monitor_observation_path_time,priority:4"`
 	UpstreamModelName   string `json:"upstream_model_name" gorm:"type:varchar(255)"`
 	UpstreamRequestID   string `json:"upstream_request_id,omitempty" gorm:"type:varchar(128);index:idx_model_monitor_observation_upstream_request"`
 	Status              string `json:"status" gorm:"type:varchar(32);not null;index"`
@@ -129,7 +129,7 @@ type ModelMonitorObservation struct {
 	PriceSnapshotID     int64  `json:"price_snapshot_id" gorm:"index"`
 	CostMicrousd        int64  `json:"cost_microusd" gorm:"bigint"`
 	CostKind            string `json:"cost_kind" gorm:"type:varchar(32)"`
-	ObservedAt          int64  `json:"observed_at" gorm:"bigint;not null;index:idx_model_monitor_observation_site_model_time,priority:3;index:idx_model_monitor_observation_channel_time,priority:2"`
+	ObservedAt          int64  `json:"observed_at" gorm:"bigint;not null;index:idx_model_monitor_observation_site_model_time,priority:3;index:idx_model_monitor_observation_channel_time,priority:2;index:idx_model_monitor_observation_site_time,priority:2;index:idx_model_monitor_observation_path_time,priority:5"`
 	CreatedAt           int64  `json:"created_at" gorm:"bigint;index"`
 }
 
@@ -313,17 +313,70 @@ func GetModelMonitorProbeScheduleState(siteID int64, targetID int64, channelID i
 	return state, nil
 }
 
-func BuildModelMonitorSiteSummary(targets []ModelMonitorTarget, observations []ModelMonitorObservation, now int64, unknownGraceSeconds int64) ModelMonitorSiteSummary {
+type ModelMonitorSummaryPath struct {
+	TargetID          int64
+	ChannelID         int
+	ModelName         string
+	Status            string
+	LastObservedAt    int64
+	LastObservationID int64
+	LatestStatus      string
+	LatestFailureType string
+	LatestError       string
+}
+
+// BuildModelMonitorSummaryPaths replays a bounded observation set into the
+// same per-path hysteresis representation used by persisted path states.
+func BuildModelMonitorSummaryPaths(observations []ModelMonitorObservation) []ModelMonitorSummaryPath {
+	byPath := make(map[[2]int64][]ModelMonitorObservation)
+	for _, observation := range observations {
+		key := [2]int64{observation.TargetID, int64(observation.ChannelID)}
+		byPath[key] = append(byPath[key], observation)
+	}
+	paths := make([]ModelMonitorSummaryPath, 0, len(byPath))
+	for key, pathObservations := range byPath {
+		status, observedAt := deriveModelMonitorPathStatus(pathObservations)
+		latest := pathObservations[0]
+		for _, observation := range pathObservations[1:] {
+			if observation.ObservedAt > latest.ObservedAt ||
+				(observation.ObservedAt == latest.ObservedAt && observation.ID > latest.ID) {
+				latest = observation
+			}
+		}
+		paths = append(paths, ModelMonitorSummaryPath{
+			TargetID:          key[0],
+			ChannelID:         int(key[1]),
+			ModelName:         latest.ModelName,
+			Status:            status,
+			LastObservedAt:    observedAt,
+			LastObservationID: latest.ID,
+			LatestStatus:      latest.Status,
+			LatestFailureType: latest.FailureType,
+			LatestError:       latest.ErrorSummary,
+		})
+	}
+	return paths
+}
+
+// BuildModelMonitorSiteSummaryFromPaths builds the current summary from the
+// persisted path state while using only recent observations for the 24-hour
+// quality score. This keeps summary cost bounded as observation history grows.
+func BuildModelMonitorSiteSummaryFromPaths(
+	targets []ModelMonitorTarget,
+	paths []ModelMonitorSummaryPath,
+	recentObservations []ModelMonitorObservation,
+	now int64,
+	unknownGraceSeconds int64,
+) ModelMonitorSiteSummary {
 	targetsByModel := make(map[string]ModelMonitorTarget, len(targets))
 	for _, target := range targets {
 		if !target.Enabled {
 			continue
 		}
 		modelName := strings.TrimSpace(target.ModelName)
-		if modelName == "" {
-			continue
+		if modelName != "" {
+			targetsByModel[modelName] = target
 		}
-		targetsByModel[modelName] = target
 	}
 
 	modelNames := make([]string, 0, len(targetsByModel))
@@ -332,27 +385,25 @@ func BuildModelMonitorSiteSummary(targets []ModelMonitorTarget, observations []M
 	}
 	sort.Strings(modelNames)
 
-	observationsByModelPath := make(map[string]map[[2]int64][]ModelMonitorObservation, len(modelNames))
-	observationsByModel := make(map[string][]ModelMonitorObservation, len(modelNames))
-	latestObservationByModel := make(map[string]ModelMonitorObservation, len(modelNames))
-	for _, observation := range observations {
-		if _, ok := targetsByModel[observation.ModelName]; !ok {
+	pathsByModel := make(map[string][]ModelMonitorSummaryPath, len(modelNames))
+	latestPathByModel := make(map[string]ModelMonitorSummaryPath, len(modelNames))
+	for _, path := range paths {
+		if _, ok := targetsByModel[path.ModelName]; !ok {
 			continue
 		}
-		observationsByModel[observation.ModelName] = append(observationsByModel[observation.ModelName], observation)
-		latestObservation, exists := latestObservationByModel[observation.ModelName]
-		if !exists ||
-			observation.ObservedAt > latestObservation.ObservedAt ||
-			(observation.ObservedAt == latestObservation.ObservedAt && observation.ID > latestObservation.ID) {
-			latestObservationByModel[observation.ModelName] = observation
+		pathsByModel[path.ModelName] = append(pathsByModel[path.ModelName], path)
+		latest, exists := latestPathByModel[path.ModelName]
+		if !exists || path.LastObservedAt > latest.LastObservedAt ||
+			(path.LastObservedAt == latest.LastObservedAt && path.LastObservationID > latest.LastObservationID) {
+			latestPathByModel[path.ModelName] = path
 		}
-		paths := observationsByModelPath[observation.ModelName]
-		if paths == nil {
-			paths = make(map[[2]int64][]ModelMonitorObservation)
-			observationsByModelPath[observation.ModelName] = paths
+	}
+
+	recentByModel := make(map[string][]ModelMonitorObservation, len(modelNames))
+	for _, observation := range recentObservations {
+		if _, ok := targetsByModel[observation.ModelName]; ok {
+			recentByModel[observation.ModelName] = append(recentByModel[observation.ModelName], observation)
 		}
-		key := [2]int64{observation.TargetID, int64(observation.ChannelID)}
-		paths[key] = append(paths[key], observation)
 	}
 
 	summary := ModelMonitorSiteSummary{
@@ -364,12 +415,11 @@ func BuildModelMonitorSiteSummary(targets []ModelMonitorTarget, observations []M
 	allUnavailable := len(modelNames) > 0
 	for _, modelName := range modelNames {
 		target := targetsByModel[modelName]
-		pathStates := make([]ModelMonitorObservation, 0, len(observationsByModelPath[modelName]))
-		for _, pathObservations := range observationsByModelPath[modelName] {
-			status, observedAt := deriveModelMonitorPathStatus(pathObservations)
+		pathStates := make([]ModelMonitorObservation, 0, len(pathsByModel[modelName]))
+		for _, path := range pathsByModel[modelName] {
 			pathStates = append(pathStates, ModelMonitorObservation{
-				Status:     status,
-				ObservedAt: observedAt,
+				Status:     path.Status,
+				ObservedAt: path.LastObservedAt,
 			})
 		}
 		status, observedAt := effectiveModelMonitorStatus(pathStates)
@@ -380,10 +430,10 @@ func BuildModelMonitorSiteSummary(targets []ModelMonitorTarget, observations []M
 			Weight:    target.Weight,
 			Stale:     stale,
 		}
-		if latestObservation, ok := latestObservationByModel[modelName]; ok {
-			effective.LatestStatus = latestObservation.Status
-			effective.LatestFailureType = latestObservation.FailureType
-			effective.LatestErrorSummary = latestObservation.ErrorSummary
+		if latest, ok := latestPathByModel[modelName]; ok {
+			effective.LatestStatus = latest.LatestStatus
+			effective.LatestFailureType = latest.LatestFailureType
+			effective.LatestErrorSummary = latest.LatestError
 		} else {
 			effective.LatestStatus = ModelMonitorStatusUnknown
 		}
@@ -397,7 +447,7 @@ func BuildModelMonitorSiteSummary(targets []ModelMonitorTarget, observations []M
 			continue
 		}
 		if status != ModelMonitorStatusUnknown {
-			if recentScore, ok := modelMonitorRecentQualityScore(observationsByModel[modelName], now); ok && recentScore < score {
+			if recentScore, ok := modelMonitorRecentQualityScore(recentByModel[modelName], now); ok && recentScore < score {
 				score = recentScore
 			}
 		}
@@ -418,6 +468,16 @@ func BuildModelMonitorSiteSummary(targets []ModelMonitorTarget, observations []M
 		summary.Health = ModelMonitorSiteHealthDegraded
 	}
 	return summary
+}
+
+func BuildModelMonitorSiteSummary(targets []ModelMonitorTarget, observations []ModelMonitorObservation, now int64, unknownGraceSeconds int64) ModelMonitorSiteSummary {
+	return BuildModelMonitorSiteSummaryFromPaths(
+		targets,
+		BuildModelMonitorSummaryPaths(observations),
+		observations,
+		now,
+		unknownGraceSeconds,
+	)
 }
 
 func deriveModelMonitorPathStatus(observations []ModelMonitorObservation) (string, int64) {

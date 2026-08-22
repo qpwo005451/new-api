@@ -62,7 +62,7 @@ import {
   useSystemConfigStore,
 } from '@/stores/system-config-store'
 
-import { getCodexUsage } from '../api'
+import { getCodexUsage, updateChannelBalance } from '../api'
 import { CHANNEL_STATUS_CONFIG, MODEL_FETCHABLE_TYPES } from '../constants'
 import {
   formatRelativeTime,
@@ -75,9 +75,9 @@ import {
   parseModelsList,
   parseGroupsList,
   parseChannelSettings,
+  channelsQueryKeys,
   handleUpdateChannelField,
   handleUpdateTagField,
-  handleUpdateChannelBalance,
   createChannelFieldUpdateScheduler,
   isTagAggregateRow,
   type TagRow,
@@ -88,6 +88,7 @@ import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
 import { useChannels, type DeepSeekBalanceCurrency } from './channels-provider'
 import { DataTableRowActions } from './data-table-row-actions'
 import { DataTableTagRowActions } from './data-table-tag-row-actions'
+import { BalanceQueryDialog } from './dialogs/balance-query-dialog'
 import {
   CodexUsageDialog,
   type CodexUsageDialogData,
@@ -381,7 +382,7 @@ function formatDeepSeekBalance(
 /**
  * Balance cell component with click to update
  */
-function BalanceCell({ channel }: { channel: Channel }) {
+export function BalanceCell({ channel }: { channel: Channel }) {
   const { t, i18n } = useTranslation()
   const queryClient = useQueryClient()
   const layout = useContext(ChannelRowActionsLayoutContext)
@@ -389,6 +390,7 @@ function BalanceCell({ channel }: { channel: Channel }) {
     sensitiveVisible,
     deepSeekBalanceCurrency,
     setDeepSeekBalanceCurrency,
+    setCurrentRow,
   } = useChannels()
   const currencyConfig = useSystemConfigStore((state) => state.config.currency)
   const isTagRow = isTagAggregateRow(channel)
@@ -404,6 +406,9 @@ function BalanceCell({ channel }: { channel: Channel }) {
       ? currencyConfig.usdExchangeRate
       : DEFAULT_CURRENCY_CONFIG.usdExchangeRate
   const [isUpdating, setIsUpdating] = useState(false)
+  const [rawBalanceResponse, setRawBalanceResponse] = useState<string | null>(
+    null
+  )
   const [codexUsageOpen, setCodexUsageOpen] = useState(false)
   const [codexUsageResponse, setCodexUsageResponse] =
     useState<CodexUsageDialogData | null>(null)
@@ -550,8 +555,34 @@ function BalanceCell({ channel }: { channel: Channel }) {
       return
     }
 
-    await handleUpdateChannelBalance(channel.id, queryClient)
-    setIsUpdating(false)
+    try {
+      const response = await updateChannelBalance(channel.id)
+      if (response.success && response.balance !== undefined) {
+        toast.success(
+          t('Balance updated: {{balance}}', {
+            balance: formatCurrencyFromUSD(response.balance, {
+              digitsLarge: 2,
+              digitsSmall: 4,
+              abbreviate: false,
+            }),
+          })
+        )
+        void queryClient.invalidateQueries({
+          queryKey: channelsQueryKeys.lists(),
+        })
+      } else if (response.success && response.raw_response !== undefined) {
+        setCurrentRow(channel)
+        setRawBalanceResponse(response.raw_response)
+      } else {
+        toast.error(response.message || t('Failed to update balance'))
+      }
+    } catch (error: unknown) {
+      toast.error(
+        error instanceof Error ? error.message : t('Failed to update balance')
+      )
+    } finally {
+      setIsUpdating(false)
+    }
   }
   let remainingBadgeLabel = sensitiveVisible ? remainingDisplay : SENSITIVE_MASK
   if (sensitiveVisible && isUpdating) {
@@ -733,6 +764,17 @@ function BalanceCell({ channel }: { channel: Channel }) {
         }}
         isRefreshing={isUpdating}
       />
+      {rawBalanceResponse !== null && (
+        <BalanceQueryDialog
+          initialRawResponse={rawBalanceResponse}
+          open
+          onOpenChange={(open) => {
+            if (!open) {
+              setRawBalanceResponse(null)
+            }
+          }}
+        />
+      )}
     </TooltipProvider>
   )
 }

@@ -133,7 +133,7 @@ func doResponsesRequestWithOverloadRetryWait(
 			return nil, fmt.Errorf("seek Responses request body for overload retry: %w", err)
 		}
 
-		resp, err := adaptor.DoRequest(c, info, common.ReaderOnly(requestBodyStorage))
+		resp, err := adaptor.DoRequest(c, info, common.NewReplayableBodyReader(requestBodyStorage))
 		if err != nil {
 			return nil, err
 		}

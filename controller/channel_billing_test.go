@@ -167,9 +167,10 @@ func TestUpdateChannelBalanceFallsBackToSub2APIUsage(t *testing.T) {
 			}
 			require.NoError(t, model.DB.Create(channel).Error)
 
-			balance, err := updateChannelBalance(channel)
+			result, err := updateChannelBalance(channel)
 			require.NoError(t, err)
-			assert.Equal(t, 87.74, balance)
+			assert.Equal(t, 87.74, result.Balance)
+			assert.Empty(t, result.RawResponse)
 			assert.Equal(t, 1, usageRequests)
 
 			var stored model.Channel
@@ -211,9 +212,10 @@ func TestUpdateChannelBalanceKeepsLegacyOpenAIPriority(t *testing.T) {
 	}
 	require.NoError(t, model.DB.Create(channel).Error)
 
-	balance, err := updateChannelBalance(channel)
+	result, err := updateChannelBalance(channel)
 	require.NoError(t, err)
-	assert.Equal(t, 87.5, balance)
+	assert.Equal(t, 87.5, result.Balance)
+	assert.Empty(t, result.RawResponse)
 	assert.Zero(t, usageRequests)
 }
 

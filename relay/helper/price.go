@@ -45,6 +45,11 @@ const defaultTieredPreConsumeMaxTokens = 8192
 const inputChannelId = 9
 const inputBillingModelPrefix = "input/"
 
+// inputCompactModelSuffix preserves the historical "-openai-compact" Responses
+// compaction alias naming for Input-channel billing after upstream removed the
+// shared ratio_setting.CompactModelSuffix helper.
+const inputCompactModelSuffix = "-openai-compact"
+
 var inputBillingAliasModels = map[string]struct{}{
 	"gpt-5.4":      {},
 	"gpt-5.4-mini": {},
@@ -70,9 +75,9 @@ func billingModelName(c *gin.Context, info *relaycommon.RelayInfo) string {
 	}
 	compactSuffix := ""
 	baseModelName := modelName
-	if strings.HasSuffix(baseModelName, ratio_setting.CompactModelSuffix) {
-		compactSuffix = ratio_setting.CompactModelSuffix
-		baseModelName = strings.TrimSuffix(baseModelName, ratio_setting.CompactModelSuffix)
+	if strings.HasSuffix(baseModelName, inputCompactModelSuffix) {
+		compactSuffix = inputCompactModelSuffix
+		baseModelName = strings.TrimSuffix(baseModelName, inputCompactModelSuffix)
 	}
 	if _, ok := inputBillingAliasModels[baseModelName]; !ok {
 		return modelName

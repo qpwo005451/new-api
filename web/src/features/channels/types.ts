@@ -245,6 +245,7 @@ export interface ChannelBalanceResponse {
   balance?: number
   currency?: string
   balance_protection?: ChannelBalanceProtection
+  raw_response?: string
 }
 
 export interface FetchModelsResponse {

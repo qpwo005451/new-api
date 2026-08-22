@@ -114,20 +114,28 @@ func persistBalanceProtectionCheck(channel *model.Channel, balance *float64, che
 	return transition, nil
 }
 
-func checkChannelBalanceWithProtection(channel *model.Channel) (float64, error) {
-	balance, checkErr := updateChannelBalance(channel)
+func checkChannelBalanceWithProtection(channel *model.Channel) (channelBalanceResult, error) {
+	result, checkErr := updateChannelBalance(channel)
 	if checkErr != nil {
 		if _, err := persistBalanceProtectionCheck(channel, nil, checkErr); err != nil {
 			common.SysLog(fmt.Sprintf("failed to record balance protection check failure: channel_id=%d error=%v", channel.Id, err))
 		}
-		return 0, checkErr
+		return channelBalanceResult{}, checkErr
 	}
+	if result.RawResponse != "" {
+		// Balance payload was not a recognizable number; record an unknown-balance check.
+		if _, err := persistBalanceProtectionCheck(channel, nil, nil); err != nil {
+			return result, err
+		}
+		return result, nil
+	}
+	balance := result.Balance
 	channel.Balance = balance
 	channel.BalanceUpdatedTime = common.GetTimestamp()
 	if _, err := persistBalanceProtectionCheck(channel, &balance, nil); err != nil {
-		return balance, err
+		return result, err
 	}
-	return balance, nil
+	return result, nil
 }
 
 func activateBalanceProtectionForChannel(channel *model.Channel, reason string) bool {

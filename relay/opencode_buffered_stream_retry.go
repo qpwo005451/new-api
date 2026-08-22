@@ -63,7 +63,7 @@ func doBufferedOpencodeStreamRetry(
 			if _, err := requestBodyStorage.Seek(0, io.SeekStart); err != nil {
 				return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 			}
-			nextResp, err := adaptor.DoRequest(c, info, common.ReaderOnly(requestBodyStorage))
+			nextResp, err := adaptor.DoRequest(c, info, common.NewReplayableBodyReader(requestBodyStorage))
 			if err != nil {
 				return nil, types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
 			}

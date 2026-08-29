@@ -15,43 +15,9 @@ You should have received a copy of the GNU Affero General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 import assert from 'node:assert/strict'
-import { after, before, describe, test } from 'node:test'
-
-import { Window } from 'happy-dom'
+import { afterAll, beforeAll, describe, test } from 'vitest'
 
 import type { ModelMonitorSiteConfig } from '../../types'
-
-const domWindow = new Window()
-const domGlobals = [
-  'window',
-  'document',
-  'navigator',
-  'HTMLElement',
-  'HTMLButtonElement',
-  'HTMLInputElement',
-  'SVGElement',
-  'Node',
-  'NodeFilter',
-  'Element',
-  'Event',
-  'KeyboardEvent',
-  'PointerEvent',
-  'MouseEvent',
-  'FocusEvent',
-  'CustomEvent',
-  'MutationObserver',
-  'ResizeObserver',
-  'requestAnimationFrame',
-  'cancelAnimationFrame',
-  'getComputedStyle',
-] as const
-
-for (const key of domGlobals) {
-  Object.defineProperty(globalThis, key, {
-    configurable: true,
-    value: domWindow[key],
-  })
-}
 
 const { act, useState } = await import('react')
 const { createRoot } = await import('react-dom/client')
@@ -194,13 +160,12 @@ async function waitForCondition(
 }
 
 describe('model monitor site channel selector', () => {
-  before(() => {
+  beforeAll(() => {
     installChannelFixtures()
   })
 
-  after(() => {
+  afterAll(() => {
     apiClient.get = originalGet
-    domWindow.close()
   })
 
   test('keeps existing channel IDs while selecting another channel from the dropdown', async () => {
@@ -229,10 +194,10 @@ describe('model monitor site channel selector', () => {
     await act(async () => {
       channelInput.focus()
       channelInput.dispatchEvent(
-        new domWindow.KeyboardEvent('keydown', {
+        new KeyboardEvent('keydown', {
           key: 'ArrowDown',
           bubbles: true,
-        }) as unknown as Event
+        })
       )
     })
     await act(async () => {

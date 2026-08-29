@@ -93,6 +93,30 @@ export async function cancelInFlightLog(logId: number): Promise<{
   return res.data
 }
 
+export async function getClientAliases(): Promise<{
+  success: boolean
+  message?: string
+  data?: Record<string, string>
+}> {
+  const res = await api.get('/api/log/client_aliases')
+  return res.data
+}
+
+export async function upsertClientAlias(
+  userAgent: string,
+  name: string
+): Promise<{
+  success: boolean
+  message?: string
+  data?: Record<string, string>
+}> {
+  const res = await api.put('/api/log/client_aliases', {
+    user_agent: userAgent,
+    name,
+  })
+  return res.data
+}
+
 export async function getUserInfo(
   userId: number
 ): Promise<{ success: boolean; message?: string; data?: UserInfo }> {

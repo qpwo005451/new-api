@@ -66,6 +66,7 @@ import { cn } from '@/lib/utils'
 
 import { LOG_TYPE_ENUM } from '../../constants'
 import type { UsageLog } from '../../data/schema'
+import { recognizeUserAgent } from '../../lib/client-info'
 import {
   parseLogOther,
   getParamOverrideActionLabel,
@@ -85,6 +86,7 @@ import {
   isTimingLogType,
 } from '../../lib/utils'
 import { USAGE_BILLING_PATH, type LogOtherData } from '../../types'
+import { useUsageLogsContext } from '../usage-logs-provider'
 
 // Maps a channel-update changed-field token (as recorded by the backend audit)
 // to its i18n label key for display in the audit details.
@@ -485,6 +487,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
     Math.floor(Date.now() / 1000)
   )
   const { copiedText, copyToClipboard } = useCopyToClipboard({ notify: false })
+  const { clientAliases } = useUsageLogsContext()
   const details = props.log.content ?? ''
   const other = parseLogOther(props.log.other)
   const typeConfig = getLogTypeConfig(props.log.type)
@@ -510,8 +513,18 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const adminInfo = other?.admin_info
   const clientIp = props.log.ip || adminInfo?.ip || ''
   const showAdminIp = !!clientIp && (showTiming || (props.isAdmin && isTopup))
-  const showAdminUserAgent =
-    props.isAdmin && showTiming && !!adminInfo?.user_agent
+  const adminUserAgent = props.isAdmin ? (adminInfo?.user_agent ?? '') : ''
+  const showAdminUserAgent = showTiming && !!adminUserAgent
+  const userAgentIdentity = recognizeUserAgent(adminUserAgent, {
+    aliases: clientAliases,
+    clientTitle: adminInfo?.client_title,
+  })
+  const userAgentDisplay =
+    userAgentIdentity.label &&
+    userAgentIdentity.label !== adminUserAgent &&
+    adminUserAgent
+      ? `${userAgentIdentity.label} · ${adminUserAgent}`
+      : adminUserAgent
   const upstreamError = adminInfo?.upstream_error
   const responsesDiagnostics = adminInfo?.responses_diagnostics
   const responsesDiagnosticEvents =
@@ -745,9 +758,36 @@ export function DetailsDialog(props: DetailsDialogProps) {
           )}
 
           {showAdminUserAgent && (
+            <DetailRow label={t('User Agent')} value={userAgentDisplay} mono />
+          )}
+
+          {props.isAdmin &&
+            showTiming &&
+            adminInfo?.client_title &&
+            adminInfo.client_title !== userAgentIdentity.label && (
+              <DetailRow
+                label={t('App Title')}
+                value={adminInfo.client_title}
+                mono
+              />
+            )}
+
+          {props.isAdmin && showTiming && adminInfo?.client_referer && (
             <DetailRow
-              label={t('User Agent')}
-              value={String(adminInfo?.user_agent)}
+              label={t('Referer')}
+              value={adminInfo.client_referer}
+              mono
+            />
+          )}
+
+          {props.isAdmin && showTiming && adminInfo?.client_runtime && (
+            <DetailRow
+              label={t('Runtime')}
+              value={
+                adminInfo.client_runtime_version
+                  ? `${adminInfo.client_runtime} ${adminInfo.client_runtime_version}`
+                  : adminInfo.client_runtime
+              }
               mono
             />
           )}

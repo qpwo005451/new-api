@@ -23,15 +23,22 @@ import { beforeAll, describe, expect, test, vi } from 'vitest'
 
 import type { UsageLog } from '../../data/schema'
 import { useCommonLogsColumns } from '../columns/common-logs-columns'
+import { UsageLogsProvider } from '../usage-logs-provider'
 
 // @lobehub/icons transitively hits a broken ESM directory import that fails
 // under vitest; the client info columns under test never render model icons.
 vi.mock('@/lib/lobe-icon', () => ({ getLobeIcon: () => null }))
 
+vi.mock('../../api', () => ({
+  getClientAliases: async () => ({ success: true, data: {} }),
+  upsertClientAlias: async () => ({ success: true, data: {} }),
+}))
+
 beforeAll(() => {
   i18next.addResourceBundle('en', 'translation', {
     IP: 'IP',
     'User Agent': 'User Agent',
+    'Mark Client': 'Mark Client',
   })
 })
 
@@ -82,7 +89,11 @@ function renderCell(props: {
   columnId: string
   log: UsageLog
 }): string {
-  const rendered = render(<ClientInfoCell {...props} />)
+  const rendered = render(
+    <UsageLogsProvider>
+      <ClientInfoCell {...props} />
+    </UsageLogsProvider>
+  )
   return rendered.container.textContent ?? ''
 }
 
@@ -124,7 +135,26 @@ describe('common logs client info columns', () => {
     )
     expect(
       renderCell({ isAdmin: true, columnId: 'user_agent', log })
-    ).toContain('Go-http-client/1.1')
+    ).toContain('Go net/http')
+  })
+
+  test('shows the recognized client label with a mark action', () => {
+    const log = createUsageLog(
+      JSON.stringify({
+        admin_info: {
+          user_agent: 'codex_cli_rs/0.42.0 (Ubuntu 22.04; x86_64)',
+        },
+      })
+    )
+
+    const rendered = render(
+      <UsageLogsProvider>
+        <ClientInfoCell isAdmin columnId='user_agent' log={log} />
+      </UsageLogsProvider>
+    )
+    expect(rendered.container.textContent).toContain('Codex CLI')
+    expect(rendered.container.textContent).not.toContain('codex_cli_rs')
+    expect(rendered.getByLabelText('Mark Client')).toBeInTheDocument()
   })
 
   test('falls back to the user-visible log IP column', () => {

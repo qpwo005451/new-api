@@ -1,0 +1,10 @@
+{
+  "Each rule matches a base URL host and models. Limits are applied separately for each selected upstream key and model. A 429 applies the configured cooldown before the next attempt.": "Each rule matches a base URL host and models. Limits are applied separately for each selected upstream key and model. A 429 applies the configured cooldown before the next attempt.",
+  "Each rule selects one site, channel, and either an exact model or model prefix.": "Each rule selects one site, channel, and either an exact model or model prefix.",
+  "Failed to save alert settings": "Failed to save alert settings",
+  "Notify selected transports when a monitored model becomes unavailable or recovers.": "Notify selected transports when a monitored model becomes unavailable or recovers.",
+  "Only unavailable and recovery transitions send alerts.": "Only unavailable and recovery transitions send alerts.",
+  "Queue matching requests before the upstream call so rate-limit responses do not reach clients.": "Queue matching requests before the upstream call so rate-limit responses do not reach clients.",
+  "Telegram repeats until the monitored model recovers.": "Telegram repeats until the monitored model recovers.",
+  "Token configured; leave blank to keep it": "Token configured; leave blank to keep it"
+}

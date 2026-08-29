@@ -182,6 +182,12 @@ export interface LogOtherData {
     // audit regardless of the user's own record_ip_log preference.
     ip?: string
     user_agent?: string
+    // App-declared identity headers (X-Title / HTTP-Referer) and OpenAI SDK
+    // x-stainless runtime hints, captured for admin audit.
+    client_title?: string
+    client_referer?: string
+    client_runtime?: string
+    client_runtime_version?: string
   }
   // Language-independent operation descriptor (audit/login logs).
   // Frontend renders localized content from action + params via i18n templates.

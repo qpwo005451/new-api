@@ -17,10 +17,18 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useContext, useState, type ReactNode } from 'react'
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from 'react'
 
 import { useIsAdmin } from '@/hooks/use-admin'
 
+import { getClientAliases, upsertClientAlias } from '../api'
 import type { ChannelAffinityInfo } from '../types'
 
 export type LogsViewScope = 'all' | 'self'
@@ -38,6 +46,13 @@ interface UsageLogsContextValue {
   setSensitiveVisible: (visible: boolean) => void
   viewScope: LogsViewScope
   setViewScope: (scope: LogsViewScope) => void
+  clientAliases: Record<string, string>
+  saveClientAlias: (
+    userAgent: string,
+    name: string
+  ) => Promise<{ success: boolean; message?: string }>
+  markClientDialogUa: string | null
+  setMarkClientDialogUa: (userAgent: string | null) => void
 }
 
 const UsageLogsContext = createContext<UsageLogsContextValue | undefined>(
@@ -45,6 +60,7 @@ const UsageLogsContext = createContext<UsageLogsContextValue | undefined>(
 )
 
 export function UsageLogsProvider({ children }: { children: ReactNode }) {
+  const isAdmin = useIsAdmin()
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null)
   const [userInfoDialogOpen, setUserInfoDialogOpen] = useState(false)
   const [affinityTarget, setAffinityTarget] =
@@ -52,6 +68,36 @@ export function UsageLogsProvider({ children }: { children: ReactNode }) {
   const [affinityDialogOpen, setAffinityDialogOpen] = useState(false)
   const [sensitiveVisible, setSensitiveVisible] = useState(true)
   const [viewScope, setViewScope] = useState<LogsViewScope>('all')
+  const [clientAliases, setClientAliases] = useState<Record<string, string>>({})
+  const [markClientDialogUa, setMarkClientDialogUa] = useState<string | null>(
+    null
+  )
+
+  useEffect(() => {
+    if (!isAdmin) return
+    let cancelled = false
+    getClientAliases()
+      .then((res) => {
+        if (!cancelled && res.success && res.data) {
+          setClientAliases(res.data)
+        }
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [isAdmin])
+
+  const saveClientAlias = useCallback(
+    async (userAgent: string, name: string) => {
+      const res = await upsertClientAlias(userAgent, name)
+      if (res.success && res.data) {
+        setClientAliases(res.data)
+      }
+      return res
+    },
+    []
+  )
 
   return (
     <UsageLogsContext.Provider
@@ -68,6 +114,10 @@ export function UsageLogsProvider({ children }: { children: ReactNode }) {
         setSensitiveVisible,
         viewScope,
         setViewScope,
+        clientAliases,
+        saveClientAlias,
+        markClientDialogUa,
+        setMarkClientDialogUa,
       }}
     >
       {children}

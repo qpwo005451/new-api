@@ -105,6 +105,31 @@ func createLog(log *Log) error {
 	return LOG_DB.Create(log).Error
 }
 
+// clientIdentityHeaders are app-declared request headers that help admins
+// identify which client tool sent the request. X-Title/HTTP-Referer follow
+// the OpenRouter convention; x-stainless-* are emitted by the official
+// OpenAI SDKs and reveal the host runtime (node/bun/python/...).
+var clientIdentityHeaders = []struct {
+	header string
+	key    string
+	limit  int
+}{
+	{"X-Title", "client_title", 120},
+	{"Http-Referer", "client_referer", 300},
+	{"X-Stainless-Runtime", "client_runtime", 40},
+	{"X-Stainless-Runtime-Version", "client_runtime_version", 40},
+}
+
+// truncateHeader trims captured header values to their length caps so a
+// hostile client cannot bloat every consume log with oversized strings.
+func truncateHeader(value string, limit int) string {
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
+}
+
 // captureClientInfoForAdmin records the relay request's client IP and
 // User-Agent under other.admin_info, so admins can audit request origins
 // regardless of the user's own record_ip_log preference. Nesting under
@@ -124,7 +149,14 @@ func captureClientInfoForAdmin(c *gin.Context, other map[string]interface{}) {
 		adminInfo["ip"] = ip
 	}
 	if userAgent := c.Request.UserAgent(); userAgent != "" {
-		adminInfo["user_agent"] = userAgent
+		adminInfo["user_agent"] = truncateHeader(userAgent, 300)
+	}
+	for _, identity := range clientIdentityHeaders {
+		value := truncateHeader(strings.TrimSpace(c.GetHeader(identity.header)), identity.limit)
+		if value == "" {
+			continue
+		}
+		adminInfo[identity.key] = value
 	}
 }
 

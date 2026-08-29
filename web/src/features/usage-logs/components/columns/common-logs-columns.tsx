@@ -19,7 +19,14 @@ For commercial licensing, please contact support@quantumnous.com
 /* eslint-disable react/only-export-components */
 import type { ColumnDef } from '@tanstack/react-table'
 import type { TFunction } from 'i18next'
-import { CircleAlert, GitBranch, KeyRound, Sparkles, X } from 'lucide-react'
+import {
+  CircleAlert,
+  GitBranch,
+  KeyRound,
+  PenLine,
+  Sparkles,
+  X,
+} from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -49,6 +56,7 @@ import { cn } from '@/lib/utils'
 
 import { LOG_TYPE_ALL_VALUE, LOG_TYPE_ENUM } from '../../constants'
 import type { UsageLog } from '../../data/schema'
+import { recognizeUserAgent } from '../../lib/client-info'
 import {
   formatModelName,
   formatCacheTokenCount,
@@ -678,17 +686,49 @@ function buildCommonLogsColumns(
         id: 'user_agent',
         header: t('User Agent'),
         cell: function UserAgentCell({ row }) {
+          const { clientAliases, setMarkClientDialogUa } = useUsageLogsContext()
           const log = row.original
-          const userAgent = parseLogOther(log.other)?.admin_info?.user_agent
+          const adminInfo = parseLogOther(log.other)?.admin_info
+          const userAgent = adminInfo?.user_agent
           if (!userAgent) return null
 
+          const identity = recognizeUserAgent(userAgent, {
+            aliases: clientAliases,
+            clientTitle: adminInfo?.client_title,
+          })
+          if (!identity.label) return null
+
+          const tooltipParts = [userAgent]
+          if (adminInfo?.client_referer) {
+            tooltipParts.push(`Referer: ${adminInfo.client_referer}`)
+          }
+          if (adminInfo?.client_runtime) {
+            const runtimeVersion = adminInfo.client_runtime_version
+            tooltipParts.push(
+              `Runtime: ${adminInfo.client_runtime}${runtimeVersion ? ` ${runtimeVersion}` : ''}`
+            )
+          }
+
           return (
-            <span
-              className='text-muted-foreground block max-w-[160px] truncate font-mono text-xs'
-              title={userAgent}
-            >
-              {userAgent}
-            </span>
+            <div className='flex min-w-0 items-center gap-1'>
+              <span
+                className='text-muted-foreground block max-w-[160px] truncate font-mono text-xs'
+                title={tooltipParts.join('\n')}
+              >
+                {identity.label}
+              </span>
+              <button
+                type='button'
+                aria-label={t('Mark Client')}
+                className='text-muted-foreground/50 hover:text-foreground shrink-0'
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setMarkClientDialogUa(userAgent)
+                }}
+              >
+                <PenLine className='size-3' />
+              </button>
+            </div>
           )
         },
       }

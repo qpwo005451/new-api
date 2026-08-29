@@ -282,6 +282,8 @@ func SetApiRouter(router *gin.Engine) {
 		logRoute.POST("/:id/cancel", middleware.AdminAuth(), controller.CancelInFlightLog)
 		logRoute.GET("/self/stat", middleware.UserAuth(), controller.GetLogsSelfStat)
 		logRoute.GET("/channel_affinity_usage_cache", middleware.AdminAuth(), controller.GetChannelAffinityUsageCacheStats)
+		logRoute.GET("/client_aliases", middleware.AdminAuth(), controller.GetLogClientAliases)
+		logRoute.PUT("/client_aliases", middleware.AdminAuth(), controller.UpdateLogClientAlias)
 		logRoute.GET("/search", middleware.AdminAuth(), controller.SearchAllLogs)
 		logRoute.GET("/self", middleware.UserAuth(), controller.GetUserLogs)
 		logRoute.GET("/self/search", middleware.UserAuth(), middleware.SearchRateLimit(), controller.SearchUserLogs)

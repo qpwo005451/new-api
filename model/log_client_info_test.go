@@ -2,6 +2,7 @@ package model
 
 import (
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -201,4 +202,67 @@ func TestRecordConsumeLogWithoutRequestOmitsClientInfo(t *testing.T) {
 	require.NoError(t, err)
 	_, hasAdminInfo := other["admin_info"]
 	assert.False(t, hasAdminInfo, "no client info can be captured without an HTTP request")
+}
+
+// TestRecordConsumeLogCapturesClientIdentityHeaders verifies app-declared
+// identity headers (OpenRouter-style X-Title/HTTP-Referer and the OpenAI SDK
+// x-stainless runtime hints) land in admin_info alongside the IP/User-Agent,
+// with over-long values truncated to safe lengths.
+func TestRecordConsumeLogCapturesClientIdentityHeaders(t *testing.T) {
+	setupLogClientInfoTestDB(t)
+	c := newClientInfoTestContext("OpenAI/JS 6.47.0", "10.0.0.180:41000")
+	c.Request.Header.Set("X-Title", "Prime Agent")
+	c.Request.Header.Set("HTTP-Referer", "https://prime-agent.example.com/console")
+	c.Request.Header.Set("X-Stainless-Runtime", "node")
+	c.Request.Header.Set("X-Stainless-Runtime-Version", "22.5.0")
+
+	RecordConsumeLog(c, 7, RecordConsumeLogParams{
+		ChannelId:      3,
+		ModelName:      "m",
+		TokenName:      "t",
+		Quota:          1,
+		Content:        "done",
+		UseTimeSeconds: 1,
+		Group:          "default",
+		Other:          map[string]interface{}{},
+	})
+
+	row := requireClientInfoLogRow(t, LogTypeConsume)
+	other, err := common.StrToMap(row.Other)
+	require.NoError(t, err)
+	adminInfo, ok := other["admin_info"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "Prime Agent", adminInfo["client_title"])
+	assert.Equal(t, "https://prime-agent.example.com/console", adminInfo["client_referer"])
+	assert.Equal(t, "node", adminInfo["client_runtime"])
+	assert.Equal(t, "22.5.0", adminInfo["client_runtime_version"])
+	assert.Equal(t, "OpenAI/JS 6.47.0", adminInfo["user_agent"])
+}
+
+func TestRecordConsumeLogTruncatesOversizedClientInfo(t *testing.T) {
+	setupLogClientInfoTestDB(t)
+	c := newClientInfoTestContext(strings.Repeat("U", 500), "10.0.0.180:41001")
+	c.Request.Header.Set("X-Title", strings.Repeat("标", 200))
+	c.Request.Header.Set("HTTP-Referer", strings.Repeat("https://r.example/", 40))
+
+	RecordConsumeLog(c, 7, RecordConsumeLogParams{
+		ChannelId:      3,
+		ModelName:      "m",
+		TokenName:      "t",
+		Quota:          1,
+		Content:        "done",
+		UseTimeSeconds: 1,
+		Group:          "default",
+		Other:          map[string]interface{}{},
+	})
+
+	row := requireClientInfoLogRow(t, LogTypeConsume)
+	other, err := common.StrToMap(row.Other)
+	require.NoError(t, err)
+	adminInfo, ok := other["admin_info"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Len(t, adminInfo["user_agent"], 300)
+	title, _ := adminInfo["client_title"].(string)
+	assert.Len(t, []rune(title), 120, "client_title must truncate to 120 runes")
+	assert.Len(t, adminInfo["client_referer"], 300)
 }

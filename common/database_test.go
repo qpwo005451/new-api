@@ -10,14 +10,18 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestNormalizeSQLitePathAddsBusyTimeout(t *testing.T) {
-	assert.Equal(t, "data/new-api.db?_pragma=busy_timeout(30000)", normalizeSQLitePath("data/new-api.db"))
-	assert.Equal(t, "data/new-api.db?mode=rwc&_pragma=busy_timeout(30000)", normalizeSQLitePath("data/new-api.db?mode=rwc"))
+func TestNormalizeSQLitePathAddsSQLitePragmas(t *testing.T) {
+	assert.Equal(t,
+		"data/new-api.db?_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)",
+		normalizeSQLitePath("data/new-api.db"))
+	assert.Equal(t,
+		"data/new-api.db?mode=rwc&_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)",
+		normalizeSQLitePath("data/new-api.db?mode=rwc"))
 	assert.Equal(t, "data/new-api.db?_pragma=busy_timeout(5000)", normalizeSQLitePath("data/new-api.db?_pragma=busy_timeout(5000)"))
 	assert.Equal(t, ":memory:", normalizeSQLitePath(":memory:"))
 }
 
-func TestNormalizeSQLitePathConfiguresDriverBusyTimeout(t *testing.T) {
+func TestNormalizeSQLitePathConfiguresDriverPragmas(t *testing.T) {
 	dsn := normalizeSQLitePath(filepath.Join(t.TempDir(), "new-api.db"))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
@@ -30,4 +34,8 @@ func TestNormalizeSQLitePathConfiguresDriverBusyTimeout(t *testing.T) {
 	var timeout int
 	require.NoError(t, db.Raw("PRAGMA busy_timeout").Scan(&timeout).Error)
 	assert.Equal(t, 30000, timeout)
+
+	var journalMode string
+	require.NoError(t, db.Raw("PRAGMA journal_mode").Scan(&journalMode).Error)
+	assert.Equal(t, "wal", journalMode)
 }

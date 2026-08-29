@@ -178,6 +178,10 @@ export interface LogOtherData {
       status?: string
     }
     responses_diagnostics?: ResponsesDiagnostics
+    // Client IP and User-Agent of the relay request, captured for admin
+    // audit regardless of the user's own record_ip_log preference.
+    ip?: string
+    user_agent?: string
   }
   // Language-independent operation descriptor (audit/login logs).
   // Frontend renders localized content from action + params via i18n templates.

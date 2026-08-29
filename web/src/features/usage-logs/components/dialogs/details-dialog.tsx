@@ -507,9 +507,11 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const displayUseTime = isPending
     ? Math.max(0, pendingNowSeconds - props.log.created_at)
     : props.log.use_time
-  const showAdminIp =
-    !!props.log.ip && (showTiming || (props.isAdmin && isTopup))
   const adminInfo = other?.admin_info
+  const clientIp = props.log.ip || adminInfo?.ip || ''
+  const showAdminIp = !!clientIp && (showTiming || (props.isAdmin && isTopup))
+  const showAdminUserAgent =
+    props.isAdmin && showTiming && !!adminInfo?.user_agent
   const upstreamError = adminInfo?.upstream_error
   const responsesDiagnostics = adminInfo?.responses_diagnostics
   const responsesDiagnosticEvents =
@@ -735,9 +737,17 @@ export function DetailsDialog(props: DetailsDialogProps) {
               value={
                 <span className='flex items-center gap-1'>
                   <Globe className='size-3 text-amber-500' aria-hidden='true' />
-                  {props.log.ip}
+                  {clientIp}
                 </span>
               }
+              mono
+            />
+          )}
+
+          {showAdminUserAgent && (
+            <DetailRow
+              label={t('User Agent')}
+              value={String(adminInfo?.user_agent)}
               mono
             />
           )}

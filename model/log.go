@@ -105,6 +105,29 @@ func createLog(log *Log) error {
 	return LOG_DB.Create(log).Error
 }
 
+// captureClientInfoForAdmin records the relay request's client IP and
+// User-Agent under other.admin_info, so admins can audit request origins
+// regardless of the user's own record_ip_log preference. Nesting under
+// admin_info keeps it out of non-admin log views, which formatUserLogs
+// strips entirely. No-op when there is no inbound HTTP request (e.g.
+// deferred task settlement).
+func captureClientInfoForAdmin(c *gin.Context, other map[string]interface{}) {
+	if c == nil || c.Request == nil || other == nil {
+		return
+	}
+	adminInfo, ok := other["admin_info"].(map[string]interface{})
+	if !ok || adminInfo == nil {
+		adminInfo = map[string]interface{}{}
+		other["admin_info"] = adminInfo
+	}
+	if ip := c.ClientIP(); ip != "" {
+		adminInfo["ip"] = ip
+	}
+	if userAgent := c.Request.UserAgent(); userAgent != "" {
+		adminInfo["user_agent"] = userAgent
+	}
+}
+
 func clickHouseLogOrder(prefix string) string {
 	return prefix + "created_at desc, " + prefix + "request_id desc"
 }
@@ -287,6 +310,10 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 	username := c.GetString("username")
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
+	if other == nil {
+		other = make(map[string]interface{})
+	}
+	captureClientInfoForAdmin(c, other)
 	otherStr := common.MapToJsonStr(other)
 	// 判断是否需要记录 IP
 	needRecordIp := false
@@ -356,6 +383,10 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
 	createdAt := common.GetTimestamp()
+	if params.Other == nil {
+		params.Other = make(map[string]interface{})
+	}
+	captureClientInfoForAdmin(c, params.Other)
 	otherStr := common.MapToJsonStr(params.Other)
 	// 判断是否需要记录 IP
 	needRecordIp := false
@@ -804,6 +835,10 @@ func RecordPendingLog(c *gin.Context, userId int, params RecordPendingLogParams)
 	username := c.GetString("username")
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
+	if params.Other == nil {
+		params.Other = make(map[string]interface{})
+	}
+	captureClientInfoForAdmin(c, params.Other)
 	otherStr := common.MapToJsonStr(params.Other)
 
 	needRecordIp := false

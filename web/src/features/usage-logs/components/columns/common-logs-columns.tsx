@@ -660,6 +660,39 @@ function buildCommonLogsColumns(
         },
       }
     )
+
+    columns.push(
+      {
+        id: 'client_ip',
+        header: t('IP'),
+        cell: function ClientIpCell({ row }) {
+          const log = row.original
+          const other = parseLogOther(log.other)
+          const ip = log.ip || other?.admin_info?.ip || ''
+          if (!ip) return null
+
+          return <span className='font-mono text-xs tabular-nums'>{ip}</span>
+        },
+      },
+      {
+        id: 'user_agent',
+        header: t('User Agent'),
+        cell: function UserAgentCell({ row }) {
+          const log = row.original
+          const userAgent = parseLogOther(log.other)?.admin_info?.user_agent
+          if (!userAgent) return null
+
+          return (
+            <span
+              className='text-muted-foreground block max-w-[160px] truncate font-mono text-xs'
+              title={userAgent}
+            >
+              {userAgent}
+            </span>
+          )
+        },
+      }
+    )
   }
 
   columns.push({

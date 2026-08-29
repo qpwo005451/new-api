@@ -61,6 +61,12 @@ const (
 	ModelMonitorSiteHealthDegraded    = "degraded"
 	ModelMonitorSiteHealthUnavailable = "unavailable"
 	ModelMonitorSiteHealthUnknown     = "unknown"
+
+	// modelMonitorUnavailableFailureThreshold is the consecutive-failure count
+	// after which a probe path is treated as unavailable. Persistent rate
+	// limiting is a failure too: a path that never gets through is effectively
+	// down even when every error is an HTTP 429.
+	modelMonitorUnavailableFailureThreshold = 3
 )
 
 type ModelMonitorSite struct {
@@ -502,9 +508,12 @@ func deriveModelMonitorPathStatus(observations []ModelMonitorObservation) (strin
 		}
 		switch observation.Status {
 		case ModelMonitorStatusLimited:
-			status = ModelMonitorStatusLimited
-			consecutiveFailures = 0
 			consecutiveSuccesses = 0
+			consecutiveFailures++
+			status = ModelMonitorStatusLimited
+			if consecutiveFailures >= modelMonitorUnavailableFailureThreshold {
+				status = ModelMonitorStatusUnavailable
+			}
 		case ModelMonitorStatusAvailable:
 			consecutiveFailures = 0
 			consecutiveSuccesses++
@@ -514,7 +523,7 @@ func deriveModelMonitorPathStatus(observations []ModelMonitorObservation) (strin
 		case ModelMonitorStatusUnavailable:
 			consecutiveSuccesses = 0
 			consecutiveFailures++
-			if consecutiveFailures >= 3 {
+			if consecutiveFailures >= modelMonitorUnavailableFailureThreshold {
 				status = ModelMonitorStatusUnavailable
 			} else {
 				status = ModelMonitorStatusLimited

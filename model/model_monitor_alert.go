@@ -135,13 +135,16 @@ func RecordModelMonitorObservation(observation *ModelMonitorObservation, alertTr
 				nextStatus = ModelMonitorStatusAvailable
 			}
 		case ModelMonitorStatusLimited:
-			state.ConsecutiveFailures = 0
 			state.ConsecutiveSuccesses = 0
+			state.ConsecutiveFailures++
 			nextStatus = ModelMonitorStatusLimited
+			if state.ConsecutiveFailures >= modelMonitorUnavailableFailureThreshold {
+				nextStatus = ModelMonitorStatusUnavailable
+			}
 		case ModelMonitorStatusUnavailable:
 			state.ConsecutiveSuccesses = 0
 			state.ConsecutiveFailures++
-			if state.ConsecutiveFailures >= 3 {
+			if state.ConsecutiveFailures >= modelMonitorUnavailableFailureThreshold {
 				nextStatus = ModelMonitorStatusUnavailable
 			} else {
 				nextStatus = ModelMonitorStatusLimited

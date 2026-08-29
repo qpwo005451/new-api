@@ -93,6 +93,56 @@ func TestRecordModelMonitorObservationQueuesOnlyStableUnavailableAndRecoveryTran
 	assert.NotEqual(t, events[0].EventKey, events[2].EventKey)
 }
 
+func TestRecordModelMonitorObservationEscalatesPersistentRateLimitToUnavailable(t *testing.T) {
+	setupModelMonitorTestDB(t)
+
+	site := ModelMonitorSite{Name: "input", SiteType: ModelMonitorSiteTypeNewAPI, Enabled: true}
+	require.NoError(t, DB.Create(&site).Error)
+	target := ModelMonitorTarget{SiteID: site.ID, ModelName: "glm-5.3-flash", Weight: 1, Enabled: true}
+	require.NoError(t, DB.Create(&target).Error)
+
+	record := func(status string, failureType string, observedAt int64) {
+		t.Helper()
+		_, err := RecordModelMonitorObservation(&ModelMonitorObservation{
+			SiteID: site.ID, TargetID: target.ID, ChannelID: 9, ModelName: target.ModelName,
+			Status: status, Source: ModelMonitorObservationSourceActive,
+			FailureType: failureType, ObservedAt: observedAt,
+		}, []string{ModelMonitorAlertTransportTelegram})
+		require.NoError(t, err)
+	}
+
+	record(ModelMonitorStatusLimited, ModelMonitorFailureTypeRateLimited, 100)
+	record(ModelMonitorStatusLimited, ModelMonitorFailureTypeRateLimited, 200)
+	var state ModelMonitorPathState
+	require.NoError(t, DB.First(&state).Error)
+	assert.Equal(t, ModelMonitorStatusLimited, state.Status)
+	assert.Equal(t, 2, state.ConsecutiveFailures)
+
+	var outboxCount int64
+	require.NoError(t, DB.Model(&ModelMonitorAlertOutbox{}).Count(&outboxCount).Error)
+	assert.Zero(t, outboxCount)
+
+	record(ModelMonitorStatusLimited, ModelMonitorFailureTypeRateLimited, 300)
+	require.NoError(t, DB.First(&state).Error)
+	assert.Equal(t, ModelMonitorStatusUnavailable, state.Status)
+	assert.Equal(t, 3, state.ConsecutiveFailures)
+	require.NoError(t, DB.Model(&ModelMonitorAlertOutbox{}).Count(&outboxCount).Error)
+	assert.EqualValues(t, 1, outboxCount)
+
+	record(ModelMonitorStatusLimited, ModelMonitorFailureTypeRateLimited, 400)
+	require.NoError(t, DB.First(&state).Error)
+	assert.Equal(t, ModelMonitorStatusUnavailable, state.Status)
+	require.NoError(t, DB.Model(&ModelMonitorAlertOutbox{}).Count(&outboxCount).Error)
+	assert.EqualValues(t, 1, outboxCount)
+
+	record(ModelMonitorStatusAvailable, ModelMonitorFailureTypeNone, 500)
+	require.NoError(t, DB.First(&state).Error)
+	assert.Equal(t, ModelMonitorStatusUnavailable, state.Status)
+	record(ModelMonitorStatusAvailable, ModelMonitorFailureTypeNone, 600)
+	require.NoError(t, DB.First(&state).Error)
+	assert.Equal(t, ModelMonitorStatusAvailable, state.Status)
+}
+
 func TestRecordModelMonitorObservationPersistsStateAndOutboxAtomically(t *testing.T) {
 	setupModelMonitorTestDB(t)
 
@@ -421,6 +471,35 @@ func TestModelMonitorAggregateDerivesLimitedImmediatelyPerPath(t *testing.T) {
 	require.Len(t, summary.Models, 1)
 	assert.Equal(t, ModelMonitorStatusLimited, summary.Models[0].Status)
 	assert.Equal(t, 50, summary.Score)
+}
+
+func TestModelMonitorAggregateEscalatesPersistentRateLimitToUnavailable(t *testing.T) {
+	targets := []ModelMonitorTarget{
+		{ID: 1, SiteID: 1, ModelName: "glm-5.3-flash", Weight: 1, Enabled: true},
+	}
+	limitedFailure := func(observedAt int64) ModelMonitorObservation {
+		return ModelMonitorObservation{
+			SiteID: 1, TargetID: 1, ChannelID: 10, ModelName: "glm-5.3-flash",
+			Status: ModelMonitorStatusLimited, FailureType: ModelMonitorFailureTypeRateLimited, ObservedAt: observedAt,
+		}
+	}
+	observations := []ModelMonitorObservation{
+		{
+			SiteID: 1, TargetID: 1, ChannelID: 10, ModelName: "glm-5.3-flash",
+			Status: ModelMonitorStatusAvailable, FailureType: ModelMonitorFailureTypeNone, ObservedAt: 100,
+		},
+		limitedFailure(200),
+	}
+	summary := BuildModelMonitorSiteSummary(targets, append(observations, limitedFailure(300)), 350, 300)
+	require.Len(t, summary.Models, 1)
+	assert.Equal(t, ModelMonitorStatusLimited, summary.Models[0].Status)
+	assert.Equal(t, 50, summary.Score)
+
+	observations = append(observations, limitedFailure(300), limitedFailure(400))
+	summary = BuildModelMonitorSiteSummary(targets, observations, 450, 300)
+	assert.Equal(t, ModelMonitorStatusUnavailable, summary.Models[0].Status)
+	assert.Equal(t, 0, summary.Score)
+	assert.Equal(t, ModelMonitorSiteHealthUnavailable, summary.Health)
 }
 
 func TestModelMonitorObservationKeepsPriceSnapshotReference(t *testing.T) {

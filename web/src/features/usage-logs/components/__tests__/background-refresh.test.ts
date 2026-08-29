@@ -18,7 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { describe, test } from 'node:test'
+import path from 'node:path'
+import { describe, test } from 'vitest'
 
 import {
   startUsageLogAutoRefresh,
@@ -131,7 +132,7 @@ describe('usage log background refresh', () => {
 
   test('disables row entrance animation for the live usage log table', async () => {
     const stylesheet = await readFile(
-      new URL('../../../../styles/index.css', import.meta.url),
+      path.resolve(import.meta.dirname, '../../../../styles/index.css'),
       'utf8'
     )
 

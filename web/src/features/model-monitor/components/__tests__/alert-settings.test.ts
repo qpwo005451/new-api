@@ -18,17 +18,18 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { describe, test } from 'node:test'
+import path from 'node:path'
+import { describe, test } from 'vitest'
 
-const featureRoot = new URL('../../', import.meta.url)
+const featureRoot = path.resolve(import.meta.dirname, '../../')
 
 describe('model monitor alert settings', () => {
   test('exposes alert configuration and test actions in the management UI', async () => {
     const componentSource = await readFile(
-      new URL('components/alert-settings.tsx', featureRoot),
+      path.join(featureRoot, 'components/alert-settings.tsx'),
       'utf8'
     )
-    const apiSource = await readFile(new URL('api.ts', featureRoot), 'utf8')
+    const apiSource = await readFile(path.join(featureRoot, 'api.ts'), 'utf8')
 
     assert.equal(
       componentSource.includes('updateModelMonitorAlertConfig'),
@@ -41,7 +42,7 @@ describe('model monitor alert settings', () => {
 
   test('supports site channel exact-model and prefix rule editing', async () => {
     const source = await readFile(
-      new URL('components/alert-settings.tsx', featureRoot),
+      path.join(featureRoot, 'components/alert-settings.tsx'),
       'utf8'
     )
 
@@ -53,11 +54,11 @@ describe('model monitor alert settings', () => {
 
   test('exposes persistent Telegram notifications with a configurable interval', async () => {
     const source = await readFile(
-      new URL('components/alert-settings.tsx', featureRoot),
+      path.join(featureRoot, 'components/alert-settings.tsx'),
       'utf8'
     )
     const pageSource = await readFile(
-      new URL('model-monitor.tsx', featureRoot),
+      path.join(featureRoot, 'model-monitor.tsx'),
       'utf8'
     )
 

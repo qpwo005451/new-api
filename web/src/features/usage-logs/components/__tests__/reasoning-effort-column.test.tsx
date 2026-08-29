@@ -17,62 +17,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { after, describe, test } from 'node:test'
+import { describe, test, vi } from 'vitest'
 
 import type { CellContext } from '@tanstack/react-table'
-import { Window } from 'happy-dom'
 
 import type { UsageLog } from '../../data/schema'
 
-const domWindow = new Window()
-const matchMedia = () => ({
-  matches: false,
-  media: '',
-  onchange: null,
-  addEventListener() {},
-  removeEventListener() {},
-  addListener() {},
-  removeListener() {},
-  dispatchEvent() {
-    return false
-  },
-})
-const customElements = {
-  get() {
-    return undefined
-  },
-  define() {},
-}
-const domGlobals = [
-  'window',
-  'document',
-  'navigator',
-  'HTMLElement',
-  'SVGElement',
-  'Node',
-  'Element',
-  'Event',
-  'CustomEvent',
-  'MutationObserver',
-  'requestAnimationFrame',
-  'cancelAnimationFrame',
-  'getComputedStyle',
-] as const
-
-for (const key of domGlobals) {
-  Object.defineProperty(globalThis, key, {
-    configurable: true,
-    value: domWindow[key],
-  })
-}
-Object.defineProperty(globalThis, 'matchMedia', {
-  configurable: true,
-  value: matchMedia,
-})
-Object.defineProperty(globalThis, 'customElements', {
-  configurable: true,
-  value: customElements,
-})
+// @lobehub/icons transitively hits a broken ESM directory import that fails
+// under vitest; the reasoning effort column under test never renders model icons.
+vi.mock('@/lib/lobe-icon', () => ({ getLobeIcon: () => null }))
 
 const { act } = await import('react')
 const { createRoot } = await import('react-dom/client')
@@ -174,10 +127,6 @@ async function unmount(rendered: {
 }
 
 describe('common usage log reasoning effort column', () => {
-  after(() => {
-    domWindow.close()
-  })
-
   test('shows the requested reasoning effort for an in-progress response', async () => {
     const rendered = await renderColumn(
       createUsageLog('{"reasoning_effort":"high"}')

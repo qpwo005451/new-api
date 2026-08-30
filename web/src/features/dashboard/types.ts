@@ -33,6 +33,18 @@ export interface QuotaDataItem {
   quota?: number
 }
 
+// One hourly bucket of aggregated consume-log token counts from
+// /api/data/token_trend. prompt_tokens already includes cache hit/write
+// tokens, so plain input = prompt_tokens - cache_read - cache_write.
+export interface TokenTrendPoint {
+  created_at: number
+  requests: number
+  prompt_tokens: number
+  completion_tokens: number
+  cache_read: number
+  cache_write: number
+}
+
 export interface FlowQuotaDataItem {
   user_id?: number
   username?: string

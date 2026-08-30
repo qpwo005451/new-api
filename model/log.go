@@ -689,6 +689,31 @@ type Stat struct {
 	Tpm   int `json:"tpm"`
 }
 
+type ModelTokenStat struct {
+	ModelName        string `json:"model_name" gorm:"column:model_name"`
+	Requests         int64  `json:"requests" gorm:"column:requests"`
+	PromptTokens     int64  `json:"prompt_tokens" gorm:"column:prompt_tokens"`
+	CompletionTokens int64  `json:"completion_tokens" gorm:"column:completion_tokens"`
+}
+
+// SumModelTokensByChannel aggregates consume logs of one channel grouped by
+// model, counting requests and raw prompt/completion tokens since the given
+// timestamp. Used for upstream plan usage estimation.
+func SumModelTokensByChannel(channelId int, startTimestamp int64) ([]ModelTokenStat, error) {
+	var stats []ModelTokenStat
+	err := LOG_DB.Table("logs").
+		Select("model_name, count(*) as requests, COALESCE(sum(prompt_tokens), 0) as prompt_tokens, COALESCE(sum(completion_tokens), 0) as completion_tokens").
+		Where("channel_id = ?", channelId).
+		Where("type = ?", LogTypeConsume).
+		Where("created_at >= ?", startTimestamp).
+		Group("model_name").
+		Scan(&stats).Error
+	if err != nil {
+		return nil, err
+	}
+	return stats, nil
+}
+
 func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string) (stat Stat, err error) {
 	tx := LOG_DB.Table("logs").Select("COALESCE(sum(quota), 0) quota")
 

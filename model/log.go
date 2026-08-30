@@ -714,6 +714,171 @@ func SumModelTokensByChannel(channelId int, startTimestamp int64) ([]ModelTokenS
 	return stats, nil
 }
 
+// TokenTrendPoint is one hourly bucket of aggregated consume-log token
+// counts. CacheRead/CacheWrite come from the log's other JSON payload;
+// PromptTokens already includes both (openai semantic: prompt contains
+// cached_tokens; anthropic semantic converted upstream: prompt = input +
+// cache_read + cache_write), so CacheRead + CacheWrite never exceed
+// PromptTokens for the same rows.
+type TokenTrendPoint struct {
+	CreatedAt        int64 `json:"created_at" gorm:"column:created_at"`
+	Requests         int64 `json:"requests" gorm:"column:requests"`
+	PromptTokens     int64 `json:"prompt_tokens" gorm:"column:prompt_tokens"`
+	CompletionTokens int64 `json:"completion_tokens" gorm:"column:completion_tokens"`
+	CacheRead        int64 `json:"cache_read" gorm:"column:cache_read"`
+	CacheWrite       int64 `json:"cache_write" gorm:"column:cache_write"`
+}
+
+// tokenTrendJSONExpr returns a SQL expression extracting an int64 field from
+// the logs.other JSON column for the active log database. Supported for
+// SQLite/MySQL/PostgreSQL/ClickHouse; an empty string means the dialect has
+// no usable JSON path and the caller must fall back to scanning raw rows.
+func tokenTrendJSONExpr(field string) string {
+	switch common.LogDatabaseType() {
+	case common.DatabaseTypeSQLite:
+		return "COALESCE(json_extract(other, '$." + field + "'), 0)"
+	case common.DatabaseTypeMySQL:
+		return "COALESCE(JSON_EXTRACT(other, '$." + field + "'), 0)"
+	case common.DatabaseTypePostgreSQL:
+		return "COALESCE((other::jsonb ->> '" + field + "')::bigint, 0)"
+	case common.DatabaseTypeClickHouse:
+		return "COALESCE(JSONExtractInt(other, '" + field + "'), 0)"
+	default:
+		return ""
+	}
+}
+
+// GetTokenTrend aggregates consume logs into hourly buckets between the two
+// timestamps. userId > 0 restricts the result to that user's own logs; userId
+// == 0 returns all users (admin scope). Cache token counts are extracted from
+// the other JSON payload with dialect-aware SQL when available, otherwise by
+// parsing rows in Go.
+func GetTokenTrend(userId int, startTimestamp int64, endTimestamp int64) ([]TokenTrendPoint, error) {
+	bucketExpr := "(created_at - (created_at % 3600))"
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		bucketExpr = "toStartOfHour(toDateTime(created_at))"
+	}
+
+	baseQuery := func(selectStr string) *gorm.DB {
+		tx := LOG_DB.Table("logs").
+			Select(selectStr).
+			Where("type = ?", LogTypeConsume).
+			Where("created_at >= ?", startTimestamp).
+			Where("created_at <= ?", endTimestamp)
+		if userId > 0 {
+			tx = tx.Where("user_id = ?", userId)
+		}
+		return tx
+	}
+
+	// Fast path: the log dialect can extract JSON fields in SQL, so the whole
+	// aggregation (including cache tokens from the other payload) happens in
+	// one grouped query.
+	cacheReadExpr := tokenTrendJSONExpr("cache_tokens")
+	if cacheReadExpr != "" {
+		cacheWriteExpr := tokenTrendJSONExpr("cache_write_tokens") + " + " + tokenTrendJSONExpr("cache_creation_tokens")
+		selectStr := fmt.Sprintf(
+			"%s as created_at, count(*) as requests, COALESCE(sum(prompt_tokens), 0) as prompt_tokens, COALESCE(sum(completion_tokens), 0) as completion_tokens, COALESCE(sum(%s), 0) as cache_read, COALESCE(sum(%s), 0) as cache_write",
+			bucketExpr, cacheReadExpr, cacheWriteExpr,
+		)
+		var points []TokenTrendPoint
+		err := baseQuery(selectStr).Group(bucketExpr).Order("created_at asc").Scan(&points).Error
+		if err != nil {
+			return nil, err
+		}
+		clampTokenTrendPoints(points)
+		return points, nil
+	}
+
+	// Fallback: aggregate plain columns in SQL, parse the other payload in Go.
+	selectStr := fmt.Sprintf(
+		"%s as created_at, count(*) as requests, COALESCE(sum(prompt_tokens), 0) as prompt_tokens, COALESCE(sum(completion_tokens), 0) as completion_tokens",
+		bucketExpr,
+	)
+	var points []TokenTrendPoint
+	err := baseQuery(selectStr).Group(bucketExpr).Order("created_at asc").Scan(&points).Error
+	if err != nil {
+		return nil, err
+	}
+
+	type otherRow struct {
+		CreatedAt int64  `gorm:"column:created_at"`
+		Other     string `gorm:"column:other"`
+	}
+	var rows []otherRow
+	if err := baseQuery("created_at, other").Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	byBucket := make(map[int64]*TokenTrendPoint, len(points))
+	for i := range points {
+		byBucket[points[i].CreatedAt] = &points[i]
+	}
+	for _, row := range rows {
+		point, ok := byBucket[row.CreatedAt-(row.CreatedAt%3600)]
+		if !ok {
+			continue
+		}
+		otherMap, err := common.StrToMap(row.Other)
+		if err != nil || otherMap == nil {
+			continue
+		}
+		point.CacheRead += jsonInt64(otherMap["cache_tokens"])
+		point.CacheWrite += jsonInt64(otherMap["cache_write_tokens"])
+		point.CacheWrite += jsonInt64(otherMap["cache_creation_tokens"])
+	}
+	clampTokenTrendPoints(points)
+	return points, nil
+}
+
+func jsonInt64(value interface{}) int64 {
+	switch v := value.(type) {
+	case float64:
+		if v < 0 {
+			return 0
+		}
+		return int64(v)
+	case int64:
+		if v < 0 {
+			return 0
+		}
+		return v
+	case int:
+		if v < 0 {
+			return 0
+		}
+		return int64(v)
+	default:
+		return 0
+	}
+}
+
+// clampTokenTrendPoints clamps negative aggregates and per-point overflows so
+// a malformed other payload can never make a chart series negative or larger
+// than the tokens it is derived from.
+func clampTokenTrendPoints(points []TokenTrendPoint) {
+	for i := range points {
+		p := &points[i]
+		if p.CacheRead < 0 {
+			p.CacheRead = 0
+		}
+		if p.CacheWrite < 0 {
+			p.CacheWrite = 0
+		}
+		if p.PromptTokens < 0 {
+			p.PromptTokens = 0
+		}
+		if p.CompletionTokens < 0 {
+			p.CompletionTokens = 0
+		}
+		if p.CacheRead > p.PromptTokens {
+			p.CacheRead = p.PromptTokens
+		}
+		if p.CacheWrite > p.PromptTokens-p.CacheRead {
+			p.CacheWrite = p.PromptTokens - p.CacheRead
+		}
+	}
+}
+
 func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string) (stat Stat, err error) {
 	tx := LOG_DB.Table("logs").Select("COALESCE(sum(quota), 0) quota")
 

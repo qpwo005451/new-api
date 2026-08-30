@@ -65,6 +65,7 @@ import { ApiInfoPanel } from './api-info-panel'
 import { FAQPanel } from './faq-panel'
 import { PerformanceHealthPanel } from './performance-health-panel'
 import { SummaryCards } from './summary-cards'
+import { TokenTrendPanel } from './token-trend-panel'
 import { UptimePanel } from './uptime-panel'
 
 const SETUP_GUIDE_VISIBILITY_STORAGE_KEY =
@@ -750,6 +751,12 @@ export function OverviewDashboard() {
       )}
 
       <SummaryCards />
+
+      <CardStaggerContainer>
+        <CardStaggerItem>
+          <TokenTrendPanel />
+        </CardStaggerItem>
+      </CardStaggerContainer>
 
       {showContentPanels && (
         <CardStaggerContainer

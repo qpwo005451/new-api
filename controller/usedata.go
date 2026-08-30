@@ -85,8 +85,56 @@ func GetUserQuotaDates(c *gin.Context) {
 	return
 }
 
+const tokenTrendMaxSpanSeconds = int64(32 * 24 * 3600)
+
+// GetTokenTrend returns hourly token-usage buckets (including cache
+// read/write tokens parsed from each log's other payload) for the dashboard
+// token trend chart. Admins may pass username to scope another user.
+func GetTokenTrend(c *gin.Context) {
+	startTimestamp, err := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	if err != nil || startTimestamp <= 0 {
+		common.ApiErrorMsg(c, "invalid start_timestamp")
+		return
+	}
+	endTimestamp, err := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	if err != nil || endTimestamp <= 0 {
+		common.ApiErrorMsg(c, "invalid end_timestamp")
+		return
+	}
+	if endTimestamp < startTimestamp {
+		common.ApiErrorMsg(c, "invalid time range")
+		return
+	}
+	if endTimestamp-startTimestamp > tokenTrendMaxSpanSeconds {
+		common.ApiErrorMsg(c, "time range too large")
+		return
+	}
+	userId := c.GetInt("id")
+	if username := c.Query("username"); username != "" && c.GetInt("role") >= common.RoleAdminUser {
+		var user model.User
+		if err := model.DB.Where("username = ?", username).First(&user).Error; err != nil {
+			common.ApiErrorMsg(c, "user not found")
+			return
+		}
+		userId = user.Id
+	}
+	points, err := model.GetTokenTrend(userId, startTimestamp, endTimestamp)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    points,
+	})
+}
+
 func GetAllFlowQuotaDates(c *gin.Context) {
 	startTimestamp, endTimestamp, ok := parseFlowQuotaTimeRange(c)
+	if !ok {
+		return
+	}
 	if !ok {
 		return
 	}

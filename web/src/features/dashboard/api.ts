@@ -21,6 +21,7 @@ import { api } from '@/lib/api'
 import type {
   FlowQuotaDataItem,
   QuotaDataItem,
+  TokenTrendPoint,
   UptimeGroupResult,
 } from './types'
 
@@ -48,6 +49,20 @@ export async function getUserQuotaDates(
     endpoint,
     { params }
   )
+  return res.data
+}
+
+// Get hourly token-usage buckets (with cache read/write tokens) for the
+// token trend chart. Admins get all users; non-admins are scoped server-side
+// to their own logs.
+export async function getTokenTrend(params: {
+  start_timestamp: number
+  end_timestamp: number
+}) {
+  const res = await api.get<{
+    success: boolean
+    data: TokenTrendPoint[]
+  }>('/api/data/token_trend', { params })
   return res.data
 }
 

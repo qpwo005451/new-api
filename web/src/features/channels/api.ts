@@ -59,6 +59,12 @@ export type CodexResetCreditsResponse = CodexUsageResponse
 
 export type CodexUsageResetResponse = CodexUsageResponse
 
+export type OllamaUsageResponse = {
+  success: boolean
+  message?: string
+  data?: Record<string, unknown>
+}
+
 export type CodexCredentialRefreshResponse = {
   success: boolean
   message?: string
@@ -348,6 +354,20 @@ export async function resetCodexUsage(
   const res = await api.post(
     `/api/channel/${channelId}/codex/usage/reset`,
     {},
+    channelActionConfig({ disableDuplicate: true })
+  )
+  return res.data
+}
+
+// ============================================================================
+// Ollama Channel Usage
+// ============================================================================
+
+export async function getOllamaChannelUsage(
+  channelId: number
+): Promise<OllamaUsageResponse> {
+  const res = await api.get(
+    `/api/channel/${channelId}/ollama_usage`,
     channelActionConfig({ disableDuplicate: true })
   )
   return res.data

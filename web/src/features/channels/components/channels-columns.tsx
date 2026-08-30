@@ -62,7 +62,7 @@ import {
   useSystemConfigStore,
 } from '@/stores/system-config-store'
 
-import { getCodexUsage, updateChannelBalance } from '../api'
+import { getCodexUsage, getOllamaChannelUsage, updateChannelBalance } from '../api'
 import { CHANNEL_STATUS_CONFIG, MODEL_FETCHABLE_TYPES } from '../constants'
 import {
   formatRelativeTime,
@@ -93,6 +93,10 @@ import {
   CodexUsageDialog,
   type CodexUsageDialogData,
 } from './dialogs/codex-usage-dialog'
+import {
+  OllamaUsageDialog,
+  type OllamaUsageDialogData,
+} from './dialogs/ollama-usage-dialog'
 import { NumericSpinnerInput } from './numeric-spinner-input'
 
 function parseIonetMeta(otherInfo: string | null | undefined): null | {
@@ -412,6 +416,9 @@ export function BalanceCell({ channel }: { channel: Channel }) {
   const [codexUsageOpen, setCodexUsageOpen] = useState(false)
   const [codexUsageResponse, setCodexUsageResponse] =
     useState<CodexUsageDialogData | null>(null)
+  const [ollamaUsageOpen, setOllamaUsageOpen] = useState(false)
+  const [ollamaUsageResponse, setOllamaUsageResponse] =
+    useState<OllamaUsageDialogData | null>(null)
   const currencyLabel = getCurrencyLabel()
   const tokenSuffix = currencyLabel === 'Tokens' ? ' Tokens' : ''
   const withSuffix = (value: string) =>
@@ -555,6 +562,24 @@ export function BalanceCell({ channel }: { channel: Channel }) {
       return
     }
 
+    if (channel.type === 4) {
+      try {
+        const res = await getOllamaChannelUsage(channel.id)
+        if (!res.success) {
+          throw new Error(res.message || t('Failed to fetch usage'))
+        }
+        setOllamaUsageResponse(res)
+        setOllamaUsageOpen(true)
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : t('Failed to fetch usage')
+        )
+      } finally {
+        setIsUpdating(false)
+      }
+      return
+    }
+
     try {
       const response = await updateChannelBalance(channel.id)
       if (response.success && response.balance !== undefined) {
@@ -589,15 +614,19 @@ export function BalanceCell({ channel }: { channel: Channel }) {
     remainingBadgeLabel = t('Updating...')
   } else if (sensitiveVisible && channel.type === 57) {
     remainingBadgeLabel = t('Account Info')
+  } else if (sensitiveVisible && channel.type === 4) {
+    remainingBadgeLabel = t('Ollama Usage')
   }
   let remainingTooltipLabel = remainingLabel
   if (!sensitiveVisible) {
     remainingTooltipLabel = maskedRemainingLabel
   } else if (channel.type === 57) {
     remainingTooltipLabel = t('Click to view Codex usage')
+  } else if (channel.type === 4) {
+    remainingTooltipLabel = t('Click to view Ollama usage')
   }
   let remainingBadgeVariant: StatusBadgeProps['variant'] = variant
-  if (channel.type === 57) {
+  if (channel.type === 57 || channel.type === 4) {
     remainingBadgeVariant = 'info'
   } else if (isUpdating) {
     remainingBadgeVariant = 'neutral'
@@ -665,7 +694,9 @@ export function BalanceCell({ channel }: { channel: Channel }) {
           />
           <TooltipContent>
             <p>{remainingTooltipLabel}</p>
-            {channel.type !== 57 && <p>{t('Click to update balance')}</p>}
+            {channel.type !== 57 && channel.type !== 4 && (
+              <p>{t('Click to update balance')}</p>
+            )}
           </TooltipContent>
         </Tooltip>
         {isOfficialDeepSeek && (
@@ -752,6 +783,37 @@ export function BalanceCell({ channel }: { channel: Channel }) {
               throw new Error(res.message || t('Failed to fetch usage'))
             }
             setCodexUsageResponse(res)
+          } catch (error) {
+            toast.error(
+              error instanceof Error
+                ? error.message
+                : t('Failed to fetch usage')
+            )
+          } finally {
+            setIsUpdating(false)
+          }
+        }}
+        isRefreshing={isUpdating}
+      />
+      <OllamaUsageDialog
+        open={ollamaUsageOpen}
+        onOpenChange={setOllamaUsageOpen}
+        channelName={channel.name}
+        channelId={channel.id}
+        channelDisplayName={sensitiveVisible ? undefined : SENSITIVE_MASK}
+        channelDisplayId={sensitiveVisible ? undefined : SENSITIVE_MASK}
+        response={ollamaUsageResponse}
+        onRefresh={async () => {
+          if (isUpdating) {
+            return
+          }
+          setIsUpdating(true)
+          try {
+            const res = await getOllamaChannelUsage(channel.id)
+            if (!res.success) {
+              throw new Error(res.message || t('Failed to fetch usage'))
+            }
+            setOllamaUsageResponse(res)
           } catch (error) {
             toast.error(
               error instanceof Error

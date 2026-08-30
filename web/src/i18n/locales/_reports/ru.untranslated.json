@@ -1,4 +1,5 @@
 {
+  "{{duration}} ms total duration": "总耗时 {{duration}} ms",
   "Add rule": "Add rule",
   "Alert rules": "Alert rules",
   "Alert settings saved": "Alert settings saved",
@@ -15,6 +16,7 @@
   "Enter a valid upstream RPM rules JSON array": "Enter a valid upstream RPM rules JSON array",
   "Exact model": "Exact model",
   "Failed to save alert settings": "Failed to save alert settings",
+  "Last observation {{time}}": "最近观测：{{time}}",
   "Model prefix": "Model prefix",
   "Notify selected transports when a monitored model becomes unavailable or recovers.": "Notify selected transports when a monitored model becomes unavailable or recovers.",
   "Only unavailable and recovery transitions send alerts.": "Only unavailable and recovery transitions send alerts.",

@@ -750,10 +750,10 @@ func tokenTrendJSONExpr(field string) string {
 
 // GetTokenTrend aggregates consume logs into hourly buckets between the two
 // timestamps. userId > 0 restricts the result to that user's own logs; userId
-// == 0 returns all users (admin scope). Cache token counts are extracted from
-// the other JSON payload with dialect-aware SQL when available, otherwise by
-// parsing rows in Go.
-func GetTokenTrend(userId int, startTimestamp int64, endTimestamp int64) ([]TokenTrendPoint, error) {
+// == 0 returns all users (admin scope). modelName != 0 filters by model.
+// Cache token counts are extracted from the other JSON payload with
+// dialect-aware SQL when available, otherwise by parsing rows in Go.
+func GetTokenTrend(userId int, startTimestamp int64, endTimestamp int64, modelName string) ([]TokenTrendPoint, error) {
 	bucketExpr := "(created_at - (created_at % 3600))"
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		bucketExpr = "toStartOfHour(toDateTime(created_at))"
@@ -767,6 +767,17 @@ func GetTokenTrend(userId int, startTimestamp int64, endTimestamp int64) ([]Toke
 			Where("created_at <= ?", endTimestamp)
 		if userId > 0 {
 			tx = tx.Where("user_id = ?", userId)
+		}
+		if modelName != "" {
+			filtered, err := applyExplicitLogTextFilter(tx, "model_name", modelName)
+			if err != nil {
+				// LIKE-escape failure cannot happen for model names coming
+				// from the query string; fall back to an exact match.
+				common.SysError("token trend model filter escaped literal: " + err.Error())
+				tx = tx.Where("model_name = ?", modelName)
+			} else {
+				tx = filtered
+			}
 		}
 		return tx
 	}
@@ -877,6 +888,26 @@ func clampTokenTrendPoints(points []TokenTrendPoint) {
 			p.CacheWrite = p.PromptTokens - p.CacheRead
 		}
 	}
+}
+
+// GetTokenTrendModels lists distinct model names appearing in consume logs
+// for the same scope as GetTokenTrend (user filter + time range), so the
+// dashboard trend panel can offer a model picker.
+func GetTokenTrendModels(userId int, startTimestamp int64, endTimestamp int64) ([]string, error) {
+	var names []string
+	tx := LOG_DB.Table("logs").
+		Distinct("model_name").
+		Where("type = ?", LogTypeConsume).
+		Where("created_at >= ?", startTimestamp).
+		Where("created_at <= ?", endTimestamp)
+	if userId > 0 {
+		tx = tx.Where("user_id = ?", userId)
+	}
+	err := tx.Order("model_name asc").Pluck("model_name", &names).Error
+	if err != nil {
+		return nil, err
+	}
+	return names, nil
 }
 
 func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string) (stat Stat, err error) {

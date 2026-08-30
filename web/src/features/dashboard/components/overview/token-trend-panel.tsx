@@ -18,13 +18,24 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { Database, LineChart } from 'lucide-react'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { VChart } from '@visactor/react-vchart'
 import { IconBadge } from '@/components/ui/icon-badge'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
-import { getTokenTrend } from '@/features/dashboard/api'
+import {
+  getTokenTrend,
+  getTokenTrendModels,
+} from '@/features/dashboard/api'
 import { VCHART_OPTION } from '@/lib/vchart'
 import { computeTimeRange } from '@/lib/time'
 
@@ -39,6 +50,24 @@ const TOKEN_TREND_WINDOW_DAYS = 7
 export function TokenTrendPanel() {
   const { t } = useTranslation()
   const timeRange = useMemo(() => computeTimeRange(TOKEN_TREND_WINDOW_DAYS), [])
+  const [selectedModel, setSelectedModel] = useState<string>('all')
+
+  const modelsQuery = useQuery({
+    queryKey: [
+      'dashboard',
+      'overview',
+      'token-trend-models',
+      timeRange.start_timestamp,
+      timeRange.end_timestamp,
+    ],
+    queryFn: () =>
+      getTokenTrendModels({
+        start_timestamp: timeRange.start_timestamp,
+        end_timestamp: timeRange.end_timestamp,
+      }),
+    staleTime: 60 * 1000,
+    select: (data) => data.data ?? [],
+  })
 
   const trendQuery = useQuery({
     queryKey: [
@@ -47,14 +76,17 @@ export function TokenTrendPanel() {
       'token-trend',
       timeRange.start_timestamp,
       timeRange.end_timestamp,
+      selectedModel,
     ],
     queryFn: () =>
       getTokenTrend({
         start_timestamp: timeRange.start_timestamp,
         end_timestamp: timeRange.end_timestamp,
+        model_name: selectedModel === 'all' ? undefined : selectedModel,
       }),
     staleTime: 60 * 1000,
     select: (data) => data.data ?? [],
+    placeholderData: (previous) => previous,
   })
 
   const series = useMemo(
@@ -84,7 +116,10 @@ export function TokenTrendPanel() {
     chartBody = (
       <div className='relative'>
         <div className='h-64'>
-          <VChart spec={buildTokenTrendSpec(series)} option={VCHART_OPTION} />
+          <VChart
+            spec={buildTokenTrendSpec(series, t)}
+            option={VCHART_OPTION}
+          />
         </div>
         <div className='bg-muted/40 absolute top-2 right-2 flex items-center gap-1.5 rounded-lg px-2.5 py-1.5'>
           <Database
@@ -115,9 +150,31 @@ export function TokenTrendPanel() {
           <LineChart />
         </IconBadge>
         <h3 className='text-sm font-semibold'>{t('Token usage trend')}</h3>
-        <span className='text-muted-foreground ml-auto text-xs'>
+        <span className='text-muted-foreground ml-auto hidden text-xs lg:inline'>
           {t('Cache hit rate for the last 7 days')}
         </span>
+        <Select
+          value={selectedModel}
+          onValueChange={(value) => setSelectedModel(value ?? 'all')}
+        >
+          <SelectTrigger
+            size='sm'
+            className='w-44 shrink-0'
+            aria-label={t('Model')}
+          >
+            <SelectValue placeholder={t('All Models')} />
+          </SelectTrigger>
+          <SelectContent alignItemWithTrigger={false}>
+            <SelectGroup>
+              <SelectItem value='all'>{t('All Models')}</SelectItem>
+              {(modelsQuery.data ?? []).map((model) => (
+                <SelectItem key={model} value={model}>
+                  {model}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
       </div>
 
       <div className='space-y-3 p-4 sm:p-5'>
@@ -167,7 +224,18 @@ function TrendStat(props: { label: string; value: string; loading: boolean }) {
   )
 }
 
-function buildTokenTrendSpec(series: TokenTrendSeries[]): Record<string, unknown> {
+function buildTokenTrendSpec(
+  series: TokenTrendSeries[],
+  label: (key: string) => string
+): Record<string, unknown> {
+  const seriesLabels = {
+    input: label('Input'),
+    cacheRead: label('Cache Read'),
+    cacheWrite: label('Cache Write'),
+    output: label('Output'),
+    cacheHitRate: label('Cache hit rate'),
+  }
+
   return {
     type: 'common',
     theme: 'light',
@@ -179,6 +247,8 @@ function buildTokenTrendSpec(series: TokenTrendSeries[]): Record<string, unknown
         xField: 'time',
         yField: 'input',
         id: 'input',
+        seriesKey: 'input',
+        seriesName: seriesLabels.input,
         axisId: 'yTokens',
         stack: true,
         line: { style: { stroke: '#3b82f6', lineWidth: 1.5 } },
@@ -190,6 +260,8 @@ function buildTokenTrendSpec(series: TokenTrendSeries[]): Record<string, unknown
         xField: 'time',
         yField: 'cacheRead',
         id: 'cacheRead',
+        seriesKey: 'cacheRead',
+        seriesName: seriesLabels.cacheRead,
         axisId: 'yTokens',
         stack: true,
         line: { style: { stroke: '#06b6d4', lineWidth: 1.5 } },
@@ -201,6 +273,8 @@ function buildTokenTrendSpec(series: TokenTrendSeries[]): Record<string, unknown
         xField: 'time',
         yField: 'cacheWrite',
         id: 'cacheWrite',
+        seriesKey: 'cacheWrite',
+        seriesName: seriesLabels.cacheWrite,
         axisId: 'yTokens',
         stack: true,
         line: { style: { stroke: '#f59e0b', lineWidth: 1.5 } },
@@ -212,6 +286,8 @@ function buildTokenTrendSpec(series: TokenTrendSeries[]): Record<string, unknown
         xField: 'time',
         yField: 'output',
         id: 'output',
+        seriesKey: 'output',
+        seriesName: seriesLabels.output,
         axisId: 'yTokens',
         stack: false,
         line: { style: { stroke: '#10b981', lineWidth: 1.5 } },
@@ -223,6 +299,8 @@ function buildTokenTrendSpec(series: TokenTrendSeries[]): Record<string, unknown
         xField: 'time',
         yField: 'cacheHitRate',
         id: 'cacheHitRate',
+        seriesKey: 'cacheHitRate',
+        seriesName: seriesLabels.cacheHitRate,
         axisId: 'yPercent',
         line: {
           style: { stroke: '#8b5cf6', lineWidth: 2, lineDash: [5, 5] },
@@ -253,22 +331,22 @@ function buildTokenTrendSpec(series: TokenTrendSeries[]): Record<string, unknown
     ],
     legends: [{ visible: true, orient: 'top', position: 'start' }],
     tooltip: {
-      dimension: {
-        content: [
-          {
-            key: (datum: Record<string, unknown>) => datum?.series ?? '',
-            value: (datum: Record<string, unknown>) =>
-              formatCompactTokens(Number(datum?.y ?? 0)),
-          },
-        ],
-      },
       mark: {
         title: { value: (datum: Record<string, unknown>) => datum?.time },
         content: [
           {
-            key: (datum: Record<string, unknown>) => datum?.series ?? '',
-            value: (datum: Record<string, unknown>) =>
-              formatCompactTokens(Number(datum?.y ?? 0)),
+            key: (datum: Record<string, unknown>) => {
+              const key = String(datum?.series ?? '')
+              return (
+                seriesLabels[key as keyof typeof seriesLabels] ?? key
+              )
+            },
+            value: (datum: Record<string, unknown>) => {
+              const raw = Number(datum?.y ?? 0)
+              return datum?.series === 'cacheHitRate'
+                ? `${raw.toFixed(1)}%`
+                : formatCompactTokens(raw)
+            },
           },
         ],
       },

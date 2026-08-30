@@ -54,15 +54,29 @@ export async function getUserQuotaDates(
 
 // Get hourly token-usage buckets (with cache read/write tokens) for the
 // token trend chart. Admins get all users; non-admins are scoped server-side
-// to their own logs.
+// to their own logs. Optional model_name narrows to one model.
 export async function getTokenTrend(params: {
   start_timestamp: number
   end_timestamp: number
+  model_name?: string
 }) {
   const res = await api.get<{
     success: boolean
     data: TokenTrendPoint[]
   }>('/api/data/token_trend', { params })
+  return res.data
+}
+
+// List distinct models behind the token trend chart for the same scope,
+// used to populate the model filter dropdown.
+export async function getTokenTrendModels(params: {
+  start_timestamp: number
+  end_timestamp: number
+}) {
+  const res = await api.get<{
+    success: boolean
+    data: string[]
+  }>('/api/data/token_trend/models', { params })
   return res.data
 }
 

@@ -61,7 +61,7 @@ func TestGetTokenTrendAggregatesHourlyBucketsWithCacheTokens(t *testing.T) {
 	nonConsume := &Log{UserId: 7, CreatedAt: 160, Type: LogTypeManage, ModelName: "m1", PromptTokens: 55, CompletionTokens: 55}
 	require.NoError(t, LOG_DB.Create(nonConsume).Error)
 
-	points, err := GetTokenTrend(7, 0, 7200)
+	points, err := GetTokenTrend(7, 0, 7200, "")
 	require.NoError(t, err)
 	require.Len(t, points, 2)
 
@@ -89,7 +89,7 @@ func TestGetTokenTrendAdminScopeReturnsAllUsers(t *testing.T) {
 	seedTokenTrendLog(t, 7, 100, "m1", 1000, 100, `{"cache_tokens":400}`)
 	seedTokenTrendLog(t, 9, 150, "m1", 777, 0, `{"cache_tokens":111}`)
 
-	points, err := GetTokenTrend(0, 0, 7200)
+	points, err := GetTokenTrend(0, 0, 7200, "")
 	require.NoError(t, err)
 	require.Len(t, points, 1)
 	assert.Equal(t, int64(2), points[0].Requests)
@@ -104,11 +104,56 @@ func TestGetTokenTrendClampsMalformedCacheFields(t *testing.T) {
 	// prompt-exceeding series.
 	seedTokenTrendLog(t, 7, 100, "m1", 1000, 50, `{"cache_tokens":5000,"cache_write_tokens":-20}`)
 
-	points, err := GetTokenTrend(7, 0, 7200)
+	points, err := GetTokenTrend(7, 0, 7200, "")
 	require.NoError(t, err)
 	require.Len(t, points, 1)
 	assert.Equal(t, int64(1000), points[0].CacheRead, "cache read clamped to prompt_tokens")
 	assert.Equal(t, int64(0), points[0].CacheWrite, "negative cache write clamped to 0")
+}
+
+func TestGetTokenTrendModelFilter(t *testing.T) {
+	setupTokenTrendTestDB(t)
+
+	seedTokenTrendLog(t, 7, 100, "m1", 1000, 100, `{"cache_tokens":400}`)
+	seedTokenTrendLog(t, 7, 150, "m2", 2000, 50, `{"cache_tokens":10}`)
+
+	all, err := GetTokenTrend(7, 0, 7200, "")
+	require.NoError(t, err)
+	require.Len(t, all, 1)
+	assert.Equal(t, int64(2), all[0].Requests)
+	assert.Equal(t, int64(3000), all[0].PromptTokens)
+
+	onlyM1, err := GetTokenTrend(7, 0, 7200, "m1")
+	require.NoError(t, err)
+	require.Len(t, onlyM1, 1)
+	assert.Equal(t, int64(1), onlyM1[0].Requests)
+	assert.Equal(t, int64(1000), onlyM1[0].PromptTokens)
+	assert.Equal(t, int64(400), onlyM1[0].CacheRead)
+
+	// Unknown model yields empty result, not an error.
+	none, err := GetTokenTrend(7, 0, 7200, "no-such-model")
+	require.NoError(t, err)
+	assert.Empty(t, none)
+}
+
+func TestGetTokenTrendModels(t *testing.T) {
+	setupTokenTrendTestDB(t)
+
+	seedTokenTrendLog(t, 7, 100, "m2", 1000, 100, `{}`)
+	seedTokenTrendLog(t, 7, 150, "m1", 500, 50, `{}`)
+	seedTokenTrendLog(t, 7, 200, "m1", 500, 50, `{}`)
+	// Other user's model must not leak into user-scoped list.
+	seedTokenTrendLog(t, 9, 120, "m3", 500, 50, `{}`)
+	// Out-of-range model excluded.
+	seedTokenTrendLog(t, 7, 10000, "m4", 500, 50, `{}`)
+
+	names, err := GetTokenTrendModels(7, 0, 7200)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"m1", "m2"}, names)
+
+	allNames, err := GetTokenTrendModels(0, 0, 7200)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"m1", "m2", "m3"}, allNames)
 }
 
 func TestGetTokenTrendFallbackParsesOtherInGo(t *testing.T) {
@@ -128,7 +173,7 @@ func TestGetTokenTrendFallbackParsesOtherInGo(t *testing.T) {
 	// Malformed other must be skipped, not fail the query.
 	seedTokenTrendLog(t, 7, 120, "m1", 300, 30, `not-json`)
 
-	points, err := GetTokenTrend(7, 0, 7200)
+	points, err := GetTokenTrend(7, 0, 7200, "")
 	require.NoError(t, err)
 	require.Len(t, points, 1)
 	assert.Equal(t, int64(2), points[0].Requests)

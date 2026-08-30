@@ -87,38 +87,49 @@ func GetUserQuotaDates(c *gin.Context) {
 
 const tokenTrendMaxSpanSeconds = int64(32 * 24 * 3600)
 
-// GetTokenTrend returns hourly token-usage buckets (including cache
-// read/write tokens parsed from each log's other payload) for the dashboard
-// token trend chart. Admins may pass username to scope another user.
-func GetTokenTrend(c *gin.Context) {
+// resolveTokenTrendScope validates the token trend time range and resolves
+// the user scope: admins may pass username to view another user, everyone
+// else is pinned to their own id.
+func resolveTokenTrendScope(c *gin.Context) (int, int64, int64, bool) {
 	startTimestamp, err := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	if err != nil || startTimestamp <= 0 {
 		common.ApiErrorMsg(c, "invalid start_timestamp")
-		return
+		return 0, 0, 0, false
 	}
 	endTimestamp, err := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
 	if err != nil || endTimestamp <= 0 {
 		common.ApiErrorMsg(c, "invalid end_timestamp")
-		return
+		return 0, 0, 0, false
 	}
 	if endTimestamp < startTimestamp {
 		common.ApiErrorMsg(c, "invalid time range")
-		return
+		return 0, 0, 0, false
 	}
 	if endTimestamp-startTimestamp > tokenTrendMaxSpanSeconds {
 		common.ApiErrorMsg(c, "time range too large")
-		return
+		return 0, 0, 0, false
 	}
 	userId := c.GetInt("id")
 	if username := c.Query("username"); username != "" && c.GetInt("role") >= common.RoleAdminUser {
 		var user model.User
 		if err := model.DB.Where("username = ?", username).First(&user).Error; err != nil {
 			common.ApiErrorMsg(c, "user not found")
-			return
+			return 0, 0, 0, false
 		}
 		userId = user.Id
 	}
-	points, err := model.GetTokenTrend(userId, startTimestamp, endTimestamp)
+	return userId, startTimestamp, endTimestamp, true
+}
+
+// GetTokenTrend returns hourly token-usage buckets (including cache
+// read/write tokens parsed from each log's other payload) for the dashboard
+// token trend chart. Accepts an optional model_name filter.
+func GetTokenTrend(c *gin.Context) {
+	userId, startTimestamp, endTimestamp, ok := resolveTokenTrendScope(c)
+	if !ok {
+		return
+	}
+	points, err := model.GetTokenTrend(userId, startTimestamp, endTimestamp, c.Query("model_name"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -130,11 +141,27 @@ func GetTokenTrend(c *gin.Context) {
 	})
 }
 
-func GetAllFlowQuotaDates(c *gin.Context) {
-	startTimestamp, endTimestamp, ok := parseFlowQuotaTimeRange(c)
+// GetTokenTrendModels lists the distinct models behind the trend chart for
+// the same scope, used to populate the model filter dropdown.
+func GetTokenTrendModels(c *gin.Context) {
+	userId, startTimestamp, endTimestamp, ok := resolveTokenTrendScope(c)
 	if !ok {
 		return
 	}
+	names, err := model.GetTokenTrendModels(userId, startTimestamp, endTimestamp)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    names,
+	})
+}
+
+func GetAllFlowQuotaDates(c *gin.Context) {
+	startTimestamp, endTimestamp, ok := parseFlowQuotaTimeRange(c)
 	if !ok {
 		return
 	}

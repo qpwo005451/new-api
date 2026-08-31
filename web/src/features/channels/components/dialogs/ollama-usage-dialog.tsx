@@ -226,7 +226,9 @@ function LocalModelRow(props: { model: OllamaLocalModelUsage }) {
 
   return (
     <div className='bg-background ring-border/60 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg px-2 py-1.5 ring-1'>
-      <span className='min-w-0 flex-1 break-all font-mono text-xs'>
+      {/* 160px basis lets the stats wrap to the next line instead of
+          crushing the name into one-character-per-line vertical text. */}
+      <span className='min-w-0 grow basis-[160px] break-all font-mono text-xs'>
         {props.model.model_name || '-'}
       </span>
       <span className='text-muted-foreground shrink-0 text-[11px] tabular-nums'>

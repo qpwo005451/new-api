@@ -65,3 +65,141 @@ export function formatCompactTokens(value: number): string {
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`
   return String(value)
 }
+
+export function buildTokenTrendSpec(
+  series: TokenTrendSeries[],
+  label: (key: string) => string
+): Record<string, unknown> {
+  const seriesLabels = {
+    input: label('Input'),
+    cacheRead: label('Cache Read'),
+    cacheWrite: label('Cache Write'),
+    output: label('Output'),
+    cacheHitRate: label('Cache hit rate'),
+  }
+
+  // VChart has no ECharts-style seriesKey/seriesName: legend labels come from
+  // series.name, and the default tooltip keys fall back to raw datum values
+  // (numbers, or the time when the value is 0). Each series therefore carries
+  // a display name plus an explicit tooltip content override.
+  const seriesTooltip = (key: string, field: string, percent = false) => {
+    const value = (datum: Record<string, unknown>) => {
+      const raw = Number(datum?.[field] ?? 0)
+      return percent ? `${raw.toFixed(1)}%` : formatCompactTokens(raw)
+    }
+    const content = [{ key, value }]
+    return { tooltip: { mark: { content }, dimension: { content } } }
+  }
+
+  // One data view per series (full rows, cloned): VChart 2.x mutates stacked
+  // rows in place, so stacked series sharing a single data view corrupt each
+  // other's cumulative offsets and the token axis max collapses.
+  const seriesData = ['input', 'cacheRead', 'cacheWrite', 'output', 'cacheHitRate'].map(
+    (field) => ({
+      id: `trend-${field}`,
+      values: series.map((row) => ({ ...row })),
+    })
+  )
+  const dataId = (field: string) => `trend-${field}`
+
+  return {
+    type: 'common',
+    theme: 'light',
+    background: 'transparent',
+    data: seriesData,
+    series: [
+      {
+        type: 'area',
+        xField: 'time',
+        yField: 'input',
+        id: 'input',
+        name: seriesLabels.input,
+        dataId: dataId('input'),
+        stack: true,
+        line: { style: { stroke: '#3b82f6', lineWidth: 1.5 } },
+        area: { style: { fill: '#3b82f6', fillOpacity: 0.2 } },
+        point: { visible: false },
+        ...seriesTooltip(seriesLabels.input, 'input'),
+      },
+      {
+        type: 'area',
+        xField: 'time',
+        yField: 'cacheRead',
+        id: 'cacheRead',
+        name: seriesLabels.cacheRead,
+        dataId: dataId('cacheRead'),
+        stack: true,
+        line: { style: { stroke: '#06b6d4', lineWidth: 1.5 } },
+        area: { style: { fill: '#06b6d4', fillOpacity: 0.18 } },
+        point: { visible: false },
+        ...seriesTooltip(seriesLabels.cacheRead, 'cacheRead'),
+      },
+      {
+        type: 'area',
+        xField: 'time',
+        yField: 'cacheWrite',
+        id: 'cacheWrite',
+        name: seriesLabels.cacheWrite,
+        dataId: dataId('cacheWrite'),
+        stack: true,
+        line: { style: { stroke: '#f59e0b', lineWidth: 1.5 } },
+        area: { style: { fill: '#f59e0b', fillOpacity: 0.18 } },
+        point: { visible: false },
+        ...seriesTooltip(seriesLabels.cacheWrite, 'cacheWrite'),
+      },
+      {
+        type: 'area',
+        xField: 'time',
+        yField: 'output',
+        id: 'output',
+        name: seriesLabels.output,
+        dataId: dataId('output'),
+        stack: false,
+        line: { style: { stroke: '#10b981', lineWidth: 1.5 } },
+        area: { style: { fill: '#10b981', fillOpacity: 0.18 } },
+        point: { visible: false },
+        ...seriesTooltip(seriesLabels.output, 'output'),
+      },
+      {
+        type: 'line',
+        xField: 'time',
+        yField: 'cacheHitRate',
+        id: 'cacheHitRate',
+        name: seriesLabels.cacheHitRate,
+        dataId: dataId('cacheHitRate'),
+        line: {
+          style: { stroke: '#8b5cf6', lineWidth: 2, lineDash: [5, 5] },
+        },
+        point: { style: { fill: '#8b5cf6', size: 6 } },
+        label: { visible: false },
+        ...seriesTooltip(seriesLabels.cacheHitRate, 'cacheHitRate', true),
+      },
+    ],
+    axes: [
+      { orient: 'bottom', type: 'band', trimPadding: true },
+      {
+        orient: 'left',
+        id: 'yTokens',
+        type: 'linear',
+        // VChart binds series to axes via the axis's seriesId (series-side
+        // axisId is ignored); without the split, every series — including the
+        // hit-rate line — renders against whichever linear axis comes first.
+        seriesId: ['input', 'cacheRead', 'cacheWrite', 'output'],
+        label: {
+          formatMethod: (value: number) => formatCompactTokens(Number(value)),
+        },
+      },
+      {
+        orient: 'right',
+        id: 'yPercent',
+        seriesId: ['cacheHitRate'],
+        type: 'linear',
+        min: 0,
+        max: 100,
+        label: { formatMethod: (value: number) => `${value}%` },
+        grid: { visible: false },
+      },
+    ],
+    legends: [{ visible: true, orient: 'top', position: 'start' }],
+  }
+}

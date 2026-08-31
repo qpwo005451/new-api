@@ -696,17 +696,28 @@ type ModelTokenStat struct {
 	CompletionTokens int64  `json:"completion_tokens" gorm:"column:completion_tokens"`
 }
 
-// SumModelTokensByChannel aggregates consume logs of one channel grouped by
-// model, counting requests and raw prompt/completion tokens since the given
-// timestamp. Used for upstream plan usage estimation.
-func SumModelTokensByChannel(channelId int, startTimestamp int64) ([]ModelTokenStat, error) {
-	var stats []ModelTokenStat
+// ModelUsageSecond is one (model, second) aggregate of consume-log usage.
+// The per-second granularity backs window slide-out projections, where
+// per-model totals alone cannot tell when usage will fall out of a window.
+type ModelUsageSecond struct {
+	CreatedAt        int64  `json:"created_at" gorm:"column:created_at"`
+	ModelName        string `json:"model_name" gorm:"column:model_name"`
+	Requests         int64  `json:"requests" gorm:"column:requests"`
+	PromptTokens     int64  `json:"prompt_tokens" gorm:"column:prompt_tokens"`
+	CompletionTokens int64  `json:"completion_tokens" gorm:"column:completion_tokens"`
+}
+
+// SumModelUsageByChannelSecond aggregates consume logs of one channel grouped
+// by model and second, counting requests and raw prompt/completion tokens
+// since the given timestamp. Used for upstream plan usage estimation.
+func SumModelUsageByChannelSecond(channelId int, startTimestamp int64) ([]ModelUsageSecond, error) {
+	var stats []ModelUsageSecond
 	err := LOG_DB.Table("logs").
-		Select("model_name, count(*) as requests, COALESCE(sum(prompt_tokens), 0) as prompt_tokens, COALESCE(sum(completion_tokens), 0) as completion_tokens").
+		Select("model_name, created_at, count(*) as requests, COALESCE(sum(prompt_tokens), 0) as prompt_tokens, COALESCE(sum(completion_tokens), 0) as completion_tokens").
 		Where("channel_id = ?", channelId).
 		Where("type = ?", LogTypeConsume).
 		Where("created_at >= ?", startTimestamp).
-		Group("model_name").
+		Group("model_name, created_at").
 		Scan(&stats).Error
 	if err != nil {
 		return nil, err

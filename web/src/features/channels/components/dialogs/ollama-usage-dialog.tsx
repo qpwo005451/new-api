@@ -78,6 +78,17 @@ type OllamaLocalUsageWindow = {
   models?: OllamaLocalModelUsage[]
   total_tokens?: number
   weighted_usage?: number
+  earliest_release_at?: number
+  projection?: {
+    bucket_seconds?: number
+    points?: OllamaUsageProjectionPoint[]
+  }
+}
+
+type OllamaUsageProjectionPoint = {
+  after_seconds?: number
+  weighted_usage?: number
+  requests?: number
 }
 
 type OllamaUsagePayload = {
@@ -236,6 +247,75 @@ function LocalModelRow(props: { model: OllamaLocalModelUsage }) {
   )
 }
 
+function projectionBucketLabel(seconds: number, bucketSeconds: number): string {
+  if (bucketSeconds >= 86400) {
+    return `+${Math.round(seconds / 86400)}d`
+  }
+  return `+${Math.round(seconds / 3600)}h`
+}
+
+function RecoveryProjection(props: { window?: OllamaLocalUsageWindow }) {
+  const { t } = useTranslation()
+  const points = props.window?.projection?.points ?? []
+  const earliest = props.window?.earliest_release_at
+  const bucketSeconds = Number(props.window?.projection?.bucket_seconds ?? 0)
+
+  if (points.length === 0 && !earliest) {
+    return null
+  }
+  const maxWeighted = Math.max(
+    ...points.map((p) => Number(p.weighted_usage ?? 0)),
+    0
+  )
+
+  return (
+    <div className='ring-border/60 mt-2 rounded-lg px-2 py-2 ring-1'>
+      <div className='flex flex-wrap items-center justify-between gap-x-3 gap-y-1'>
+        <span className='text-muted-foreground text-xs'>
+          {t('Recovery projection (estimate)')}
+        </span>
+        <span className='min-w-0 break-all text-right text-xs tabular-nums'>
+          <span className='text-muted-foreground'>{t('Earliest release:')}</span>{' '}
+          <span>
+            {earliest ? formatTimestampToDate(earliest) : '-'}
+          </span>
+        </span>
+      </div>
+      {points.length > 0 ? (
+        <div
+          className='mt-2 flex h-10 items-end gap-px'
+          role='img'
+          aria-label={t('Recovery projection (estimate)')}
+        >
+          {points.map((point) => {
+            const weighted = Number(point.weighted_usage ?? 0)
+            const afterSeconds = Number(point.after_seconds ?? 0)
+            const requests = Number(point.requests ?? 0)
+            let pct: number
+            if (maxWeighted > 0) {
+              pct = Math.max(4, Math.round((weighted / maxWeighted) * 100))
+            } else {
+              pct = weighted > 0 ? 100 : 4
+            }
+            const requestsCount = Number.isFinite(requests) ? requests : 0
+            return (
+              <div
+                key={afterSeconds}
+                title={`${projectionBucketLabel(afterSeconds, bucketSeconds)} · ${formatUsageNumber(weighted)} ${t('Usage units')} · ${t('{{count}} requests', { count: requestsCount })}`}
+                className={cn(
+                  'min-w-[3px] flex-1 rounded-sm',
+                  weighted > 0 ? 'bg-primary/25' : 'bg-muted/40'
+                )}
+                style={{ height: `${pct}%` }}
+              />
+            )
+          })}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function LocalUsageCard(props: {
   title: string
   window?: OllamaLocalUsageWindow
@@ -301,6 +381,7 @@ function LocalUsageCard(props: {
             {t('No requests in this window')}
           </div>
         )}
+        <RecoveryProjection window={props.window} />
       </CardContent>
     </Card>
   )
@@ -451,6 +532,11 @@ export function OllamaUsageDialog(props: OllamaUsageDialogProps) {
               <div className='text-muted-foreground text-xs leading-5'>
                 {t(
                   'Weighted tokens estimate upstream usage units as model level × (prompt + completion) tokens, because Ollama does not publish the cap or the unit. Upstream and local request counts are directly comparable; mismatches mean some upstream traffic in this window predates the current channel or key.'
+                )}
+              </div>
+              <div className='text-muted-foreground text-xs leading-5'>
+                {t(
+                  'Recovery timing and the projection are estimates based on when this channel’s own requests slide out of each window. Ollama resets usage server-side on its own schedule and does not expose the reset time through the usage API.'
                 )}
               </div>
             </div>

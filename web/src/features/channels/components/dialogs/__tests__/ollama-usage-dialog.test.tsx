@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { render, screen } from '@testing-library/react'
+import dayjs from 'dayjs'
 import { describe, expect, test } from 'vitest'
 
 const { createInstance } = await import('i18next')
@@ -61,6 +62,8 @@ await i18n.use(initReactI18next).init({
         'Failed to fetch usage': 'Failed to fetch usage',
         'Weighted tokens estimate upstream usage units as model level × (prompt + completion) tokens, because Ollama does not publish the cap or the unit. Upstream and local request counts are directly comparable; mismatches mean some upstream traffic in this window predates the current channel or key.':
           'Weighted tokens estimate upstream usage units as model level × (prompt + completion) tokens, because Ollama does not publish the cap or the unit. Upstream and local request counts are directly comparable; mismatches mean some upstream traffic in this window predates the current channel or key.',
+        'Recovery projection (estimate)': 'Recovery projection (estimate)',
+        'Earliest release:': 'Earliest release:',
       },
     },
   },
@@ -168,6 +171,38 @@ describe('Ollama usage dialog', () => {
     // Level badges come from the response level field.
     expect(screen.getAllByText('Low').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText('Medium').length).toBeGreaterThanOrEqual(1)
+    // No recovery section when the payload carries no projection data.
+    expect(
+      screen.queryByText('Recovery projection (estimate)')
+    ).not.toBeInTheDocument()
+  })
+
+  test('renders the recovery projection and earliest release for windows that carry one', () => {
+    const response = successfulResponse()
+    const session = (
+      response.data.local as { session: Record<string, unknown> }
+    ).session
+    session.earliest_release_at = 1788050524 + 18000
+    session.projection = {
+      bucket_seconds: 3600,
+      points: [
+        { after_seconds: 3600, weighted_usage: 5000, requests: 2 },
+        { after_seconds: 7200, weighted_usage: 0, requests: 0 },
+      ],
+    }
+
+    render(<DialogHarness response={response} />)
+
+    expect(screen.getAllByText('Recovery projection (estimate)')).toHaveLength(1)
+    expect(screen.getByText('Earliest release:')).toBeInTheDocument()
+    expect(
+      screen.getByText(dayjs((1788050524 + 18000) * 1000).format('YYYY-MM-DD HH:mm:ss'))
+    ).toBeInTheDocument()
+    // First hour keeps projected remaining usage, the second hour is empty.
+    expect(screen.getByTitle(/\+1h · 5,000 Usage units · 2 requests/))
+      .toBeInTheDocument()
+    expect(screen.getByTitle(/\+2h · 0 Usage units · 0 requests/))
+      .toBeInTheDocument()
   })
 
   test('shows the upstream error message and no usage sections when the response failed', () => {

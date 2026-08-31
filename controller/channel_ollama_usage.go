@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -84,6 +85,21 @@ type ollamaLocalUsageWindow struct {
 	Models        []ollamaLocalModelUsage `json:"models"`
 	TotalTokens   int64                   `json:"total_tokens"`
 	WeightedUsage float64                 `json:"weighted_usage"`
+	// EarliestReleaseAt is the moment the oldest request still counted in
+	// the window slides out and usage starts recovering; 0 for empty windows.
+	EarliestReleaseAt int64                      `json:"earliest_release_at"`
+	Projection        ollamaLocalUsageProjection `json:"projection"`
+}
+
+type ollamaUsageProjectionPoint struct {
+	AfterSeconds  int64   `json:"after_seconds"`
+	WeightedUsage float64 `json:"weighted_usage"`
+	Requests      int64   `json:"requests"`
+}
+
+type ollamaLocalUsageProjection struct {
+	BucketSeconds int64                        `json:"bucket_seconds"`
+	Points        []ollamaUsageProjectionPoint `json:"points"`
 }
 
 func ollamaModelUsageLevel(modelName string) int {
@@ -93,59 +109,109 @@ func ollamaModelUsageLevel(modelName string) int {
 	return 0
 }
 
-// foldChannelModelStats merges requested-model stats into the channel's
+// foldChannelModelUsage renames requested-model usage to the channel's
 // upstream model names via the channel's model mapping and drops models the
 // channel does not serve (leftover log entries of deleted or re-created
 // channels sharing the same id). Ollama meters the upstream model name, so
-// the folded stats are what its usage windows actually count.
-func foldChannelModelStats(
-	stats []model.ModelTokenStat,
+// the folded usage is what its usage windows actually count.
+func foldChannelModelUsage(
+	rows []model.ModelUsageSecond,
 	mapping map[string]string,
 	served map[string]bool,
-) []model.ModelTokenStat {
-	folded := make([]model.ModelTokenStat, 0, len(stats))
-	index := make(map[string]int, len(stats))
-	for _, stat := range stats {
-		name := strings.TrimSpace(stat.ModelName)
+) []model.ModelUsageSecond {
+	folded := make([]model.ModelUsageSecond, 0, len(rows))
+	for _, row := range rows {
+		name := strings.TrimSpace(row.ModelName)
 		if mapped, ok := mapping[name]; ok {
 			name = mapped
 		}
 		if served != nil && !served[name] {
 			continue
 		}
-		if i, ok := index[name]; ok {
-			folded[i].Requests += stat.Requests
-			folded[i].PromptTokens += stat.PromptTokens
-			folded[i].CompletionTokens += stat.CompletionTokens
-			continue
-		}
-		index[name] = len(folded)
-		stat.ModelName = name
-		folded = append(folded, stat)
+		row.ModelName = name
+		folded = append(folded, row)
 	}
 	return folded
 }
 
-func estimateOllamaChannelUsage(stats []model.ModelTokenStat, windowSeconds int64, now time.Time) ollamaLocalUsageWindow {
+func estimateOllamaChannelUsage(rows []model.ModelUsageSecond, windowSeconds int64, now time.Time) ollamaLocalUsageWindow {
+	// Hourly checkpoints for the 5-hour window, daily ones for the weekly
+	// window — the two window shapes this endpoint estimates.
+	bucketSeconds := int64(24 * 3600)
+	if windowSeconds <= 24*3600 {
+		bucketSeconds = 3600
+	}
+	since := now.Add(-time.Duration(windowSeconds) * time.Second).Unix()
 	window := ollamaLocalUsageWindow{
 		WindowSeconds: windowSeconds,
-		Since:         now.Add(-time.Duration(windowSeconds) * time.Second).Unix(),
+		Since:         since,
 		Models:        []ollamaLocalModelUsage{},
+		Projection: ollamaLocalUsageProjection{
+			BucketSeconds: bucketSeconds,
+			Points:        make([]ollamaUsageProjectionPoint, 0, int(windowSeconds/bucketSeconds)),
+		},
 	}
-	for _, stat := range stats {
-		tokens := stat.PromptTokens + stat.CompletionTokens
-		entry := ollamaLocalModelUsage{
-			ModelName:        stat.ModelName,
-			Requests:         stat.Requests,
-			PromptTokens:     stat.PromptTokens,
-			CompletionTokens: stat.CompletionTokens,
-			Level:            ollamaModelUsageLevel(stat.ModelName),
+
+	modelIndex := make(map[string]int, len(rows))
+	type usageSample struct {
+		createdAt int64
+		weighted  float64
+		requests  int64
+	}
+	samples := make([]usageSample, 0, len(rows))
+	for _, row := range rows {
+		level := ollamaModelUsageLevel(row.ModelName)
+		tokens := row.PromptTokens + row.CompletionTokens
+		weighted := float64(level) * float64(tokens)
+		if idx, ok := modelIndex[row.ModelName]; ok {
+			entry := &window.Models[idx]
+			entry.Requests += row.Requests
+			entry.PromptTokens += row.PromptTokens
+			entry.CompletionTokens += row.CompletionTokens
+		} else {
+			modelIndex[row.ModelName] = len(window.Models)
+			window.Models = append(window.Models, ollamaLocalModelUsage{
+				ModelName:        row.ModelName,
+				Requests:         row.Requests,
+				PromptTokens:     row.PromptTokens,
+				CompletionTokens: row.CompletionTokens,
+				Level:            level,
+			})
 		}
 		window.TotalTokens += tokens
-		if entry.Level > 0 {
-			window.WeightedUsage += float64(entry.Level) * float64(tokens)
+		window.WeightedUsage += weighted
+		samples = append(samples, usageSample{createdAt: row.CreatedAt, weighted: weighted, requests: row.Requests})
+	}
+	// Most-requested models first so the panel keeps a stable order.
+	sort.Slice(window.Models, func(i, j int) bool {
+		if window.Models[i].Requests != window.Models[j].Requests {
+			return window.Models[i].Requests > window.Models[j].Requests
 		}
-		window.Models = append(window.Models, entry)
+		return window.Models[i].ModelName < window.Models[j].ModelName
+	})
+
+	if len(samples) == 0 {
+		return window
+	}
+	sort.Slice(samples, func(i, j int) bool { return samples[i].createdAt < samples[j].createdAt })
+	window.EarliestReleaseAt = samples[0].createdAt + windowSeconds
+
+	// Suffix sums let each checkpoint report the weighted usage and request
+	// count still inside the window at now + AfterSeconds.
+	suffixWeighted := make([]float64, len(samples)+1)
+	suffixRequests := make([]int64, len(samples)+1)
+	for i := len(samples) - 1; i >= 0; i-- {
+		suffixWeighted[i] = suffixWeighted[i+1] + samples[i].weighted
+		suffixRequests[i] = suffixRequests[i+1] + samples[i].requests
+	}
+	for b := int64(0); b < windowSeconds/bucketSeconds; b++ {
+		cutoff := since + (b+1)*bucketSeconds
+		idx := sort.Search(len(samples), func(i int) bool { return samples[i].createdAt >= cutoff })
+		window.Projection.Points = append(window.Projection.Points, ollamaUsageProjectionPoint{
+			AfterSeconds:  (b + 1) * bucketSeconds,
+			WeightedUsage: suffixWeighted[idx],
+			Requests:      suffixRequests[idx],
+		})
 	}
 	return window
 }
@@ -188,12 +254,7 @@ func GetOllamaChannelUsage(c *gin.Context) {
 		return
 	}
 
-	sessionStats, err := model.SumModelTokensByChannel(id, now.Add(-time.Duration(ollamaSessionWindowSeconds)*time.Second).Unix())
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	weeklyStats, err := model.SumModelTokensByChannel(id, now.Add(-time.Duration(ollamaWeeklyWindowSeconds)*time.Second).Unix())
+	weeklyRows, err := model.SumModelUsageByChannelSecond(id, now.Add(-time.Duration(ollamaWeeklyWindowSeconds)*time.Second).Unix())
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -208,8 +269,14 @@ func GetOllamaChannelUsage(c *gin.Context) {
 			served[strings.TrimSpace(m)] = true
 		}
 	}
-	sessionStats = foldChannelModelStats(sessionStats, modelMapping, served)
-	weeklyStats = foldChannelModelStats(weeklyStats, modelMapping, served)
+	weeklyRows = foldChannelModelUsage(weeklyRows, modelMapping, served)
+	sessionSince := now.Add(-time.Duration(ollamaSessionWindowSeconds) * time.Second).Unix()
+	sessionRows := make([]model.ModelUsageSecond, 0, len(weeklyRows))
+	for _, row := range weeklyRows {
+		if row.CreatedAt >= sessionSince {
+			sessionRows = append(sessionRows, row)
+		}
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -223,8 +290,8 @@ func GetOllamaChannelUsage(c *gin.Context) {
 				"activity": upstream.Activity,
 			},
 			"local": gin.H{
-				"session": estimateOllamaChannelUsage(sessionStats, ollamaSessionWindowSeconds, now),
-				"weekly":  estimateOllamaChannelUsage(weeklyStats, ollamaWeeklyWindowSeconds, now),
+				"session": estimateOllamaChannelUsage(sessionRows, ollamaSessionWindowSeconds, now),
+				"weekly":  estimateOllamaChannelUsage(weeklyRows, ollamaWeeklyWindowSeconds, now),
 			},
 		},
 	})

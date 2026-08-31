@@ -26,6 +26,7 @@ const { OllamaUsageDialog } = await import('../ollama-usage-dialog')
 const i18n = createInstance()
 await i18n.use(initReactI18next).init({
   lng: 'en',
+  nsSeparator: false,
   resources: {
     en: {
       translation: {
@@ -44,10 +45,10 @@ await i18n.use(initReactI18next).init({
         'No requests in this window': 'No requests in this window',
         "Estimated from this channel's request logs":
           "Estimated from this channel's request logs",
-        'Weighted usage': 'Weighted usage',
+        'Weighted tokens': 'Weighted tokens',
         'Total tokens:': 'Total tokens:',
-        'Usage ratio (upstream ÷ local weighted):':
-          'Usage ratio (upstream ÷ local weighted):',
+        'Requests:': 'Requests:',
+        'Upstream requests:': 'Upstream requests:',
         'Prompt {{value}} / Completion {{value2}}':
           'Prompt {{value}} / Completion {{value2}}',
         Low: 'Low',
@@ -58,8 +59,8 @@ await i18n.use(initReactI18next).init({
         '4-week activity cost:': '4-week activity cost:',
         'Fetched at:': 'Fetched at:',
         'Failed to fetch usage': 'Failed to fetch usage',
-        "Ollama does not publish the usage cap; weighted usage estimates upstream usage units as level × (prompt + completion) tokens. The usage ratio (upstream ÷ local weighted) calibrates the estimate while all traffic goes through this channel.":
-          "Ollama does not publish the usage cap; weighted usage estimates upstream usage units as level × (prompt + completion) tokens. The usage ratio (upstream ÷ local weighted) calibrates the estimate while all traffic goes through this channel.",
+        'Weighted tokens estimate upstream usage units as model level × (prompt + completion) tokens, because Ollama does not publish the cap or the unit. Upstream and local request counts are directly comparable; mismatches mean some upstream traffic in this window predates the current channel or key.':
+          'Weighted tokens estimate upstream usage units as model level × (prompt + completion) tokens, because Ollama does not publish the cap or the unit. Upstream and local request counts are directly comparable; mismatches mean some upstream traffic in this window predates the current channel or key.',
       },
     },
   },
@@ -140,7 +141,7 @@ function successfulResponse() {
 }
 
 describe('Ollama usage dialog', () => {
-  test('renders upstream windows, local per-model estimates, and the calibrated usage ratio', () => {
+  test('renders upstream windows, local per-model estimates, and request comparisons', () => {
     render(<DialogHarness response={successfulResponse()} />)
 
     expect(screen.getByText('Upstream Usage')).toBeInTheDocument()
@@ -153,10 +154,17 @@ describe('Ollama usage dialog', () => {
     expect(screen.getAllByText('glm-5.3-flash').length).toBeGreaterThanOrEqual(
       2
     )
-    // Local weighted usage and per-window ratios: 30/6600 = 0.0045, 300/6600 = 0.0455.
+    // Local weighted tokens, local request total (3), and upstream request
+    // total for the same window (2 + 1).
     expect(screen.getAllByText('6,600')).toHaveLength(2)
-    expect(screen.getAllByText('0.0045')).toHaveLength(1)
-    expect(screen.getAllByText('0.0455')).toHaveLength(1)
+    expect(screen.getAllByText('Requests:').length).toBe(2)
+    expect(screen.getAllByText('3').length).toBeGreaterThanOrEqual(1)
+    // The session window has upstream model counts, so it shows the upstream
+    // request total next to its own; the upstream weekly window has no model
+    // list, so no upstream count is invented for it.
+    expect(screen.getAllByText('Upstream requests:').length).toBe(1)
+    // The unit-soup upstream-usage ratio is gone.
+    expect(screen.queryByText('0.0045')).not.toBeInTheDocument()
     // Level badges come from the response level field.
     expect(screen.getAllByText('Low').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText('Medium').length).toBeGreaterThanOrEqual(1)

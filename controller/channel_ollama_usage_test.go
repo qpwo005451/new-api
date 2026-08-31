@@ -66,6 +66,50 @@ func TestOllamaModelUsageLevel(t *testing.T) {
 	assert.Equal(t, 0, ollamaModelUsageLevel("gpt-oss"))
 }
 
+func TestFoldChannelModelStats(t *testing.T) {
+	// Mirrors the production ollama_pro channel: "deepseek-v4-flash" is
+	// mapped to the upstream "deepseek-v4-flash:0731", so both log names
+	// meter the same upstream model and must merge. Logs of a deleted
+	// channel reusing the same id (gpt-5.6-luna) must be dropped because
+	// the current channel does not serve that model.
+	mapping := map[string]string{"deepseek-v4-flash": "deepseek-v4-flash:0731"}
+	served := map[string]bool{
+		"glm-5.3-flash":          true,
+		"deepseek-v4-flash:0731": true,
+		"deepseek-v4-flash":      true,
+		"gpt-oss:20b":            true,
+	}
+	stats := []model.ModelTokenStat{
+		{ModelName: " deepseek-v4-flash ", Requests: 420, PromptTokens: 100, CompletionTokens: 200},
+		{ModelName: "deepseek-v4-flash:0731", Requests: 2, PromptTokens: 5, CompletionTokens: 16},
+		{ModelName: "glm-5.3-flash", Requests: 131, PromptTokens: 300, CompletionTokens: 400},
+		{ModelName: "gpt-5.6-luna", Requests: 2, PromptTokens: 2, CompletionTokens: 2},
+	}
+
+	folded := foldChannelModelStats(stats, mapping, served)
+
+	require.Len(t, folded, 2)
+	// Insertion order: first folded occurrence of each upstream name.
+	deepseek := folded[0]
+	assert.Equal(t, "deepseek-v4-flash:0731", deepseek.ModelName)
+	assert.EqualValues(t, 422, deepseek.Requests)
+	assert.EqualValues(t, 105, deepseek.PromptTokens)
+	assert.EqualValues(t, 216, deepseek.CompletionTokens)
+	glm := folded[1]
+	assert.Equal(t, "glm-5.3-flash", glm.ModelName)
+	assert.EqualValues(t, 131, glm.Requests)
+}
+
+func TestFoldChannelModelStatsNilServedKeepsAll(t *testing.T) {
+	// A channel with an empty model list must not hide everything.
+	stats := []model.ModelTokenStat{
+		{ModelName: "anything", Requests: 1, PromptTokens: 1, CompletionTokens: 1},
+	}
+	folded := foldChannelModelStats(stats, nil, nil)
+	require.Len(t, folded, 1)
+	assert.Equal(t, "anything", folded[0].ModelName)
+}
+
 func TestEstimateOllamaChannelUsage(t *testing.T) {
 	stats := []model.ModelTokenStat{
 		{ModelName: "gpt-oss:20b", Requests: 2, PromptTokens: 1000, CompletionTokens: 500},

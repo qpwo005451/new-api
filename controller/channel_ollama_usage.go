@@ -93,6 +93,39 @@ func ollamaModelUsageLevel(modelName string) int {
 	return 0
 }
 
+// foldChannelModelStats merges requested-model stats into the channel's
+// upstream model names via the channel's model mapping and drops models the
+// channel does not serve (leftover log entries of deleted or re-created
+// channels sharing the same id). Ollama meters the upstream model name, so
+// the folded stats are what its usage windows actually count.
+func foldChannelModelStats(
+	stats []model.ModelTokenStat,
+	mapping map[string]string,
+	served map[string]bool,
+) []model.ModelTokenStat {
+	folded := make([]model.ModelTokenStat, 0, len(stats))
+	index := make(map[string]int, len(stats))
+	for _, stat := range stats {
+		name := strings.TrimSpace(stat.ModelName)
+		if mapped, ok := mapping[name]; ok {
+			name = mapped
+		}
+		if served != nil && !served[name] {
+			continue
+		}
+		if i, ok := index[name]; ok {
+			folded[i].Requests += stat.Requests
+			folded[i].PromptTokens += stat.PromptTokens
+			folded[i].CompletionTokens += stat.CompletionTokens
+			continue
+		}
+		index[name] = len(folded)
+		stat.ModelName = name
+		folded = append(folded, stat)
+	}
+	return folded
+}
+
 func estimateOllamaChannelUsage(stats []model.ModelTokenStat, windowSeconds int64, now time.Time) ollamaLocalUsageWindow {
 	window := ollamaLocalUsageWindow{
 		WindowSeconds: windowSeconds,
@@ -165,6 +198,18 @@ func GetOllamaChannelUsage(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+
+	modelMapping := normalizeChannelModelMapping(channel)
+	var served map[string]bool
+	channelModels := channel.GetModels()
+	if len(channelModels) > 0 {
+		served = make(map[string]bool, len(channelModels))
+		for _, m := range channelModels {
+			served[strings.TrimSpace(m)] = true
+		}
+	}
+	sessionStats = foldChannelModelStats(sessionStats, modelMapping, served)
+	weeklyStats = foldChannelModelStats(weeklyStats, modelMapping, served)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

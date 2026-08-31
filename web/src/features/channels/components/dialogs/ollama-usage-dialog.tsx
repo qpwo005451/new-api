@@ -141,21 +141,14 @@ function formatUsageNumber(value: unknown): string {
   return Number.isFinite(v) ? formatNumber(v) : '-'
 }
 
-function usageRatio(
-  upstreamUsage: unknown,
-  localWeighted: unknown
-): number | null {
-  const upstream = Number(upstreamUsage)
-  const local = Number(localWeighted)
-  if (
-    !Number.isFinite(upstream) ||
-    !Number.isFinite(local) ||
-    upstream <= 0 ||
-    local <= 0
-  ) {
-    return null
+function sumUpstreamRequests(
+  window?: OllamaUsageWindowData
+): number | undefined {
+  const models = window?.models
+  if (!models || models.length === 0) {
+    return undefined
   }
-  return upstream / local
+  return models.reduce((sum, m) => sum + Number(m.request_count ?? 0), 0)
 }
 
 function UpstreamUsageCard(props: {
@@ -193,9 +186,9 @@ function UpstreamUsageCard(props: {
             {models.map((model) => (
               <div
                 key={model.name ?? ''}
-                className='flex items-center justify-between gap-2 text-xs'
+                className='flex items-start justify-between gap-2 text-xs'
               >
-                <span className='min-w-0 truncate font-mono'>
+                <span className='min-w-0 break-all font-mono'>
                   {model.name || '-'}
                 </span>
                 <span className='text-muted-foreground shrink-0 tabular-nums'>
@@ -222,7 +215,7 @@ function LocalModelRow(props: { model: OllamaLocalModelUsage }) {
 
   return (
     <div className='bg-background ring-border/60 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg px-2 py-1.5 ring-1'>
-      <span className='min-w-0 flex-1 truncate font-mono text-xs'>
+      <span className='min-w-0 flex-1 break-all font-mono text-xs'>
         {props.model.model_name || '-'}
       </span>
       <span className='text-muted-foreground shrink-0 text-[11px] tabular-nums'>
@@ -246,11 +239,11 @@ function LocalModelRow(props: { model: OllamaLocalModelUsage }) {
 function LocalUsageCard(props: {
   title: string
   window?: OllamaLocalUsageWindow
-  upstreamUsage: unknown
+  upstreamRequests?: number
 }) {
   const { t } = useTranslation()
   const models = props.window?.models ?? []
-  const ratio = usageRatio(props.upstreamUsage, props.window?.weighted_usage)
+  const localRequests = models.reduce((s, m) => s + Number(m.requests ?? 0), 0)
 
   return (
     <Card size='sm' className='gap-0 py-0'>
@@ -261,7 +254,7 @@ function LocalUsageCard(props: {
               {props.title}
             </CardTitle>
             <CardDescription className='mt-1 text-xs'>
-              {t('Estimated from this channel\'s request logs')}
+              {t("Estimated from this channel's request logs")}
             </CardDescription>
           </div>
           <div className='shrink-0 text-right'>
@@ -269,24 +262,25 @@ function LocalUsageCard(props: {
               {formatUsageNumber(props.window?.weighted_usage)}
             </div>
             <div className='text-muted-foreground mt-1 text-[11px]'>
-              {t('Weighted usage')}
+              {t('Weighted tokens')}
             </div>
           </div>
         </div>
       </CardHeader>
       <CardContent className='p-3 pt-0'>
         <div className='text-muted-foreground text-xs tabular-nums'>
-          {t('Total tokens:')}{' '}
+          <span>{t('Total tokens:')}</span>{' '}
           <span className='text-foreground'>
             {formatTokens(Number(props.window?.total_tokens ?? 0))}
           </span>
-          {ratio !== null ? (
+          {' · '}
+          <span>{t('Requests:')}</span>{' '}
+          <span className='text-foreground'>{localRequests}</span>
+          {props.upstreamRequests !== undefined ? (
             <>
               {' · '}
-              {t('Usage ratio (upstream ÷ local weighted):')}{' '}
-              <span className='text-foreground'>
-                {ratio.toFixed(4)}
-              </span>
+              <span>{t('Upstream requests:')}</span>{' '}
+              <span className='text-foreground'>{props.upstreamRequests}</span>
             </>
           ) : null}
         </div>
@@ -442,17 +436,21 @@ export function OllamaUsageDialog(props: OllamaUsageDialogProps) {
                 <LocalUsageCard
                   title={t('5-Hour Window')}
                   window={payload.local?.session}
-                  upstreamUsage={payload.upstream?.session?.usage}
+                  upstreamRequests={sumUpstreamRequests(
+                    payload.upstream?.session
+                  )}
                 />
                 <LocalUsageCard
                   title={t('Weekly Window')}
                   window={payload.local?.weekly}
-                  upstreamUsage={payload.upstream?.weekly?.usage}
+                  upstreamRequests={sumUpstreamRequests(
+                    payload.upstream?.weekly
+                  )}
                 />
               </div>
               <div className='text-muted-foreground text-xs leading-5'>
                 {t(
-                  'Ollama does not publish the usage cap; weighted usage estimates upstream usage units as level × (prompt + completion) tokens. The usage ratio (upstream ÷ local weighted) calibrates the estimate while all traffic goes through this channel.'
+                  'Weighted tokens estimate upstream usage units as model level × (prompt + completion) tokens, because Ollama does not publish the cap or the unit. Upstream and local request counts are directly comparable; mismatches mean some upstream traffic in this window predates the current channel or key.'
                 )}
               </div>
             </div>

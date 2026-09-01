@@ -43,6 +43,10 @@ export interface TokenTrendPoint {
   completion_tokens: number
   cache_read: number
   cache_write: number
+  // Cache hit-rate denominator: the slice of prompt_tokens that comes from
+  // channels reporting cache usage (Ollama excluded), so it can be smaller
+  // than prompt_tokens.
+  cache_prompt_tokens: number
 }
 
 export interface FlowQuotaDataItem {

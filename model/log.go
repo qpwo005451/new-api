@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -730,7 +731,10 @@ func SumModelUsageByChannelSecond(channelId int, startTimestamp int64) ([]ModelU
 // PromptTokens already includes both (openai semantic: prompt contains
 // cached_tokens; anthropic semantic converted upstream: prompt = input +
 // cache_read + cache_write), so CacheRead + CacheWrite never exceed
-// PromptTokens for the same rows.
+// PromptTokens for the same rows. CachePrompt is the cache hit-rate
+// denominator: prompt tokens summed only over channels that report cache
+// info (channels without cache reporting, e.g. Ollama, are excluded), so it
+// may be smaller than PromptTokens while PromptTokens stays the full count.
 type TokenTrendPoint struct {
 	CreatedAt        int64 `json:"created_at" gorm:"column:created_at"`
 	Requests         int64 `json:"requests" gorm:"column:requests"`
@@ -738,6 +742,7 @@ type TokenTrendPoint struct {
 	CompletionTokens int64 `json:"completion_tokens" gorm:"column:completion_tokens"`
 	CacheRead        int64 `json:"cache_read" gorm:"column:cache_read"`
 	CacheWrite       int64 `json:"cache_write" gorm:"column:cache_write"`
+	CachePrompt      int64 `json:"cache_prompt_tokens" gorm:"column:cache_prompt"`
 }
 
 // tokenTrendJSONExpr returns a SQL expression extracting an int64 field from
@@ -759,12 +764,30 @@ func tokenTrendJSONExpr(field string) string {
 	}
 }
 
+// tokenTrendCachePromptExpr builds the cache hit-rate denominator: prompt
+// tokens summed only over channels that report cache info. excludedIds are
+// channel ids of a type without cache reporting (Ollama), inlined as plain
+// integers so the expression stays portable across log dialects.
+func tokenTrendCachePromptExpr(excludedIds []int) string {
+	if len(excludedIds) == 0 {
+		return "COALESCE(sum(prompt_tokens), 0)"
+	}
+	parts := make([]string, len(excludedIds))
+	for i, id := range excludedIds {
+		parts[i] = strconv.Itoa(id)
+	}
+	return "COALESCE(sum(CASE WHEN channel_id NOT IN (" + strings.Join(parts, ", ") + ") THEN prompt_tokens ELSE 0 END), 0)"
+}
+
 // GetTokenTrend aggregates consume logs into hourly buckets between the two
 // timestamps. userId > 0 restricts the result to that user's own logs; userId
 // == 0 returns all users (admin scope). modelName != 0 filters by model.
 // Cache token counts are extracted from the other JSON payload with
 // dialect-aware SQL when available, otherwise by parsing rows in Go.
 func GetTokenTrend(userId int, startTimestamp int64, endTimestamp int64, modelName string) ([]TokenTrendPoint, error) {
+	excludedIds := GetChannelIdsByType(constant.ChannelTypeOllama)
+	cachePromptExpr := tokenTrendCachePromptExpr(excludedIds)
+
 	bucketExpr := "(created_at - (created_at % 3600))"
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		bucketExpr = "toStartOfHour(toDateTime(created_at))"
@@ -800,8 +823,8 @@ func GetTokenTrend(userId int, startTimestamp int64, endTimestamp int64, modelNa
 	if cacheReadExpr != "" {
 		cacheWriteExpr := tokenTrendJSONExpr("cache_write_tokens") + " + " + tokenTrendJSONExpr("cache_creation_tokens")
 		selectStr := fmt.Sprintf(
-			"%s as created_at, count(*) as requests, COALESCE(sum(prompt_tokens), 0) as prompt_tokens, COALESCE(sum(completion_tokens), 0) as completion_tokens, COALESCE(sum(%s), 0) as cache_read, COALESCE(sum(%s), 0) as cache_write",
-			bucketExpr, cacheReadExpr, cacheWriteExpr,
+			"%s as created_at, count(*) as requests, COALESCE(sum(prompt_tokens), 0) as prompt_tokens, COALESCE(sum(completion_tokens), 0) as completion_tokens, COALESCE(sum(%s), 0) as cache_read, COALESCE(sum(%s), 0) as cache_write, %s as cache_prompt",
+			bucketExpr, cacheReadExpr, cacheWriteExpr, cachePromptExpr,
 		)
 		var points []TokenTrendPoint
 		err := baseQuery(selectStr).Group(bucketExpr).Order("created_at asc").Scan(&points).Error
@@ -814,8 +837,8 @@ func GetTokenTrend(userId int, startTimestamp int64, endTimestamp int64, modelNa
 
 	// Fallback: aggregate plain columns in SQL, parse the other payload in Go.
 	selectStr := fmt.Sprintf(
-		"%s as created_at, count(*) as requests, COALESCE(sum(prompt_tokens), 0) as prompt_tokens, COALESCE(sum(completion_tokens), 0) as completion_tokens",
-		bucketExpr,
+		"%s as created_at, count(*) as requests, COALESCE(sum(prompt_tokens), 0) as prompt_tokens, COALESCE(sum(completion_tokens), 0) as completion_tokens, %s as cache_prompt",
+		bucketExpr, cachePromptExpr,
 	)
 	var points []TokenTrendPoint
 	err := baseQuery(selectStr).Group(bucketExpr).Order("created_at asc").Scan(&points).Error
@@ -876,7 +899,10 @@ func jsonInt64(value interface{}) int64 {
 
 // clampTokenTrendPoints clamps negative aggregates and per-point overflows so
 // a malformed other payload can never make a chart series negative or larger
-// than the tokens it is derived from.
+// than the tokens it is derived from. CacheRead/CacheWrite are bounded by
+// CachePrompt (the prompt total over channels that report cache info); when
+// no excluded channel exists, CachePrompt equals PromptTokens and the bounds
+// are identical to clamping against PromptTokens.
 func clampTokenTrendPoints(points []TokenTrendPoint) {
 	for i := range points {
 		p := &points[i]
@@ -886,14 +912,20 @@ func clampTokenTrendPoints(points []TokenTrendPoint) {
 		if p.CacheWrite < 0 {
 			p.CacheWrite = 0
 		}
+		if p.CachePrompt < 0 {
+			p.CachePrompt = 0
+		}
 		if p.PromptTokens < 0 {
 			p.PromptTokens = 0
 		}
 		if p.CompletionTokens < 0 {
 			p.CompletionTokens = 0
 		}
-		if p.CacheRead > p.PromptTokens {
-			p.CacheRead = p.PromptTokens
+		if p.CachePrompt > p.PromptTokens {
+			p.CachePrompt = p.PromptTokens
+		}
+		if p.CacheRead > p.CachePrompt {
+			p.CacheRead = p.CachePrompt
 		}
 		if p.CacheWrite > p.PromptTokens-p.CacheRead {
 			p.CacheWrite = p.PromptTokens - p.CacheRead

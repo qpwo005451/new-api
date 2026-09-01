@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -43,6 +44,54 @@ func seedTokenTrendLog(t *testing.T, userId int, createdAt int64, modelName stri
 		Other:            other,
 	}
 	require.NoError(t, LOG_DB.Create(log).Error)
+}
+
+func setupTokenTrendChannelDB(t *testing.T) {
+	t.Helper()
+	setupTokenTrendTestDB(t)
+
+	originalDB := DB
+	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	t.Cleanup(func() {
+		DB = originalDB
+		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+	})
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&Channel{}))
+	DB = db
+	common.MemoryCacheEnabled = false
+}
+
+func seedTokenTrendLogOnChannel(t *testing.T, userId int, channelID int, createdAt int64, modelName string, prompt, completion int, other string) {
+	t.Helper()
+	log := &Log{
+		UserId:           userId,
+		ChannelId:        channelID,
+		CreatedAt:        createdAt,
+		Type:             LogTypeConsume,
+		Username:         "tester",
+		ModelName:        modelName,
+		PromptTokens:     prompt,
+		CompletionTokens: completion,
+		Other:            other,
+	}
+	require.NoError(t, LOG_DB.Create(log).Error)
+}
+
+// seedTokenTrendOllamaAndNormalChannels creates one Ollama channel (id 1) and
+// one cache-reporting channel (id 2) in the main DB, then logs 900 prompt
+// tokens without cache fields on the Ollama channel and 1000 prompt tokens
+// with cache fields on the normal channel, both inside the same hourly bucket.
+func seedTokenTrendOllamaAndNormalChannels(t *testing.T) {
+	t.Helper()
+	require.NoError(t, DB.Create(&Channel{Id: 1, Type: constant.ChannelTypeOllama, Name: "ollama", Key: "ollama-key", Status: common.ChannelStatusEnabled}).Error)
+	require.NoError(t, DB.Create(&Channel{Id: 2, Type: 1, Name: "openai", Key: "openai-key", Status: common.ChannelStatusEnabled}).Error)
+	seedTokenTrendLogOnChannel(t, 7, 1, 100, "m1", 900, 90, `{}`)
+	seedTokenTrendLogOnChannel(t, 7, 2, 150, "m1", 1000, 100, `{"cache_tokens":800,"cache_write_tokens":50}`)
 }
 
 func TestGetTokenTrendAggregatesHourlyBucketsWithCacheTokens(t *testing.T) {
@@ -180,4 +229,61 @@ func TestGetTokenTrendFallbackParsesOtherInGo(t *testing.T) {
 	assert.Equal(t, int64(1300), points[0].PromptTokens)
 	assert.Equal(t, int64(400), points[0].CacheRead)
 	assert.Equal(t, int64(60), points[0].CacheWrite)
+}
+
+func TestGetTokenTrendCachePromptExcludesOllamaChannel(t *testing.T) {
+	setupTokenTrendChannelDB(t)
+	seedTokenTrendOllamaAndNormalChannels(t)
+
+	points, err := GetTokenTrend(7, 0, 7200, "")
+	require.NoError(t, err)
+	require.Len(t, points, 1)
+
+	// Requests/prompt/completion stay full-scope; only the cache hit-rate
+	// denominator drops the Ollama channel's prompt tokens.
+	assert.Equal(t, int64(2), points[0].Requests)
+	assert.Equal(t, int64(1900), points[0].PromptTokens)
+	assert.Equal(t, int64(1000), points[0].CachePrompt)
+	assert.Equal(t, int64(800), points[0].CacheRead)
+	assert.Equal(t, int64(50), points[0].CacheWrite)
+}
+
+func TestGetTokenTrendFallbackCachePromptExcludesOllamaChannel(t *testing.T) {
+	setupTokenTrendChannelDB(t)
+	seedTokenTrendOllamaAndNormalChannels(t)
+
+	// Force the Go-parsing fallback by hiding the JSON expressions behind an
+	// unsupported dialect; cache_prompt still comes from the SQL expression
+	// shared by both paths.
+	common.SetLogDatabaseType(common.DatabaseType("unsupported"))
+
+	points, err := GetTokenTrend(7, 0, 7200, "")
+	require.NoError(t, err)
+	require.Len(t, points, 1)
+
+	assert.Equal(t, int64(2), points[0].Requests)
+	assert.Equal(t, int64(1900), points[0].PromptTokens)
+	assert.Equal(t, int64(1000), points[0].CachePrompt)
+	assert.Equal(t, int64(800), points[0].CacheRead)
+	assert.Equal(t, int64(50), points[0].CacheWrite)
+}
+
+func TestGetTokenTrendCachePromptMatchesPromptTokensWithoutOllama(t *testing.T) {
+	setupTokenTrendChannelDB(t)
+
+	// No Ollama channel exists in the main DB: the cache hit-rate denominator
+	// must stay identical to the full prompt total.
+	require.NoError(t, DB.Create(&Channel{Id: 2, Type: 1, Name: "openai", Key: "openai-key", Status: common.ChannelStatusEnabled}).Error)
+	seedTokenTrendLogOnChannel(t, 7, 2, 100, "m1", 900, 90, `{}`)
+	seedTokenTrendLogOnChannel(t, 7, 2, 150, "m1", 1000, 100, `{"cache_tokens":800,"cache_write_tokens":50}`)
+
+	points, err := GetTokenTrend(7, 0, 7200, "")
+	require.NoError(t, err)
+	require.Len(t, points, 1)
+
+	assert.Equal(t, int64(2), points[0].Requests)
+	assert.Equal(t, int64(1900), points[0].PromptTokens)
+	assert.Equal(t, int64(1900), points[0].CachePrompt)
+	assert.Equal(t, int64(800), points[0].CacheRead)
+	assert.Equal(t, int64(50), points[0].CacheWrite)
 }

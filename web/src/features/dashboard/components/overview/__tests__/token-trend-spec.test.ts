@@ -33,6 +33,50 @@ const zhLabels: Record<string, string> = {
 
 const label = (key: string) => zhLabels[key] ?? key
 
+describe('buildTokenTrendSeries cache prompt denominator', () => {
+  it('divides the hit rate by cache_prompt_tokens, not full prompt tokens', () => {
+    // Mixed bucket: only 100 of 1000 prompt tokens come from channels that
+    // report cache usage, so 80 read tokens is an 80% hit rate; the old
+    // full-prompt denominator would have diluted it to 8%.
+    const series = buildTokenTrendSeries([
+      {
+        created_at: 1787497200,
+        requests: 3,
+        prompt_tokens: 1000,
+        completion_tokens: 0,
+        cache_read: 80,
+        cache_write: 20,
+        cache_prompt_tokens: 100,
+      },
+    ])
+
+    expect(series[0].cacheHitRate).toBe(80)
+    expect(series[0].cachePrompt).toBe(100)
+    // Plain input still subtracts cache tokens from the full prompt count.
+    expect(series[0].input).toBe(900)
+  })
+
+  it('stays at a 0 hit rate (never NaN) when cache prompt tokens are 0', () => {
+    // A pure Ollama bucket reports neither cache usage nor cacheable prompt
+    // tokens, so the guarded denominator must yield 0 instead of NaN.
+    const series = buildTokenTrendSeries([
+      {
+        created_at: 1787497200,
+        requests: 2,
+        prompt_tokens: 1000,
+        completion_tokens: 0,
+        cache_read: 0,
+        cache_write: 0,
+        cache_prompt_tokens: 0,
+      },
+    ])
+
+    expect(series[0].cacheHitRate).toBe(0)
+    expect(series[0].cachePrompt).toBe(0)
+    expect(series[0].input).toBe(1000)
+  })
+})
+
 // Left linear axis max from the rendered chart (VChart internals).
 function getLinearTokenAxisMax(rawChart: unknown): number {
   const chartInst = (rawChart as { getChart?: () => unknown }).getChart?.() as
@@ -61,6 +105,7 @@ function makeSeries() {
       completion_tokens: 20_000,
       cache_read: 1_000_000,
       cache_write: 60_000,
+      cache_prompt_tokens: 1_200_000,
     },
     {
       created_at: 1787500800,
@@ -69,6 +114,7 @@ function makeSeries() {
       completion_tokens: 15_000,
       cache_read: 700_000,
       cache_write: 0,
+      cache_prompt_tokens: 800_000,
     },
   ]
   return buildTokenTrendSeries(points)

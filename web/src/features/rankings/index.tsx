@@ -24,6 +24,7 @@ import { PageTransition } from '@/components/page-transition'
 import { Skeleton } from '@/components/ui/skeleton'
 
 import {
+  ChannelsSection,
   MarketShareSection,
   ModelsSection,
   PulseSection,
@@ -97,6 +98,12 @@ export function Rankings() {
               <MarketShareSection
                 history={snapshot.vendor_share_history}
                 rows={snapshot.vendors}
+                period={period}
+              />
+
+              <ChannelsSection
+                history={snapshot.channel_share_history}
+                rows={snapshot.channels}
                 period={period}
               />
 

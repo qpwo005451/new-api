@@ -171,6 +171,7 @@ export type ContentSettings = {
   'console_setting.announcements': string
   'console_setting.faq': string
   'console_setting.uptime_kuma_groups': string
+  'rankings_channel_group_setting.groups': string
   'console_setting.api_info_enabled': boolean
   'console_setting.announcements_enabled': boolean
   'console_setting.faq_enabled': boolean

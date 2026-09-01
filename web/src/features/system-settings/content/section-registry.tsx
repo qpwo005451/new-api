@@ -24,6 +24,7 @@ import { ChatSettingsSection } from './chat-settings-section'
 import { DashboardSection } from './dashboard-section'
 import { DrawingSettingsSection } from './drawing-settings-section'
 import { FAQSection } from './faq-section'
+import { RankingsChannelGroupsSection } from './rankings-channel-groups-section'
 import { UptimeKumaSection } from './uptime-kuma-section'
 
 /**
@@ -90,6 +91,15 @@ const CONTENT_SECTIONS = [
       <UptimeKumaSection
         enabled={settings['console_setting.uptime_kuma_enabled']}
         data={settings['console_setting.uptime_kuma_groups']}
+      />
+    ),
+  },
+  {
+    id: 'rankings-channel-groups',
+    titleKey: 'Channel aggregation groups',
+    build: (settings: ContentSettings) => (
+      <RankingsChannelGroupsSection
+        data={settings['rankings_channel_group_setting.groups']}
       />
     ),
   },

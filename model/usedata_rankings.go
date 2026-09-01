@@ -18,6 +18,17 @@ type RankingQuotaBucket struct {
 	Tokens    int64  `json:"tokens"`
 }
 
+type RankingChannelTotal struct {
+	ChannelID   int   `json:"channel_id"`
+	TotalTokens int64 `json:"total_tokens"`
+}
+
+type RankingChannelBucket struct {
+	ChannelID int   `json:"channel_id"`
+	Bucket    int64 `json:"bucket"`
+	Tokens    int64 `json:"tokens"`
+}
+
 func GetRankingQuotaTotals(startTime int64, endTime int64) ([]RankingQuotaTotal, error) {
 	var rows []RankingQuotaTotal
 	query := DB.Table("quota_data").
@@ -41,6 +52,37 @@ func GetRankingQuotaBuckets(startTime int64, endTime int64, bucketSize int64) ([
 		Select(fmt.Sprintf("model_name, %s as bucket, sum(token_used) as tokens", bucketExpr)).
 		Where("model_name <> ''").
 		Group(fmt.Sprintf("model_name, %s", bucketExpr)).
+		Having("sum(token_used) > 0").
+		Order("bucket ASC")
+	query = applyRankingQuotaTimeRange(query, startTime, endTime)
+	err := query.Find(&rows).Error
+	return rows, err
+}
+
+// Channel rankings deliberately keep channel_id = 0 rows (no model_name
+// filter either): the service layer buckets legacy/unattributed traffic and
+// deleted channels into one shared "Others" entry.
+func GetRankingChannelTotals(startTime int64, endTime int64) ([]RankingChannelTotal, error) {
+	var rows []RankingChannelTotal
+	query := DB.Table("quota_data").
+		Select("channel_id, sum(token_used) as total_tokens").
+		Group("channel_id").
+		Having("sum(token_used) > 0").
+		Order("total_tokens DESC")
+	query = applyRankingQuotaTimeRange(query, startTime, endTime)
+	err := query.Find(&rows).Error
+	return rows, err
+}
+
+func GetRankingChannelBuckets(startTime int64, endTime int64, bucketSize int64) ([]RankingChannelBucket, error) {
+	if bucketSize <= 0 {
+		bucketSize = 3600
+	}
+	bucketExpr := rankingBucketExpr(bucketSize)
+	var rows []RankingChannelBucket
+	query := DB.Table("quota_data").
+		Select(fmt.Sprintf("channel_id, %s as bucket, sum(token_used) as tokens", bucketExpr)).
+		Group(fmt.Sprintf("channel_id, %s", bucketExpr)).
 		Having("sum(token_used) > 0").
 		Order("bucket ASC")
 	query = applyRankingQuotaTimeRange(query, startTime, endTime)

@@ -219,6 +219,9 @@ func validateOptionValue(key string, value string) error {
 	if key == "model_retry_policy_setting.virtual_model_routes" {
 		return operation_setting.ValidateVirtualModelRoutes(value)
 	}
+	if key == "rankings_channel_group_setting.groups" {
+		return operation_setting.ValidateRankingsChannelGroups(value)
+	}
 	return nil
 }
 

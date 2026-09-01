@@ -123,6 +123,42 @@ export type VendorShareSeries = {
   buckets: number
 }
 
+/**
+ * One row of the channel leaderboard: traffic aggregated by channel display
+ * name (or by the configured channel aggregation groups).
+ */
+export type RankedChannel = {
+  rank: number
+  channel_name: string
+  total_tokens: number
+  /** Share of all tokens served (0..1). */
+  share: number
+  /** Period-over-period change in token volume (%). */
+  growth_pct: number
+}
+
+/**
+ * One sample of a channel's market share at a given timestamp. `share` is
+ * normalised within the bucket (sums to 1.0 across all channels at the same
+ * `ts`); `tokens` is preserved for tooltip use. `channel === 'Others'`
+ * denotes traffic from deleted/ungrouped unknown channels.
+ */
+export type ChannelSharePoint = {
+  ts: string
+  label: string
+  channel: string
+  share: number
+  tokens: number
+}
+
+export type ChannelShareSeries = {
+  /** Flat points ready for VChart, ordered oldest → newest. */
+  points: ChannelSharePoint[]
+  /** Channels that appear in the series, sorted by aggregate tokens desc. */
+  channels: Array<{ name: string; total: number; share: number }>
+  buckets: number
+}
+
 export type RankingsSnapshot = {
   // Overall (all categories) ------------------------------------------------
   models: ModelRanking[]
@@ -135,4 +171,8 @@ export type RankingsSnapshot = {
   models_history: ModelHistorySeries
   /** 100%-stacked area history of token share by vendor over the period. */
   vendor_share_history: VendorShareSeries
+  /** Channel leaderboard aggregated by display name (or group). */
+  channels: RankedChannel[]
+  /** 100%-stacked bar history of token share by channel over the period. */
+  channel_share_history: ChannelShareSeries
 }

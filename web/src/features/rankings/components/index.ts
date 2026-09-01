@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+export * from './channels-section'
 export * from './entity-links'
 export * from './growth-text'
 export * from './market-share-section'

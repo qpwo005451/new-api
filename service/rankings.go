@@ -7,7 +7,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 )
 
 const (
@@ -16,17 +18,20 @@ const (
 	rankingHistoryLimit     = 10
 	rankingVendorLimit      = 5
 	rankingMoverLimit       = 6
+	rankingChannelLimit     = 5
 	rankingOthersLabel      = "Others"
 	rankingUnknownVendor    = "Unknown"
 )
 
 type RankingsResponse struct {
-	Models             []RankedModel      `json:"models"`
-	Vendors            []RankedVendor     `json:"vendors"`
-	TopMovers          []RankingMover     `json:"top_movers"`
-	TopDroppers        []RankingMover     `json:"top_droppers"`
-	ModelsHistory      ModelHistorySeries `json:"models_history"`
-	VendorShareHistory VendorShareSeries  `json:"vendor_share_history"`
+	Models              []RankedModel       `json:"models"`
+	Vendors             []RankedVendor      `json:"vendors"`
+	Channels            []RankedChannel     `json:"channels"`
+	TopMovers           []RankingMover      `json:"top_movers"`
+	TopDroppers         []RankingMover      `json:"top_droppers"`
+	ModelsHistory       ModelHistorySeries  `json:"models_history"`
+	VendorShareHistory  VendorShareSeries   `json:"vendor_share_history"`
+	ChannelShareHistory ChannelShareHistory `json:"channel_share_history"`
 }
 
 type RankedModel struct {
@@ -101,6 +106,38 @@ type VendorShareSeries struct {
 	Buckets int                 `json:"buckets"`
 }
 
+// Channel share series mirror the vendor share series shape: one row per
+// displayed channel plus an aggregated "Others" entry, and per-bucket points.
+type ChannelSharePoint struct {
+	Ts      string  `json:"ts"`
+	Label   string  `json:"label"`
+	Channel string  `json:"channel"`
+	Share   float64 `json:"share"`
+	Tokens  int64   `json:"tokens"`
+}
+
+type ChannelShareChannel struct {
+	Name  string  `json:"name"`
+	Total int64   `json:"total"`
+	Share float64 `json:"share"`
+}
+
+type ChannelShareHistory struct {
+	Points   []ChannelSharePoint   `json:"points"`
+	Channels []ChannelShareChannel `json:"channels"`
+	Buckets  int                   `json:"buckets"`
+}
+
+// RankedChannel aggregates quota_data rows by the resolved display name of
+// channel_id, so grouped channels appear once under their group label.
+type RankedChannel struct {
+	Rank        int     `json:"rank"`
+	ChannelName string  `json:"channel_name"`
+	TotalTokens int64   `json:"total_tokens"`
+	Share       float64 `json:"share"`
+	GrowthPct   float64 `json:"growth_pct"`
+}
+
 type rankingPeriodConfig struct {
 	id          string
 	duration    time.Duration
@@ -127,6 +164,12 @@ type vendorAggregate struct {
 	models         map[string]struct{}
 	topModel       string
 	topModelTokens int64
+}
+
+type channelAggregate struct {
+	name           string
+	totalTokens    int64
+	previousTokens int64
 }
 
 var (
@@ -190,12 +233,26 @@ func buildRankingsSnapshot(config rankingPeriodConfig, now time.Time) (*Rankings
 	}
 
 	var previousTotals []model.RankingQuotaTotal
+	var previousChannelTotals []model.RankingChannelTotal
 	if config.hasPrevious {
 		previousStart, previousEnd := previousRankingTimeRange(config, startTime)
 		previousTotals, err = model.GetRankingQuotaTotals(previousStart, previousEnd)
 		if err != nil {
 			return nil, err
 		}
+		previousChannelTotals, err = model.GetRankingChannelTotals(previousStart, previousEnd)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	currentChannelTotals, err := model.GetRankingChannelTotals(startTime, endTime)
+	if err != nil {
+		return nil, err
+	}
+	currentChannelBuckets, err := model.GetRankingChannelBuckets(startTime, endTime, config.bucketSize)
+	if err != nil {
+		return nil, err
 	}
 
 	meta := buildRankingModelMeta()
@@ -203,19 +260,36 @@ func buildRankingsSnapshot(config rankingPeriodConfig, now time.Time) (*Rankings
 	previousRankByModel := rankingRankMap(previousTotals)
 	previousTokensByModel := rankingTokenMap(previousTotals)
 
+	channelIDSet := make(map[int]struct{})
+	for _, item := range currentChannelTotals {
+		channelIDSet[item.ChannelID] = struct{}{}
+	}
+	for _, item := range previousChannelTotals {
+		channelIDSet[item.ChannelID] = struct{}{}
+	}
+	channelIDs := make([]int, 0, len(channelIDSet))
+	for id := range channelIDSet {
+		channelIDs = append(channelIDs, id)
+	}
+	channelNames := resolveRankingChannelNames(channelIDs)
+
 	rankedModels := buildRankedModels(currentTotals, totalTokens, previousRankByModel, previousTokensByModel, meta, config.hasPrevious)
 	vendors := buildRankedVendors(currentTotals, previousTotals, totalTokens, meta, config.hasPrevious)
 	modelHistory := buildModelHistory(currentBuckets, currentTotals, meta, config)
 	vendorHistory := buildVendorShareHistory(currentBuckets, vendors, totalTokens, meta, config)
+	rankedChannels := buildRankedChannels(currentChannelTotals, previousChannelTotals, totalTokens, channelNames, config.hasPrevious)
+	channelHistory := buildChannelShareHistory(currentChannelBuckets, rankedChannels, totalTokens, channelNames, config)
 	movers, droppers := buildRankingMovers(rankedModels)
 
 	return &RankingsResponse{
-		Models:             limitRankedModels(rankedModels, rankingLeaderboardLimit),
-		Vendors:            vendors,
-		TopMovers:          movers,
-		TopDroppers:        droppers,
-		ModelsHistory:      modelHistory,
-		VendorShareHistory: vendorHistory,
+		Models:              limitRankedModels(rankedModels, rankingLeaderboardLimit),
+		Vendors:             vendors,
+		Channels:            rankedChannels,
+		TopMovers:           movers,
+		TopDroppers:         droppers,
+		ModelsHistory:       modelHistory,
+		VendorShareHistory:  vendorHistory,
+		ChannelShareHistory: channelHistory,
 	}, nil
 }
 
@@ -468,6 +542,191 @@ func buildVendorShareHistory(buckets []model.RankingQuotaBucket, vendors []Ranke
 		Points:  points,
 		Vendors: vendorRows,
 		Buckets: len(sortedBuckets),
+	}
+}
+
+// resolveRankingChannelNames maps every ranking channel ID to its display
+// name. Admin-configured channel groups win over the stored channel name, and
+// IDs that cannot be resolved (deleted channels, legacy channel_id = 0 rows)
+// collapse into the shared "Others" bucket.
+func resolveRankingChannelNames(ids []int) map[int]string {
+	groups := operation_setting.GetRankingsChannelGroups()
+	grouped := make(map[int]struct{})
+	for _, group := range groups {
+		for _, channelID := range group.ChannelIDs {
+			grouped[channelID] = struct{}{}
+		}
+	}
+
+	pending := make([]int, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := grouped[id]; ok {
+			continue
+		}
+		pending = append(pending, id)
+	}
+
+	dbNames := make(map[int]string, len(pending))
+	if len(pending) > 0 {
+		if common.MemoryCacheEnabled {
+			for _, id := range pending {
+				if channel, err := model.CacheGetChannel(id); err == nil && channel != nil {
+					dbNames[id] = channel.Name
+				}
+			}
+		} else if channels, err := model.GetChannelsByIds(pending); err == nil {
+			for _, channel := range channels {
+				dbNames[channel.Id] = channel.Name
+			}
+		} else {
+			// Display names are cosmetic for the leaderboard; a lookup failure
+			// degrades those channels into "Others" instead of failing the
+			// whole snapshot.
+			common.SysError("failed to resolve ranking channel names: " + err.Error())
+		}
+	}
+
+	return rankingChannelDisplayNames(ids, groups, dbNames)
+}
+
+// rankingChannelDisplayNames applies the rankings naming policy in priority
+// order: group label first, then the stored channel name, then the shared
+// "Others" bucket so the leaderboard never leaks stale channel references.
+func rankingChannelDisplayNames(ids []int, groups []operation_setting.RankingsChannelGroup, dbNames map[int]string) map[int]string {
+	groupNameByID := make(map[int]string)
+	for _, group := range groups {
+		for _, channelID := range group.ChannelIDs {
+			groupNameByID[channelID] = group.Name
+		}
+	}
+
+	names := make(map[int]string, len(ids))
+	for _, id := range ids {
+		if name, ok := groupNameByID[id]; ok && name != "" {
+			names[id] = name
+			continue
+		}
+		if name := dbNames[id]; name != "" {
+			names[id] = name
+			continue
+		}
+		names[id] = rankingOthersLabel
+	}
+	return names
+}
+
+func channelRankingName(channelID int, names map[int]string) string {
+	if name, ok := names[channelID]; ok && name != "" {
+		return name
+	}
+	return rankingOthersLabel
+}
+
+func ensureChannelAggregate(aggregates map[string]*channelAggregate, name string) *channelAggregate {
+	agg, ok := aggregates[name]
+	if !ok {
+		agg = &channelAggregate{name: name}
+		aggregates[name] = agg
+	}
+	return agg
+}
+
+func buildRankedChannels(currentTotals []model.RankingChannelTotal, previousTotals []model.RankingChannelTotal, totalTokens int64, names map[int]string, showGrowth bool) []RankedChannel {
+	aggregates := make(map[string]*channelAggregate)
+	for _, item := range currentTotals {
+		agg := ensureChannelAggregate(aggregates, channelRankingName(item.ChannelID, names))
+		agg.totalTokens += item.TotalTokens
+	}
+	for _, item := range previousTotals {
+		agg := ensureChannelAggregate(aggregates, channelRankingName(item.ChannelID, names))
+		agg.previousTokens += item.TotalTokens
+	}
+
+	rows := make([]RankedChannel, 0, len(aggregates))
+	for _, agg := range aggregates {
+		if agg.totalTokens <= 0 {
+			continue
+		}
+		growth := 0.0
+		if showGrowth {
+			growth = rankingGrowthPct(agg.totalTokens, agg.previousTokens)
+		}
+		rows = append(rows, RankedChannel{
+			ChannelName: agg.name,
+			TotalTokens: agg.totalTokens,
+			Share:       rankingShare(agg.totalTokens, totalTokens),
+			GrowthPct:   growth,
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].TotalTokens == rows[j].TotalTokens {
+			return rows[i].ChannelName < rows[j].ChannelName
+		}
+		return rows[i].TotalTokens > rows[j].TotalTokens
+	})
+	for idx := range rows {
+		rows[idx].Rank = idx + 1
+	}
+	return rows
+}
+
+func buildChannelShareHistory(buckets []model.RankingChannelBucket, channels []RankedChannel, totalTokens int64, names map[int]string, config rankingPeriodConfig) ChannelShareHistory {
+	topChannels := make(map[string]struct{})
+	channelRows := make([]ChannelShareChannel, 0, minInt(len(channels), rankingChannelLimit)+1)
+	otherTotal := int64(0)
+	for idx, channel := range channels {
+		if idx < rankingChannelLimit {
+			topChannels[channel.ChannelName] = struct{}{}
+			channelRows = append(channelRows, ChannelShareChannel{Name: channel.ChannelName, Total: channel.TotalTokens, Share: channel.Share})
+			continue
+		}
+		otherTotal += channel.TotalTokens
+	}
+	if otherTotal > 0 {
+		channelRows = append(channelRows, ChannelShareChannel{Name: rankingOthersLabel, Total: otherTotal, Share: rankingShare(otherTotal, totalTokens)})
+	}
+
+	bucketSet := make(map[int64]struct{})
+	tokensByBucketAndChannel := make(map[int64]map[string]int64)
+	totalsByBucket := make(map[int64]int64)
+	for _, item := range buckets {
+		channelName := channelRankingName(item.ChannelID, names)
+		if _, ok := topChannels[channelName]; !ok {
+			channelName = rankingOthersLabel
+		}
+		bucketSet[item.Bucket] = struct{}{}
+		if _, ok := tokensByBucketAndChannel[item.Bucket]; !ok {
+			tokensByBucketAndChannel[item.Bucket] = make(map[string]int64)
+		}
+		tokensByBucketAndChannel[item.Bucket][channelName] += item.Tokens
+		totalsByBucket[item.Bucket] += item.Tokens
+	}
+
+	sortedBuckets := sortedRankingBuckets(bucketSet)
+	points := make([]ChannelSharePoint, 0, len(sortedBuckets)*len(channelRows))
+	for _, bucket := range sortedBuckets {
+		for _, channel := range channelRows {
+			tokens := tokensByBucketAndChannel[bucket][channel.Name]
+			if tokens <= 0 {
+				continue
+			}
+			points = append(points, ChannelSharePoint{
+				Ts:      rankingBucketTs(bucket),
+				Label:   rankingBucketLabel(bucket, config),
+				Channel: channel.Name,
+				Share:   rankingShare(tokens, totalsByBucket[bucket]),
+				Tokens:  tokens,
+			})
+		}
+	}
+
+	return ChannelShareHistory{
+		Points:   points,
+		Channels: channelRows,
+		Buckets:  len(sortedBuckets),
 	}
 }
 

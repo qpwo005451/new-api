@@ -317,6 +317,15 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "rankings_channel_group_setting.groups":
+		err = operation_setting.ValidateRankingsChannelGroups(option.Value.(string))
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
 	case "AutomaticDisableStatusCodes":
 		_, err = operation_setting.ParseHTTPStatusCodeRanges(option.Value.(string))
 		if err != nil {

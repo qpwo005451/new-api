@@ -24,11 +24,15 @@ export interface TokenTrendSeries {
   output: number
   cacheRead: number
   cacheWrite: number
+  cachePrompt: number
   cacheHitRate: number
 }
 
 // Reduce hourly buckets into chart rows. prompt_tokens already contains cache
 // tokens, so plain input is the remainder after subtracting both cache series.
+// The hit rate divides by cache_prompt_tokens, not prompt_tokens: Ollama never
+// reports cache info, so counting its prompt tokens would dilute the rate
+// below what cache-reporting channels actually achieve.
 export function buildTokenTrendSeries(
   points: TokenTrendPoint[]
 ): TokenTrendSeries[] {
@@ -36,16 +40,17 @@ export function buildTokenTrendSeries(
     const cacheRead = point.cache_read
     const cacheWrite = point.cache_write
     const input = Math.max(point.prompt_tokens - cacheRead - cacheWrite, 0)
-    const promptTotal = point.prompt_tokens
+    const cachePromptTotal = point.cache_prompt_tokens
     return {
       time: formatBucketLabel(point.created_at),
       input,
       output: point.completion_tokens,
       cacheRead,
       cacheWrite,
+      cachePrompt: point.cache_prompt_tokens,
       cacheHitRate:
-        promptTotal > 0
-          ? Number(((cacheRead / promptTotal) * 100).toFixed(1))
+        cachePromptTotal > 0
+          ? Number(((cacheRead / cachePromptTotal) * 100).toFixed(1))
           : 0,
     }
   })
@@ -94,12 +99,16 @@ export function buildTokenTrendSpec(
   // One data view per series (full rows, cloned): VChart 2.x mutates stacked
   // rows in place, so stacked series sharing a single data view corrupt each
   // other's cumulative offsets and the token axis max collapses.
-  const seriesData = ['input', 'cacheRead', 'cacheWrite', 'output', 'cacheHitRate'].map(
-    (field) => ({
-      id: `trend-${field}`,
-      values: series.map((row) => ({ ...row })),
-    })
-  )
+  const seriesData = [
+    'input',
+    'cacheRead',
+    'cacheWrite',
+    'output',
+    'cacheHitRate',
+  ].map((field) => ({
+    id: `trend-${field}`,
+    values: series.map((row) => ({ ...row })),
+  }))
   const dataId = (field: string) => `trend-${field}`
 
   return {

@@ -17,11 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
+import { VChart } from '@visactor/react-vchart'
 import { Database, LineChart } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { VChart } from '@visactor/react-vchart'
 import { IconBadge } from '@/components/ui/icon-badge'
 import {
   Select,
@@ -32,12 +32,9 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
-import {
-  getTokenTrend,
-  getTokenTrendModels,
-} from '@/features/dashboard/api'
-import { VCHART_OPTION } from '@/lib/vchart'
+import { getTokenTrend, getTokenTrendModels } from '@/features/dashboard/api'
 import { computeTimeRange } from '@/lib/time'
+import { VCHART_OPTION } from '@/lib/vchart'
 
 import {
   buildTokenTrendSeries,
@@ -100,11 +97,14 @@ export function TokenTrendPanel() {
       output: series.reduce((sum, row) => sum + row.output, 0),
       cacheRead: series.reduce((sum, row) => sum + row.cacheRead, 0),
       cacheWrite: series.reduce((sum, row) => sum + row.cacheWrite, 0),
+      cachePrompt: series.reduce((sum, row) => sum + row.cachePrompt, 0),
     }),
     [series]
   )
-  const totalPrompt = totals.input + totals.cacheRead + totals.cacheWrite
-  const hitRate = totalPrompt > 0 ? (totals.cacheRead / totalPrompt) * 100 : 0
+  // The backend excludes non-cache-reporting channels (Ollama) from
+  // cachePrompt, so it is the honest denominator for the hit rate.
+  const hitRate =
+    totals.cachePrompt > 0 ? (totals.cacheRead / totals.cachePrompt) * 100 : 0
 
   const loading = trendQuery.isLoading
   const hasData = series.length > 0

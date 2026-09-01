@@ -293,6 +293,31 @@ func filterChannelsByRequestPathAndModel(channels []int, requestPath string, mod
 	return filtered
 }
 
+// GetChannelIdsByType returns ids of all channels of the given type,
+// including disabled ones so that statistics keep a stable historical scope.
+func GetChannelIdsByType(channelType int) []int {
+	if common.MemoryCacheEnabled {
+		channelSyncLock.RLock()
+		ids := make([]int, 0, len(channelsIDM))
+		for id, ch := range channelsIDM {
+			if ch.Type == channelType {
+				ids = append(ids, id)
+			}
+		}
+		channelSyncLock.RUnlock()
+		return ids
+	}
+	if DB == nil {
+		return nil
+	}
+	var ids []int
+	if err := DB.Model(&Channel{}).Where("type = ?", channelType).Pluck("id", &ids).Error; err != nil {
+		common.SysError("GetChannelIdsByType: " + err.Error())
+		return nil
+	}
+	return ids
+}
+
 func CacheUpdateChannelBalanceProtection(protection *ChannelBalanceProtection) {
 	if !common.MemoryCacheEnabled || protection == nil {
 		return

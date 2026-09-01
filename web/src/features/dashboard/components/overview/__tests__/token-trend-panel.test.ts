@@ -18,12 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { describe, expect, test } from 'vitest'
 
-import type { TokenTrendPoint } from '@/features/dashboard/types'
-
 import {
   buildTokenTrendSeries,
   formatCompactTokens,
 } from '@/features/dashboard/lib/token-trend'
+import type { TokenTrendPoint } from '@/features/dashboard/types'
 
 function makePoint(overrides: Partial<TokenTrendPoint>): TokenTrendPoint {
   return {
@@ -33,6 +32,7 @@ function makePoint(overrides: Partial<TokenTrendPoint>): TokenTrendPoint {
     completion_tokens: 0,
     cache_read: 0,
     cache_write: 0,
+    cache_prompt_tokens: 0,
     ...overrides,
   }
 }
@@ -45,6 +45,7 @@ describe('buildTokenTrendSeries', () => {
         completion_tokens: 200,
         cache_read: 400,
         cache_write: 100,
+        cache_prompt_tokens: 1000,
       }),
     ])
 
@@ -55,9 +56,14 @@ describe('buildTokenTrendSeries', () => {
     expect(series[0].cacheWrite).toBe(100)
   })
 
-  test('computes cache hit rate as cache read over prompt tokens', () => {
+  test('computes cache hit rate as cache read over cache prompt tokens', () => {
     const series = buildTokenTrendSeries([
-      makePoint({ prompt_tokens: 1000, cache_read: 400, cache_write: 100 }),
+      makePoint({
+        prompt_tokens: 1000,
+        cache_read: 400,
+        cache_write: 100,
+        cache_prompt_tokens: 1000,
+      }),
     ])
 
     expect(series[0].cacheHitRate).toBe(40)
@@ -65,7 +71,12 @@ describe('buildTokenTrendSeries', () => {
 
   test('clamps input to zero when cache tokens exceed prompt tokens', () => {
     const series = buildTokenTrendSeries([
-      makePoint({ prompt_tokens: 100, cache_read: 150, cache_write: 50 }),
+      makePoint({
+        prompt_tokens: 100,
+        cache_read: 150,
+        cache_write: 50,
+        cache_prompt_tokens: 100,
+      }),
     ])
 
     expect(series[0].input).toBe(0)
@@ -80,8 +91,16 @@ describe('buildTokenTrendSeries', () => {
 
   test('maps each hourly bucket to one row preserving order', () => {
     const series = buildTokenTrendSeries([
-      makePoint({ created_at: 3600 * 5, prompt_tokens: 10 }),
-      makePoint({ created_at: 3600 * 6, prompt_tokens: 20 }),
+      makePoint({
+        created_at: 3600 * 5,
+        prompt_tokens: 10,
+        cache_prompt_tokens: 10,
+      }),
+      makePoint({
+        created_at: 3600 * 6,
+        prompt_tokens: 20,
+        cache_prompt_tokens: 20,
+      }),
     ])
 
     // Labels are local-time "MM-DD HH:00" strings; consecutive hourly buckets
@@ -92,6 +111,28 @@ describe('buildTokenTrendSeries', () => {
     ])
     expect(series[0].input).toBe(10)
     expect(series[1].input).toBe(20)
+  })
+
+  test('feeds the panel an 80% total hit rate from 80 read over 100 cache-prompt tokens', () => {
+    // Two buckets totaling 80 cache-read over 100 cache-prompt tokens: the
+    // panel badge must show 80%, not the 4% implied by the full 2000
+    // prompt tokens (Ollama traffic without cache reporting).
+    const series = buildTokenTrendSeries([
+      makePoint({
+        prompt_tokens: 500,
+        cache_prompt_tokens: 50,
+        cache_read: 40,
+        cache_write: 10,
+      }),
+      makePoint({
+        prompt_tokens: 1500,
+        cache_prompt_tokens: 50,
+        cache_read: 40,
+      }),
+    ])
+
+    expect(series.map((row) => row.cacheHitRate)).toEqual([80, 80])
+    expect(series.map((row) => row.cachePrompt)).toEqual([50, 50])
   })
 })
 

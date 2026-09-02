@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -180,4 +182,94 @@ func TestEstimateOllamaChannelUsageEmpty(t *testing.T) {
 	assert.Equal(t, int64(0), window.EarliestReleaseAt)
 	assert.Empty(t, window.Projection.Points)
 	assert.Equal(t, int64(86400), window.Projection.BucketSeconds)
+}
+
+func TestFetchOllamaUsageSnapshot(t *testing.T) {
+	t.Run("refresh shape computes resetInMinutes", func(t *testing.T) {
+		// The N8N refresh webhook answers {ok:true, usage:{...}} after an
+		// immediate scrape; resetInMinutes is absent and must be computed
+		// locally from resetsAt.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, http.MethodPost, r.Method)
+			assert.Equal(t, "s3cret", r.Header.Get(ollamaUsageWebhookHeader))
+			_, _ = w.Write([]byte(`{"ok":true,"usage":{
+				"fiveHour":{"usedPercent":7.8,"resetsAt":"2099-01-01T00:00:00Z"},
+				"weekly":{"usedPercent":43.8,"resetsAt":"2099-01-08T00:00:00Z"},
+				"fetchedAt":"2026-09-02T12:45:02.233Z","source":"ollama-settings-html"}}`))
+		}))
+		defer server.Close()
+
+		snapshot, err := fetchOllamaUsageSnapshot(server.URL, "s3cret", server.Client())
+		require.NoError(t, err)
+		require.NotNil(t, snapshot.FiveHour)
+		require.NotNil(t, snapshot.Weekly)
+		assert.Equal(t, 7.8, snapshot.FiveHour.UsedPercent)
+		assert.Equal(t, 43.8, snapshot.Weekly.UsedPercent)
+		require.NotNil(t, snapshot.FetchedAt)
+		assert.Equal(t, "2026-09-02T12:45:02.233Z", *snapshot.FetchedAt)
+		assert.Equal(t, "ollama-settings-html", snapshot.Source)
+		// Far-future reset instants yield positive minute counts.
+		require.NotNil(t, snapshot.FiveHour.ResetInMinutes)
+		require.NotNil(t, snapshot.Weekly.ResetInMinutes)
+		assert.Greater(t, *snapshot.FiveHour.ResetInMinutes, int64(0))
+		assert.Greater(t, *snapshot.Weekly.ResetInMinutes, int64(0))
+	})
+
+	t.Run("query shape keeps provided resetInMinutes", func(t *testing.T) {
+		// The read-only query webhook returns the windows at the top level
+		// with resetInMinutes already filled; they must pass through
+		// untouched instead of being recomputed.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"ok":true,
+				"fiveHour":{"usedPercent":7.8,"resetsAt":"2099-01-01T00:00:00Z","resetInMinutes":12345},
+				"weekly":{"usedPercent":43.8,"resetsAt":"2099-01-08T00:00:00Z","resetInMinutes":67890},
+				"fetchedAt":"2026-09-02T12:45:02.233Z","source":"ollama-settings-html"}`))
+		}))
+		defer server.Close()
+
+		snapshot, err := fetchOllamaUsageSnapshot(server.URL, "s3cret", server.Client())
+		require.NoError(t, err)
+		require.NotNil(t, snapshot.FiveHour)
+		require.EqualValues(t, 12345, *snapshot.FiveHour.ResetInMinutes)
+		require.EqualValues(t, 67890, *snapshot.Weekly.ResetInMinutes)
+	})
+
+	t.Run("reset already passed clamps to zero", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"ok":true,"usage":{
+				"fiveHour":{"usedPercent":1,"resetsAt":"2020-01-01T00:00:00Z"},
+				"weekly":{"usedPercent":2,"resetsAt":"2020-01-08T00:00:00Z"}}}`))
+		}))
+		defer server.Close()
+
+		snapshot, err := fetchOllamaUsageSnapshot(server.URL, "s3cret", server.Client())
+		require.NoError(t, err)
+		require.EqualValues(t, 0, *snapshot.FiveHour.ResetInMinutes)
+		require.EqualValues(t, 0, *snapshot.Weekly.ResetInMinutes)
+	})
+
+	errorCases := []struct {
+		name    string
+		status  int
+		body    string
+		errPart string
+	}{
+		{name: "non-200", status: http.StatusInternalServerError, body: `oops`, errPart: "状态码"},
+		{name: "non-JSON", status: http.StatusOK, body: `not json`, errPart: "解析"},
+		{name: "workflow failure", status: http.StatusOK, body: `{"ok":false,"failureClass":"session_expired"}`, errPart: "session_expired"},
+		{name: "missing windows", status: http.StatusOK, body: `{"ok":true,"usage":{}}`, errPart: "窗口数据"},
+	}
+	for _, tc := range errorCases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+
+			_, err := fetchOllamaUsageSnapshot(server.URL, "s3cret", server.Client())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.errPart)
+		})
+	}
 }

@@ -3,6 +3,7 @@ package controller
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -100,6 +101,105 @@ type ollamaUsageProjectionPoint struct {
 type ollamaLocalUsageProjection struct {
 	BucketSeconds int64                        `json:"bucket_seconds"`
 	Points        []ollamaUsageProjectionPoint `json:"points"`
+}
+
+// ollamaSnapshotWindow mirrors one window of the N8N usage snapshot. The
+// workflow reads usedPercent and resetsAt from the server-rendered
+// ollama.com/settings page, so resetsAt is the authoritative reset instant
+// the /api/usage endpoint does not expose.
+type ollamaSnapshotWindow struct {
+	UsedPercent    float64 `json:"usedPercent"`
+	ResetsAt       *string `json:"resetsAt"`
+	ResetInMinutes *int64  `json:"resetInMinutes"`
+}
+
+type ollamaSnapshotUsage struct {
+	FiveHour  *ollamaSnapshotWindow `json:"fiveHour"`
+	Weekly    *ollamaSnapshotWindow `json:"weekly"`
+	FetchedAt *string               `json:"fetchedAt"`
+	Source    string                `json:"source"`
+}
+
+// Raw webhook response. The refresh webhook returns {ok, usage:{...}}; the
+// read-only query webhook puts the windows at the top level, so both shapes
+// are accepted.
+type ollamaSnapshotResponse struct {
+	Ok           bool                  `json:"ok"`
+	FailureClass string               `json:"failureClass"`
+	Usage        *ollamaSnapshotUsage `json:"usage"`
+	FiveHour     *ollamaSnapshotWindow `json:"fiveHour"`
+	Weekly       *ollamaSnapshotWindow `json:"weekly"`
+	FetchedAt    *string              `json:"fetchedAt"`
+	Source       string               `json:"source"`
+}
+
+// Header carrying the webhook secret; the N8N httpHeaderAuth credential must
+// use this exact name with the value configured in OllamaUsageWebhookSecret.
+const ollamaUsageWebhookHeader = "X-Ollama-Refresh-Secret"
+
+// Short timeout so a slow refresh falls back to the local estimate instead of
+// hanging the admin panel; the workflow keeps running server-side either way.
+var ollamaUsageWebhookClient = &http.Client{Timeout: 15 * time.Second}
+
+// fetchOllamaUsageSnapshot triggers the N8N refresh webhook and returns the
+// fresh snapshot. One call both refreshes the upstream scrape and returns its
+// result; any failure (network, non-200, ok:false, missing windows) is
+// returned as an error so the caller can fall back to the local estimate.
+func fetchOllamaUsageSnapshot(url, secret string, client *http.Client) (*ollamaSnapshotUsage, error) {
+	if client == nil {
+		client = ollamaUsageWebhookClient
+	}
+	req, err := http.NewRequest(http.MethodPost, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("构造 Ollama 用量刷新请求失败: %w", err)
+	}
+	req.Header.Set(ollamaUsageWebhookHeader, secret)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("请求 Ollama 用量刷新 Webhook 失败: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Ollama 用量刷新 Webhook 返回状态码: %d", resp.StatusCode)
+	}
+	var parsed ollamaSnapshotResponse
+	if err := common.DecodeJson(resp.Body, &parsed); err != nil {
+		return nil, fmt.Errorf("解析 Ollama 用量刷新响应失败: %w", err)
+	}
+	if !parsed.Ok {
+		return nil, fmt.Errorf("Ollama 用量刷新失败: %s", parsed.FailureClass)
+	}
+	snapshot := parsed.Usage
+	if snapshot == nil {
+		// Query shape: windows at the top level.
+		snapshot = &ollamaSnapshotUsage{
+			FiveHour:  parsed.FiveHour,
+			Weekly:    parsed.Weekly,
+			FetchedAt: parsed.FetchedAt,
+			Source:    parsed.Source,
+		}
+	}
+	if snapshot.FiveHour == nil || snapshot.Weekly == nil {
+		return nil, fmt.Errorf("Ollama 用量刷新响应缺少窗口数据")
+	}
+	// The refresh shape carries no resetInMinutes; compute it locally so the
+	// panel can render "resets in N minutes" regardless of response shape.
+	now := time.Now()
+	for _, w := range []*ollamaSnapshotWindow{snapshot.FiveHour, snapshot.Weekly} {
+		if w.ResetInMinutes != nil || w.ResetsAt == nil {
+			continue
+		}
+		resetAt, parseErr := time.Parse(time.RFC3339, *w.ResetsAt)
+		if parseErr != nil {
+			continue
+		}
+		minutes := int64(math.Ceil(resetAt.Sub(now).Minutes()))
+		if minutes < 0 {
+			minutes = 0
+		}
+		w.ResetInMinutes = &minutes
+	}
+	return snapshot, nil
 }
 
 func ollamaModelUsageLevel(modelName string) int {
@@ -278,12 +378,28 @@ func GetOllamaChannelUsage(c *gin.Context) {
 		}
 	}
 
+	// Authoritative snapshot from the N8N refresh webhook, configured via
+	// OllamaUsageWebhookUrl/Secret. One call triggers an immediate upstream
+	// scrape and returns its result; on any failure the panel falls back to
+	// the local estimates below without affecting the main flow.
+	var snapshot *ollamaSnapshotUsage
+	if webhookURL := common.OptionMap["OllamaUsageWebhookUrl"]; webhookURL != "" {
+		secret := common.OptionMap["OllamaUsageWebhookSecret"]
+		fetched, err := fetchOllamaUsageSnapshot(webhookURL, secret, ollamaUsageWebhookClient)
+		if err != nil {
+			common.SysError("获取 Ollama 用量快照失败: " + err.Error())
+		} else {
+			snapshot = fetched
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
 		"data": gin.H{
 			"channel_id": id,
 			"fetched_at": now.Unix(),
+			"snapshot":   snapshot,
 			"upstream": gin.H{
 				"session":  upstream.Limits.Session,
 				"weekly":   upstream.Limits.Weekly,

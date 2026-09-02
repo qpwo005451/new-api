@@ -114,6 +114,9 @@ type ollamaSnapshotWindow struct {
 }
 
 type ollamaSnapshotUsage struct {
+	// Ok mirrors the webhook's ok flag so the frontend can distinguish a
+	// valid snapshot from a null/absent one.
+	Ok        bool                   `json:"ok"`
 	FiveHour  *ollamaSnapshotWindow `json:"fiveHour"`
 	Weekly    *ollamaSnapshotWindow `json:"weekly"`
 	FetchedAt *string               `json:"fetchedAt"`
@@ -182,6 +185,7 @@ func fetchOllamaUsageSnapshot(url, secret string, client *http.Client) (*ollamaS
 	if snapshot.FiveHour == nil || snapshot.Weekly == nil {
 		return nil, fmt.Errorf("Ollama 用量刷新响应缺少窗口数据")
 	}
+	snapshot.Ok = true
 	// The refresh shape carries no resetInMinutes; compute it locally so the
 	// panel can render "resets in N minutes" regardless of response shape.
 	now := time.Now()

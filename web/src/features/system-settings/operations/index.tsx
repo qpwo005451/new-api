@@ -43,6 +43,8 @@ const defaultOperationsSettings: OperationsSettings = {
   WorkerUrl: '',
   WorkerValidKey: '',
   WorkerAllowHttpImageRequestEnabled: false,
+  OllamaUsageWebhookUrl: '',
+  OllamaUsageWebhookSecret: '',
   LogConsumeEnabled: false,
   InFlightUsageLogEnabled: true,
   'performance_setting.disk_cache_enabled': false,

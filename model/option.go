@@ -127,6 +127,12 @@ func InitOptionMap() {
 	common.OptionMap["GitHubClientSecret"] = ""
 	common.OptionMap["TelegramBotToken"] = ""
 	common.OptionMap["TelegramBotName"] = ""
+	// Ollama usage refresh webhook (N8N): one call triggers an immediate
+	// upstream scrape and returns the fresh usage snapshot. Read directly
+	// from OptionMap in GetOllamaChannelUsage; the secret is masked by
+	// GetOptions because of the "Secret" suffix.
+	common.OptionMap["OllamaUsageWebhookUrl"] = ""
+	common.OptionMap["OllamaUsageWebhookSecret"] = ""
 	common.OptionMap["WeChatServerAddress"] = ""
 	common.OptionMap["WeChatServerToken"] = ""
 	common.OptionMap["WeChatAccountQRCodeImageURL"] = ""

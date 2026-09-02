@@ -358,6 +358,8 @@ export type OperationsSettings = {
   WorkerUrl: string
   WorkerValidKey: string
   WorkerAllowHttpImageRequestEnabled: boolean
+  OllamaUsageWebhookUrl: string
+  OllamaUsageWebhookSecret: string
   LogConsumeEnabled: boolean
   InFlightUsageLogEnabled?: boolean
   'performance_setting.disk_cache_enabled': boolean

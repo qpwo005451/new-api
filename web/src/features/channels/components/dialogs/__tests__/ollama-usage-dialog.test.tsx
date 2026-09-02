@@ -64,6 +64,18 @@ await i18n.use(initReactI18next).init({
           'Weighted tokens estimate upstream usage units as model level × (prompt + completion) tokens, because Ollama does not publish the cap or the unit. Upstream and local request counts are directly comparable; mismatches mean some upstream traffic in this window predates the current channel or key.',
         'Recovery projection (estimate)': 'Recovery projection (estimate)',
         'Earliest release:': 'Earliest release:',
+        'Ollama Monitor Snapshot': 'Ollama Monitor Snapshot',
+        'From the monitored ollama.com settings page':
+          'From the monitored ollama.com settings page',
+        Used: 'Used',
+        'Resets at:': 'Resets at:',
+        'Resets in:': 'Resets in:',
+        'Snapshot fetched at:': 'Snapshot fetched at:',
+        Stale: 'Stale',
+        'Recovery timing and the projection are estimates based on when this channel’s own requests slide out of each window.':
+          'Recovery timing and the projection are estimates based on when this channel’s own requests slide out of each window.',
+        'Ollama resets usage server-side on its own schedule and does not expose the reset time through the usage API.':
+          'Ollama resets usage server-side on its own schedule and does not expose the reset time through the usage API.',
       },
     },
   },
@@ -193,16 +205,22 @@ describe('Ollama usage dialog', () => {
 
     render(<DialogHarness response={response} />)
 
-    expect(screen.getAllByText('Recovery projection (estimate)')).toHaveLength(1)
+    expect(screen.getAllByText('Recovery projection (estimate)')).toHaveLength(
+      1
+    )
     expect(screen.getByText('Earliest release:')).toBeInTheDocument()
     expect(
-      screen.getByText(dayjs((1788050524 + 18000) * 1000).format('YYYY-MM-DD HH:mm:ss'))
+      screen.getByText(
+        dayjs((1788050524 + 18000) * 1000).format('YYYY-MM-DD HH:mm:ss')
+      )
     ).toBeInTheDocument()
     // First hour keeps projected remaining usage, the second hour is empty.
-    expect(screen.getByTitle(/\+1h · 5,000 Usage units · 2 requests/))
-      .toBeInTheDocument()
-    expect(screen.getByTitle(/\+2h · 0 Usage units · 0 requests/))
-      .toBeInTheDocument()
+    expect(
+      screen.getByTitle(/\+1h · 5,000 Usage units · 2 requests/)
+    ).toBeInTheDocument()
+    expect(
+      screen.getByTitle(/\+2h · 0 Usage units · 0 requests/)
+    ).toBeInTheDocument()
   })
 
   test('shows the upstream error message and no usage sections when the response failed', () => {
@@ -234,5 +252,64 @@ describe('Ollama usage dialog', () => {
     render(<DialogHarness response={response} />)
 
     expect(screen.getAllByText('Unknown').length).toBeGreaterThanOrEqual(1)
+  })
+
+  test('renders the authoritative monitor snapshot with used percent and reset times', () => {
+    const response = successfulResponse()
+    ;(response.data as Record<string, unknown>).snapshot = {
+      ok: true,
+      fiveHour: {
+        usedPercent: 7.8,
+        resetsAt: '2099-01-01T00:00:00Z',
+        resetInMinutes: 999999,
+      },
+      weekly: {
+        usedPercent: 43.8,
+        resetsAt: '2099-01-08T00:00:00Z',
+        resetInMinutes: 9999999,
+      },
+      fetchedAt: '2026-09-02T12:45:02.233Z',
+      stale: true,
+      source: 'ollama-settings-html',
+    }
+
+    render(<DialogHarness response={response} />)
+
+    expect(screen.getByText('Ollama Monitor Snapshot')).toBeInTheDocument()
+    expect(screen.getByText('7.8%')).toBeInTheDocument()
+    expect(screen.getByText('43.8%')).toBeInTheDocument()
+    expect(screen.getByText('Stale')).toBeInTheDocument()
+    expect(screen.getAllByText('Resets at:')).toHaveLength(2)
+    expect(screen.getAllByText('Resets in:')).toHaveLength(2)
+    // Relative reset countdown comes from the ISO resetsAt (both windows).
+    expect(screen.getAllByText(/in \d+ years/)).toHaveLength(2)
+    // Snapshot timestamp rendered from the ISO fetchedAt.
+    expect(
+      screen.getByText(
+        dayjs(Date.parse('2026-09-02T12:45:02.233Z')).format(
+          'YYYY-MM-DD HH:mm:ss'
+        )
+      )
+    ).toBeInTheDocument()
+    // With an authoritative snapshot the local note drops the sentence
+    // claiming the reset time is not exposed.
+    expect(
+      screen.queryByText(
+        'Ollama resets usage server-side on its own schedule and does not expose the reset time through the usage API.'
+      )
+    ).not.toBeInTheDocument()
+  })
+
+  test('keeps the full recovery note when no snapshot is available', () => {
+    render(<DialogHarness response={successfulResponse()} />)
+
+    expect(
+      screen.getByText(
+        'Recovery timing and the projection are estimates based on when this channel’s own requests slide out of each window. Ollama resets usage server-side on its own schedule and does not expose the reset time through the usage API.'
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText('Ollama Monitor Snapshot')
+    ).not.toBeInTheDocument()
   })
 })

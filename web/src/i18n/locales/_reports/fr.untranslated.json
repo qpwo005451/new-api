@@ -1,10 +1,16 @@
 {
   "Each rule matches a base URL host and models. Limits are applied separately for each selected upstream key and model. A 429 applies the configured cooldown before the next attempt.": "Each rule matches a base URL host and models. Limits are applied separately for each selected upstream key and model. A 429 applies the configured cooldown before the next attempt.",
   "Each rule selects one site, channel, and either an exact model or model prefix.": "Each rule selects one site, channel, and either an exact model or model prefix.",
+  "Enter new secret to update": "Enter new secret to update",
   "Failed to save alert settings": "Failed to save alert settings",
   "Notify selected transports when a monitored model becomes unavailable or recovers.": "Notify selected transports when a monitored model becomes unavailable or recovers.",
+  "Ollama resets usage server-side on its own schedule and does not expose the reset time through the usage API.": "Ollama resets usage server-side on its own schedule and does not expose the reset time through the usage API.",
+  "From the monitored ollama.com settings page": "From the monitored ollama.com settings page",
+  "POSTed to trigger an immediate ollama.com usage scrape; the response carries the authoritative used percent and window reset times shown in the Ollama usage panel. Leave blank to keep using the local estimate.": "POSTed to trigger an immediate ollama.com usage scrape; the response carries the authoritative used percent and window reset times shown in the Ollama usage panel. Leave blank to keep using the local estimate.",
+  "Sent as the X-Ollama-Refresh-Secret header. Must match the value configured in the N8N webhook credential. Leave blank to keep the existing secret.": "Sent as the X-Ollama-Refresh-Secret header. Must match the value configured in the N8N webhook credential. Leave blank to keep the existing secret.",
   "Only unavailable and recovery transitions send alerts.": "Only unavailable and recovery transitions send alerts.",
   "Queue matching requests before the upstream call so rate-limit responses do not reach clients.": "Queue matching requests before the upstream call so rate-limit responses do not reach clients.",
+  "Recovery timing and the projection are estimates based on when this channel’s own requests slide out of each window.": "Recovery timing and the projection are estimates based on when this channel’s own requests slide out of each window.",
   "Telegram repeats until the monitored model recovers.": "Telegram repeats until the monitored model recovers.",
   "Token configured; leave blank to keep it": "Token configured; leave blank to keep it"
 }

@@ -20,7 +20,6 @@
   "Last observation {{time}}": "最近观测：{{time}}",
   "Model prefix": "Model prefix",
   "Notify selected transports when a monitored model becomes unavailable or recovers.": "Notify selected transports when a monitored model becomes unavailable or recovers.",
-  "Ollama Monitor Snapshot": "Ollama Monitor Snapshot",
   "Ollama resets usage server-side on its own schedule and does not expose the reset time through the usage API.": "Ollama resets usage server-side on its own schedule and does not expose the reset time through the usage API.",
   "Ollama usage refresh webhook secret": "Ollama usage refresh webhook secret",
   "Ollama usage refresh webhook URL": "Ollama usage refresh webhook URL",
@@ -46,5 +45,6 @@
   "Test notifications sent": "Test notifications sent",
   "Token configured; leave blank to keep it": "Token configured; leave blank to keep it",
   "Upstream Request Limits": "Upstream Request Limits",
-  "Upstream RPM rules": "Upstream RPM rules"
+  "Upstream RPM rules": "Upstream RPM rules",
+  "Usage units:": "Usage units:"
 }

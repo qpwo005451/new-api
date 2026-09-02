@@ -64,12 +64,12 @@ await i18n.use(initReactI18next).init({
           'Weighted tokens estimate upstream usage units as model level × (prompt + completion) tokens, because Ollama does not publish the cap or the unit. Upstream and local request counts are directly comparable; mismatches mean some upstream traffic in this window predates the current channel or key.',
         'Recovery projection (estimate)': 'Recovery projection (estimate)',
         'Earliest release:': 'Earliest release:',
-        'Ollama Monitor Snapshot': 'Ollama Monitor Snapshot',
         'From the monitored ollama.com settings page':
           'From the monitored ollama.com settings page',
         Used: 'Used',
         'Resets at:': 'Resets at:',
         'Resets in:': 'Resets in:',
+        'Usage units:': 'Usage units:',
         'Snapshot fetched at:': 'Snapshot fetched at:',
         Stale: 'Stale',
         'Recovery timing and the projection are estimates based on when this channel’s own requests slide out of each window.':
@@ -254,7 +254,7 @@ describe('Ollama usage dialog', () => {
     expect(screen.getAllByText('Unknown').length).toBeGreaterThanOrEqual(1)
   })
 
-  test('renders the authoritative monitor snapshot with used percent and reset times', () => {
+  test('merges the authoritative snapshot into the upstream cards and hides the recovery projection', () => {
     const response = successfulResponse()
     ;(response.data as Record<string, unknown>).snapshot = {
       ok: true,
@@ -272,17 +272,36 @@ describe('Ollama usage dialog', () => {
       stale: true,
       source: 'ollama-settings-html',
     }
+    // The local session window carries projection data; with an authoritative
+    // snapshot it must be suppressed (the reset time is known for real).
+    const session = (
+      response.data.local as { session: Record<string, unknown> }
+    ).session
+    session.earliest_release_at = 1788050524 + 18000
+    session.projection = {
+      bucket_seconds: 3600,
+      points: [
+        { after_seconds: 3600, weighted_usage: 5000, requests: 2 },
+        { after_seconds: 7200, weighted_usage: 0, requests: 0 },
+      ],
+    }
 
     render(<DialogHarness response={response} />)
 
-    expect(screen.getByText('Ollama Monitor Snapshot')).toBeInTheDocument()
+    // The snapshot lives inside the Upstream Usage section: per-window used
+    // percent replaces the raw units as the headline number, reset times are
+    // listed, and the raw units stay visible.
+    expect(screen.getByText('Upstream Usage')).toBeInTheDocument()
+    expect(screen.queryByText('Ollama Monitor Snapshot')).not.toBeInTheDocument()
     expect(screen.getByText('7.8%')).toBeInTheDocument()
     expect(screen.getByText('43.8%')).toBeInTheDocument()
     expect(screen.getByText('Stale')).toBeInTheDocument()
     expect(screen.getAllByText('Resets at:')).toHaveLength(2)
     expect(screen.getAllByText('Resets in:')).toHaveLength(2)
-    // Relative reset countdown comes from the ISO resetsAt (both windows).
     expect(screen.getAllByText(/in \d+ years/)).toHaveLength(2)
+    expect(screen.getAllByText('Usage units:')).toHaveLength(2)
+    expect(screen.getByText('30')).toBeInTheDocument()
+    expect(screen.getByText('300')).toBeInTheDocument()
     // Snapshot timestamp rendered from the ISO fetchedAt.
     expect(
       screen.getByText(
@@ -291,25 +310,47 @@ describe('Ollama usage dialog', () => {
         )
       )
     ).toBeInTheDocument()
-    // With an authoritative snapshot the local note drops the sentence
-    // claiming the reset time is not exposed.
+    // Recovery estimate hidden: the authoritative reset time supersedes it.
+    expect(
+      screen.queryByText('Recovery projection (estimate)')
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText('Earliest release:')).not.toBeInTheDocument()
+    // And the local note drops both the estimate sentence and the claim that
+    // the reset time is not exposed.
     expect(
       screen.queryByText(
-        'Ollama resets usage server-side on its own schedule and does not expose the reset time through the usage API.'
+        'Recovery timing and the projection are estimates based on when this channel’s own requests slide out of each window. Ollama resets usage server-side on its own schedule and does not expose the reset time through the usage API.'
       )
     ).not.toBeInTheDocument()
   })
 
-  test('keeps the full recovery note when no snapshot is available', () => {
-    render(<DialogHarness response={successfulResponse()} />)
+  test('keeps the full recovery note and projection when no snapshot is available', () => {
+    const response = successfulResponse()
+    const session = (
+      response.data.local as { session: Record<string, unknown> }
+    ).session
+    session.earliest_release_at = 1788050524 + 18000
+    session.projection = {
+      bucket_seconds: 3600,
+      points: [
+        { after_seconds: 3600, weighted_usage: 5000, requests: 2 },
+      ],
+    }
+
+    render(<DialogHarness response={response} />)
 
     expect(
       screen.getByText(
         'Recovery timing and the projection are estimates based on when this channel’s own requests slide out of each window. Ollama resets usage server-side on its own schedule and does not expose the reset time through the usage API.'
       )
     ).toBeInTheDocument()
+    // Without a snapshot the upstream cards fall back to the plain units
+    // headline and no reset rows.
+    expect(screen.queryByText('Resets at:')).not.toBeInTheDocument()
+    expect(screen.queryByText('Usage units:')).not.toBeInTheDocument()
+    // The recovery projection stays visible as the only reset-time signal.
     expect(
-      screen.queryByText('Ollama Monitor Snapshot')
-    ).not.toBeInTheDocument()
+      screen.getByText('Recovery projection (estimate)')
+    ).toBeInTheDocument()
   })
 })

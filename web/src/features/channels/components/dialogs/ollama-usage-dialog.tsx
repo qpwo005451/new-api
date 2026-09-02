@@ -190,64 +190,17 @@ function formatIsoTimestamp(iso?: string | null): string {
   return Number.isFinite(ms) ? dayjs(ms).format('YYYY-MM-DD HH:mm:ss') : '-'
 }
 
-function SnapshotCard(props: { title: string; window?: OllamaSnapshotWindow }) {
-  const { t } = useTranslation()
-  const usedPercent = Number(props.window?.usedPercent)
-  const resetsAt = props.window?.resetsAt
-  const resetMs = resetsAt ? Date.parse(resetsAt) : Number.NaN
-
-  return (
-    <Card size='sm' className='gap-0 py-0'>
-      <CardHeader className='p-3 pb-2'>
-        <div className='flex items-start justify-between gap-3'>
-          <div className='min-w-0'>
-            <CardTitle className='text-sm font-semibold'>
-              {props.title}
-            </CardTitle>
-            <CardDescription className='mt-1 text-xs'>
-              {t('From the monitored ollama.com settings page')}
-            </CardDescription>
-          </div>
-          <div className='shrink-0 text-right'>
-            <div className='text-xl leading-none font-semibold tabular-nums'>
-              {Number.isFinite(usedPercent)
-                ? `${formatUsageNumber(usedPercent)}%`
-                : '-'}
-            </div>
-            <div className='text-muted-foreground mt-1 text-[11px]'>
-              {t('Used')}
-            </div>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className='p-3 pt-0'>
-        <div className='text-muted-foreground flex flex-col gap-1 text-xs tabular-nums'>
-          <div>
-            <span>{t('Resets at:')}</span>{' '}
-            <span className='text-foreground'>
-              {formatIsoTimestamp(resetsAt)}
-            </span>
-          </div>
-          <div>
-            <span>{t('Resets in:')}</span>{' '}
-            <span className='text-foreground'>
-              {Number.isFinite(resetMs)
-                ? formatTimestampRelative(resetMs, 'milliseconds')
-                : '-'}
-            </span>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
 function UpstreamUsageCard(props: {
   title: string
   window?: OllamaUsageWindowData
+  snapshotWindow?: OllamaSnapshotWindow
 }) {
   const { t } = useTranslation()
   const models = props.window?.models ?? []
+  const usedPercent = Number(props.snapshotWindow?.usedPercent)
+  const resetsAt = props.snapshotWindow?.resetsAt
+  const resetMs = resetsAt ? Date.parse(resetsAt) : Number.NaN
+  const hasSnapshot = Boolean(props.snapshotWindow)
 
   return (
     <Card size='sm' className='gap-0 py-0'>
@@ -258,20 +211,50 @@ function UpstreamUsageCard(props: {
               {props.title}
             </CardTitle>
             <CardDescription className='mt-1 text-xs'>
-              {t('Reported by Ollama')}
+              {hasSnapshot
+                ? t('From the monitored ollama.com settings page')
+                : t('Reported by Ollama')}
             </CardDescription>
           </div>
           <div className='shrink-0 text-right'>
             <div className='text-xl leading-none font-semibold tabular-nums'>
-              {formatUsageNumber(props.window?.usage)}
+              {hasSnapshot && Number.isFinite(usedPercent)
+                ? `${formatUsageNumber(usedPercent)}%`
+                : formatUsageNumber(props.window?.usage)}
             </div>
             <div className='text-muted-foreground mt-1 text-[11px]'>
-              {t('Usage units')}
+              {hasSnapshot ? t('Used') : t('Usage units')}
             </div>
           </div>
         </div>
       </CardHeader>
       <CardContent className='p-3 pt-0'>
+        {hasSnapshot ? (
+          <div className='text-muted-foreground flex flex-col gap-1 text-xs tabular-nums'>
+            <div>
+              <span>{t('Resets at:')}</span>{' '}
+              <span className='text-foreground'>
+                {formatIsoTimestamp(resetsAt)}
+              </span>
+            </div>
+            <div>
+              <span>{t('Resets in:')}</span>{' '}
+              <span className='text-foreground'>
+                {Number.isFinite(resetMs)
+                  ? formatTimestampRelative(resetMs, 'milliseconds')
+                  : '-'}
+              </span>
+            </div>
+          </div>
+        ) : null}
+        {hasSnapshot && props.window?.usage !== undefined ? (
+          <div className='text-muted-foreground mt-1 text-xs tabular-nums'>
+            <span>{t('Usage units:')}</span>{' '}
+            <span className='text-foreground'>
+              {formatUsageNumber(props.window.usage)}
+            </span>
+          </div>
+        ) : null}
         {models.length > 0 ? (
           <div className='mt-1 flex flex-col gap-1'>
             {models.map((model) => (
@@ -402,6 +385,7 @@ function LocalUsageCard(props: {
   title: string
   window?: OllamaLocalUsageWindow
   upstreamRequests?: number
+  showProjection?: boolean
 }) {
   const { t } = useTranslation()
   const models = props.window?.models ?? []
@@ -463,7 +447,9 @@ function LocalUsageCard(props: {
             {t('No requests in this window')}
           </div>
         )}
-        <RecoveryProjection window={props.window} />
+        {props.showProjection ? (
+          <RecoveryProjection window={props.window} />
+        ) : null}
       </CardContent>
     </Card>
   )
@@ -584,51 +570,39 @@ export function OllamaUsageDialog(props: OllamaUsageDialogProps) {
               </div>
             </div>
 
-            {snapshotAvailable ? (
-              <div className='flex flex-col gap-3'>
-                <div className='flex flex-wrap items-center gap-2'>
-                  <div className='text-sm font-semibold'>
-                    {t('Ollama Monitor Snapshot')}
-                  </div>
-                  {payload.snapshot?.stale ? (
-                    <StatusBadge
-                      label={t('Stale')}
-                      variant='warning'
-                      copyable={false}
-                    />
-                  ) : null}
+            <div className='flex flex-col gap-3'>
+              <div className='flex flex-wrap items-center gap-2'>
+                <div className='text-sm font-semibold'>
+                  {t('Upstream Usage')}
                 </div>
-                <div className='grid grid-cols-1 gap-3 md:grid-cols-2'>
-                  <SnapshotCard
-                    title={t('5-Hour Window')}
-                    window={payload.snapshot?.fiveHour}
+                {snapshotAvailable && payload.snapshot?.stale ? (
+                  <StatusBadge
+                    label={t('Stale')}
+                    variant='warning'
+                    copyable={false}
                   />
-                  <SnapshotCard
-                    title={t('Weekly Window')}
-                    window={payload.snapshot?.weekly}
-                  />
-                </div>
+                ) : null}
+              </div>
+              <div className='grid grid-cols-1 gap-3 md:grid-cols-2'>
+                <UpstreamUsageCard
+                  title={t('5-Hour Window')}
+                  window={payload.upstream?.session}
+                  snapshotWindow={payload.snapshot?.fiveHour}
+                />
+                <UpstreamUsageCard
+                  title={t('Weekly Window')}
+                  window={payload.upstream?.weekly}
+                  snapshotWindow={payload.snapshot?.weekly}
+                />
+              </div>
+              {snapshotAvailable ? (
                 <div className='text-muted-foreground text-xs tabular-nums'>
                   <span>{t('Snapshot fetched at:')}</span>{' '}
                   <span className='text-foreground'>
                     {formatIsoTimestamp(payload.snapshot?.fetchedAt)}
                   </span>
                 </div>
-              </div>
-            ) : null}
-
-            <div className='flex flex-col gap-3'>
-              <div className='text-sm font-semibold'>{t('Upstream Usage')}</div>
-              <div className='grid grid-cols-1 gap-3 md:grid-cols-2'>
-                <UpstreamUsageCard
-                  title={t('5-Hour Window')}
-                  window={payload.upstream?.session}
-                />
-                <UpstreamUsageCard
-                  title={t('Weekly Window')}
-                  window={payload.upstream?.weekly}
-                />
-              </div>
+              ) : null}
             </div>
 
             <div className='flex flex-col gap-3'>
@@ -640,6 +614,7 @@ export function OllamaUsageDialog(props: OllamaUsageDialogProps) {
                   upstreamRequests={sumUpstreamRequests(
                     payload.upstream?.session
                   )}
+                  showProjection={!snapshotAvailable}
                 />
                 <LocalUsageCard
                   title={t('Weekly Window')}
@@ -647,6 +622,7 @@ export function OllamaUsageDialog(props: OllamaUsageDialogProps) {
                   upstreamRequests={sumUpstreamRequests(
                     payload.upstream?.weekly
                   )}
+                  showProjection={!snapshotAvailable}
                 />
               </div>
               <div className='text-muted-foreground text-xs leading-5'>
@@ -654,16 +630,16 @@ export function OllamaUsageDialog(props: OllamaUsageDialogProps) {
                   'Weighted tokens estimate upstream usage units as model level × (prompt + completion) tokens, because Ollama does not publish the cap or the unit. Upstream and local request counts are directly comparable; mismatches mean some upstream traffic in this window predates the current channel or key.'
                 )}
               </div>
-              <div className='text-muted-foreground text-xs leading-5'>
-                {t(
-                  'Recovery timing and the projection are estimates based on when this channel’s own requests slide out of each window.'
-                )}
-                {!snapshotAvailable
-                  ? ` ${t(
-                      'Ollama resets usage server-side on its own schedule and does not expose the reset time through the usage API.'
-                    )}`
-                  : ''}
-              </div>
+              {!snapshotAvailable ? (
+                <div className='text-muted-foreground text-xs leading-5'>
+                  {t(
+                    'Recovery timing and the projection are estimates based on when this channel’s own requests slide out of each window.'
+                  )}
+                  {` ${t(
+                    'Ollama resets usage server-side on its own schedule and does not expose the reset time through the usage API.'
+                  )}`}
+                </div>
+              ) : null}
             </div>
           </>
         ) : null}

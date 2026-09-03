@@ -32,10 +32,12 @@ func TestInputDeepSeekV4FlashDoResponseStreamPreservesToolCallArguments(t *testi
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
 		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
-			`data: {"id":"chatcmpl_input","object":"chat.completion.chunk","created":1710000000,"model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}`,
-			`data: {"id":"chatcmpl_input","object":"chat.completion.chunk","created":1710000000,"model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_input","type":"function","function":{"name":"lookup","arguments":""}}]},"finish_reason":null}]}`,
-			`data: {"id":"chatcmpl_input","object":"chat.completion.chunk","created":1710000000,"model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"q\":\"x\"}"}}]},"finish_reason":null}]}`,
-			`data: {"id":"chatcmpl_input","object":"chat.completion.chunk","created":1710000000,"model":"deepseek-v4-flash","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":2,"completion_tokens":4,"total_tokens":6}}`,
+			`data: {"type":"response.created","response":{"id":"resp_input","object":"response","model":"deepseek-v4-flash","status":"in_progress"}}`,
+			`data: {"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","name":"lookup","arguments":"","status":"in_progress"}}`,
+			`data: {"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"{\"q\":\"x\"}"}`,
+			`data: {"type":"response.function_call_arguments.done","item_id":"fc_1","output_index":0,"arguments":"{\"q\":\"x\"}"}`,
+			`data: {"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","name":"lookup","arguments":"{\"q\":\"x\"}","status":"completed"}}`,
+			`data: {"type":"response.completed","response":{"id":"resp_input","object":"response","model":"deepseek-v4-flash","status":"completed","output":[{"id":"fc_1","type":"function_call","name":"lookup","arguments":"{\"q\":\"x\"}","status":"completed"}],"usage":{"input_tokens":2,"output_tokens":4,"total_tokens":6}}}`,
 			`data: [DONE]`,
 			``,
 		}, "\n"))),

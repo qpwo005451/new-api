@@ -31,7 +31,7 @@ func isInputDeepSeekV4FlashResponsesRequest(info *relaycommon.RelayInfo, model s
 	return strings.TrimSpace(model) == "" || strings.TrimSpace(model) == inputDeepSeekV4FlashModel
 }
 
-func shouldUseInputDeepSeekV4FlashChatUpstream(info *relaycommon.RelayInfo) bool {
+func shouldUseInputDeepSeekV4FlashResponsesUpstream(info *relaycommon.RelayInfo) bool {
 	if info == nil {
 		return false
 	}

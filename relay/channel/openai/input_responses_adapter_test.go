@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -44,14 +43,14 @@ func TestInputDeepSeekV4FlashResponsesAdapterPredicate(t *testing.T) {
 			info:      inputDeepSeekV4FlashInfo("https://ai.input.im"),
 			model:     inputDeepSeekV4FlashModel,
 			wantMatch: true,
-			wantPath:  "/v1/chat/completions",
+			wantPath:  "/v1/responses",
 		},
 		{
 			name:      "matches host case insensitively",
 			info:      inputDeepSeekV4FlashInfo("https://AI.INPUT.IM"),
 			model:     inputDeepSeekV4FlashModel,
 			wantMatch: true,
-			wantPath:  "/v1/chat/completions",
+			wantPath:  "/v1/responses",
 		},
 		{
 			name: "does not match another model",
@@ -116,7 +115,7 @@ func TestInputDeepSeekV4FlashResponsesAdapterPredicate(t *testing.T) {
 	}
 }
 
-func TestInputDeepSeekV4FlashResponsesRequestConvertsToChat(t *testing.T) {
+func TestInputDeepSeekV4FlashResponsesRequestPassesThrough(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
@@ -131,19 +130,15 @@ func TestInputDeepSeekV4FlashResponsesRequestConvertsToChat(t *testing.T) {
 
 	converted, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(c, info, request)
 	require.NoError(t, err)
-	chatRequest, ok := converted.(*dto.GeneralOpenAIRequest)
+	responsesRequest, ok := converted.(dto.OpenAIResponsesRequest)
 	require.True(t, ok, "%T", converted)
-	info.AppendRequestConversion(types.RelayFormatOpenAI)
-	require.Equal(t, types.RelayFormatOpenAI, info.GetFinalRequestRelayFormat())
-	require.Len(t, chatRequest.Messages, 1)
-	assert.Equal(t, inputDeepSeekV4FlashModel, chatRequest.Model)
-	assert.Equal(t, "user", chatRequest.Messages[0].Role)
-	assert.Equal(t, "reply with OK", chatRequest.Messages[0].StringContent())
-	require.NotNil(t, chatRequest.MaxCompletionTokens)
-	assert.Equal(t, uint(32), *chatRequest.MaxCompletionTokens)
+	assert.Equal(t, inputDeepSeekV4FlashModel, responsesRequest.Model)
+	assert.Equal(t, `"reply with OK"`, string(responsesRequest.Input))
+	require.NotNil(t, responsesRequest.MaxOutputTokens)
+	assert.Equal(t, uint(32), *responsesRequest.MaxOutputTokens)
 }
 
-func TestInputDeepSeekV4FlashResponsesRequestPassesReasoningBackToChatUpstream(t *testing.T) {
+func TestInputDeepSeekV4FlashResponsesRequestPassesThroughWithReasoning(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
@@ -160,17 +155,11 @@ func TestInputDeepSeekV4FlashResponsesRequestPassesReasoningBackToChatUpstream(t
 
 	converted, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(c, info, request)
 	require.NoError(t, err)
-	chatRequest, ok := converted.(*dto.GeneralOpenAIRequest)
+	responsesRequest, ok := converted.(dto.OpenAIResponsesRequest)
 	require.True(t, ok, "%T", converted)
-	require.Len(t, chatRequest.Messages, 2)
-	require.NotNil(t, chatRequest.Messages[0].ReasoningContent)
-	assert.Equal(t, "prior thought", chatRequest.Messages[0].GetReasoningContent())
-	assert.Equal(t, "prior answer", chatRequest.Messages[0].StringContent())
-	assert.Equal(t, "user", chatRequest.Messages[1].Role)
-
-	body, err := common.Marshal(chatRequest)
-	require.NoError(t, err)
-	assert.Contains(t, string(body), `"reasoning_content":"prior thought"`)
+	assert.Equal(t, inputDeepSeekV4FlashModel, responsesRequest.Model)
+	assert.Contains(t, string(responsesRequest.Input), "prior thought")
+	assert.Contains(t, string(responsesRequest.Input), "continue")
 }
 
 func TestInputDeepSeekV4FlashDoResponseKeepsResponsesProtocol(t *testing.T) {
@@ -182,7 +171,7 @@ func TestInputDeepSeekV4FlashDoResponseKeepsResponsesProtocol(t *testing.T) {
 	info := inputDeepSeekV4FlashInfo("https://ai.input.im")
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
-		Body:       io.NopCloser(strings.NewReader("{\"id\":\"chatcmpl_input\",\"object\":\"chat.completion\",\"created\":1710000000,\"model\":\"deepseek-v4-flash\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"OK\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":1,\"total_tokens\":3}}")),
+		Body: io.NopCloser(strings.NewReader(`{"id":"resp_input","object":"response","created_at":1710000000,"model":"deepseek-v4-flash","status":"completed","output":[{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"OK"}]}],"usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}}`)),
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 	}
 
@@ -215,9 +204,9 @@ func TestInputDeepSeekV4FlashDoResponseStreamKeepsResponsesProtocol(t *testing.T
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
 		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
-			`data: {"id":"chatcmpl_input","object":"chat.completion.chunk","created":1710000000,"model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}`,
-			`data: {"id":"chatcmpl_input","object":"chat.completion.chunk","created":1710000000,"model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"content":"OK"},"finish_reason":null}]}`,
-			`data: {"id":"chatcmpl_input","object":"chat.completion.chunk","created":1710000000,"model":"deepseek-v4-flash","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`,
+			`data: {"type":"response.created","response":{"id":"resp_input","object":"response","model":"deepseek-v4-flash","status":"in_progress"}}`,
+			`data: {"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"OK"}`,
+			`data: {"type":"response.completed","response":{"id":"resp_input","object":"response","model":"deepseek-v4-flash","status":"completed","output":[{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"OK"}]}],"usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}}}`,
 			`data: [DONE]`,
 			``,
 		}, "\n"))),

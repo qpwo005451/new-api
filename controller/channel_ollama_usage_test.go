@@ -173,7 +173,8 @@ func TestEstimateOllamaChannelUsageProjection(t *testing.T) {
 }
 
 func TestEstimateOllamaChannelUsageEmpty(t *testing.T) {
-	window := estimateOllamaChannelUsage(nil, ollamaWeeklyWindowSeconds, time.Unix(1788050524, 0))
+	// Longer sliding windows use daily projection checkpoints.
+	window := estimateOllamaChannelUsage(nil, int64(7*24*3600), time.Unix(1788050524, 0))
 	assert.Empty(t, window.Models)
 	assert.NotNil(t, window.Models)
 	assert.EqualValues(t, 0, window.TotalTokens)
@@ -274,4 +275,109 @@ func TestFetchOllamaUsageSnapshot(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.errPart)
 		})
 	}
+}
+func TestOllamaWeeklyResetFallback(t *testing.T) {
+	// Without a snapshot, the weekly period follows the Monday 00:00 UTC
+	// cadence: the reset is the next Monday strictly after now.
+	assert.Equal(t,
+		time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC),
+		ollamaWeeklyReset(nil, time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)),
+	)
+	assert.Equal(t,
+		time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC),
+		ollamaWeeklyReset(nil, time.Date(2026, 8, 30, 23, 0, 0, 0, time.UTC)),
+	)
+	// Monday afternoon: the 00:00 UTC reset already passed, so the next
+	// reset is a week later and the period started at this Monday.
+	assert.Equal(t,
+		time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC),
+		ollamaWeeklyReset(nil, time.Date(2026, 8, 31, 5, 0, 0, 0, time.UTC)),
+	)
+	// Non-UTC times resolve to the same UTC cadence.
+	cst := time.FixedZone("CST", 8*3600)
+	assert.Equal(t,
+		time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC),
+		ollamaWeeklyReset(nil, time.Date(2026, 8, 30, 23, 0, 0, 0, cst)),
+	)
+}
+
+func TestOllamaWeeklyResetFromSnapshot(t *testing.T) {
+	// The snapshot's weekly resetsAt is authoritative over the Monday
+	// fallback.
+	resetsAt := "2026-09-02T08:30:00Z"
+	snapshot := &ollamaSnapshotUsage{Weekly: &ollamaSnapshotWindow{ResetsAt: &resetsAt}}
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	assert.Equal(t, time.Date(2026, 9, 2, 8, 30, 0, 0, time.UTC),
+		ollamaWeeklyReset(snapshot, now),
+	)
+
+	// An unparseable resetsAt falls back to the Monday cadence.
+	bad := "not-a-time"
+	snapshot.Weekly.ResetsAt = &bad
+	assert.Equal(t, time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC),
+		ollamaWeeklyReset(snapshot, now),
+	)
+}
+
+func TestOllamaWeeklyResetStaleSnapshotAdvances(t *testing.T) {
+	// A stale snapshot whose weekly reset already passed keeps the 7-day
+	// cadence anchored at resetsAt instead of counting a closed period.
+	resetsAt := "2026-08-24T00:00:00Z"
+	snapshot := &ollamaSnapshotUsage{Weekly: &ollamaSnapshotWindow{ResetsAt: &resetsAt}}
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	assert.Equal(t, time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC),
+		ollamaWeeklyReset(snapshot, now),
+	)
+}
+
+func TestOllamaMonthPeriod(t *testing.T) {
+	// The monthly window is the current calendar month in the location of
+	// now, including the year rollover.
+	since, reset := ollamaMonthPeriod(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC))
+	assert.Equal(t, time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), since)
+	assert.Equal(t, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), reset)
+
+	since, reset = ollamaMonthPeriod(time.Date(2026, 12, 31, 23, 59, 59, 0, time.UTC))
+	assert.Equal(t, time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC), since)
+	assert.Equal(t, time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC), reset)
+
+	// The window follows now's location, not UTC.
+	cst := time.FixedZone("CST", 8*3600)
+	since, reset = ollamaMonthPeriod(time.Date(2026, 8, 1, 2, 0, 0, 0, cst))
+	assert.Equal(t, time.Date(2026, 8, 1, 0, 0, 0, 0, cst), since)
+	assert.Equal(t, time.Date(2026, 9, 1, 0, 0, 0, 0, cst), reset)
+}
+
+func TestEstimateOllamaChannelPeriodUsage(t *testing.T) {
+	// A fixed period keeps its totals until the reset instant: no earliest
+	// release and no slide-out projection.
+	rows := []model.ModelUsageSecond{
+		{CreatedAt: 1788047000, ModelName: "deepseek-v4-flash:0731", Requests: 2, PromptTokens: 1000, CompletionTokens: 500},
+		{CreatedAt: 1788049000, ModelName: "glm-5.3-flash", Requests: 3, PromptTokens: 2000, CompletionTokens: 3000},
+	}
+	since := time.Unix(1788032524, 0)
+	reset := since.Add(7 * 24 * time.Hour)
+	window := estimateOllamaChannelPeriodUsage(rows, since, reset)
+
+	assert.Equal(t, since.Unix(), window.Since)
+	assert.Equal(t, reset.Unix(), window.ResetsAt)
+	assert.EqualValues(t, 7*24*3600, window.WindowSeconds)
+	assert.Equal(t, int64(0), window.EarliestReleaseAt)
+	assert.Empty(t, window.Projection.Points)
+	// Weighted usage only counts known levels: 2*1500 + 2*5000.
+	assert.Equal(t, float64(13000), window.WeightedUsage)
+	assert.EqualValues(t, 6500, window.TotalTokens)
+	require.Len(t, window.Models, 2)
+}
+
+func TestEstimateOllamaChannelPeriodUsageEmpty(t *testing.T) {
+	since := time.Unix(1788032524, 0)
+	reset := since.Add(31 * 24 * time.Hour)
+	window := estimateOllamaChannelPeriodUsage(nil, since, reset)
+	assert.NotNil(t, window.Models)
+	assert.Empty(t, window.Models)
+	assert.Equal(t, since.Unix(), window.Since)
+	assert.Equal(t, reset.Unix(), window.ResetsAt)
+	assert.EqualValues(t, 31*24*3600, window.WindowSeconds)
+	assert.Empty(t, window.Projection.Points)
 }

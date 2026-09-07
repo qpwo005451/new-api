@@ -77,6 +77,9 @@ type OllamaLocalModelUsage = {
 type OllamaLocalUsageWindow = {
   window_seconds?: number
   since?: number
+  // Instant a fixed period (weekly, monthly) resets to zero; 0 means a
+  // sliding window that recovers gradually (5-hour session).
+  resets_at?: number
   models?: OllamaLocalModelUsage[]
   total_tokens?: number
   weighted_usage?: number
@@ -122,6 +125,7 @@ type OllamaUsagePayload = {
   local?: {
     session?: OllamaLocalUsageWindow
     weekly?: OllamaLocalUsageWindow
+    monthly?: OllamaLocalUsageWindow
   }
 }
 
@@ -390,6 +394,9 @@ function LocalUsageCard(props: {
   const { t } = useTranslation()
   const models = props.window?.models ?? []
   const localRequests = models.reduce((s, m) => s + Number(m.requests ?? 0), 0)
+  // Fixed periods (weekly, monthly) carry their reset instant; sliding
+  // windows report earliest_release_at instead.
+  const resetsAt = Number(props.window?.resets_at ?? 0)
 
   return (
     <Card size='sm' className='gap-0 py-0'>
@@ -430,6 +437,28 @@ function LocalUsageCard(props: {
             </>
           ) : null}
         </div>
+        {resetsAt > 0 ? (
+          <div className='text-muted-foreground mt-1 flex flex-col gap-1 text-xs tabular-nums'>
+            <div>
+              <span>{t('Period start:')}</span>{' '}
+              <span className='text-foreground'>
+                {formatTimestampToDate(Number(props.window?.since ?? 0))}
+              </span>
+            </div>
+            <div>
+              <span>{t('Resets at:')}</span>{' '}
+              <span className='text-foreground'>
+                {formatTimestampToDate(resetsAt)}
+              </span>
+            </div>
+            <div>
+              <span>{t('Resets in:')}</span>{' '}
+              <span className='text-foreground'>
+                {formatTimestampRelative(resetsAt * 1000, 'milliseconds')}
+              </span>
+            </div>
+          </div>
+        ) : null}
         {models.length > 0 ? (
           <div className='mt-2 flex flex-col gap-1'>
             {models.map((model) => (
@@ -607,7 +636,7 @@ export function OllamaUsageDialog(props: OllamaUsageDialogProps) {
 
             <div className='flex flex-col gap-3'>
               <div className='text-sm font-semibold'>{t('Local Estimate')}</div>
-              <div className='grid grid-cols-1 gap-3 md:grid-cols-2'>
+              <div className='grid grid-cols-1 gap-3 md:grid-cols-3'>
                 <LocalUsageCard
                   title={t('5-Hour Window')}
                   window={payload.local?.session}
@@ -622,7 +651,10 @@ export function OllamaUsageDialog(props: OllamaUsageDialogProps) {
                   upstreamRequests={sumUpstreamRequests(
                     payload.upstream?.weekly
                   )}
-                  showProjection={!snapshotAvailable}
+                />
+                <LocalUsageCard
+                  title={t('Monthly Window')}
+                  window={payload.local?.monthly}
                 />
               </div>
               <div className='text-muted-foreground text-xs leading-5'>
@@ -630,16 +662,21 @@ export function OllamaUsageDialog(props: OllamaUsageDialogProps) {
                   'Weighted tokens estimate upstream usage units as model level × (prompt + completion) tokens, because Ollama does not publish the cap or the unit. Upstream and local request counts are directly comparable; mismatches mean some upstream traffic in this window predates the current channel or key.'
                 )}
               </div>
-              {!snapshotAvailable ? (
-                <div className='text-muted-foreground text-xs leading-5'>
-                  {t(
-                    'Recovery timing and the projection are estimates based on when this channel’s own requests slide out of each window.'
-                  )}
-                  {` ${t(
-                    'Ollama resets usage server-side on its own schedule and does not expose the reset time through the usage API.'
-                  )}`}
-                </div>
-              ) : null}
+              <div className='text-muted-foreground text-xs leading-5'>
+                {t(
+                  'The weekly estimate counts requests since the last weekly reset and drops to zero at the next reset (Monday 00:00 UTC when no monitored snapshot is available); the monthly estimate is cumulative for the current calendar month in server time.'
+                )}
+                {!snapshotAvailable ? (
+                  <>
+                    {` ${t(
+                      'Recovery timing and the projection are estimates based on when this channel’s own requests slide out of the 5-hour window.'
+                    )}`}
+                    {` ${t(
+                      'Ollama resets usage server-side on its own schedule and does not expose the reset time through the usage API.'
+                    )}`}
+                  </>
+                ) : null}
+              </div>
             </div>
           </>
         ) : null}

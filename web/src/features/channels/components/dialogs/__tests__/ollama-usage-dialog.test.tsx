@@ -72,8 +72,12 @@ await i18n.use(initReactI18next).init({
         'Usage units:': 'Usage units:',
         'Snapshot fetched at:': 'Snapshot fetched at:',
         Stale: 'Stale',
-        'Recovery timing and the projection are estimates based on when this channel’s own requests slide out of each window.':
-          'Recovery timing and the projection are estimates based on when this channel’s own requests slide out of each window.',
+        'Recovery timing and the projection are estimates based on when this channel’s own requests slide out of the 5-hour window.':
+          'Recovery timing and the projection are estimates based on when this channel’s own requests slide out of the 5-hour window.',
+        'The weekly estimate counts requests since the last weekly reset and drops to zero at the next reset (Monday 00:00 UTC when no monitored snapshot is available); the monthly estimate is cumulative for the current calendar month in server time.':
+          'The weekly estimate counts requests since the last weekly reset and drops to zero at the next reset (Monday 00:00 UTC when no monitored snapshot is available); the monthly estimate is cumulative for the current calendar month in server time.',
+        'Monthly Window': 'Monthly Window',
+        'Period start:': 'Period start:',
         'Ollama resets usage server-side on its own schedule and does not expose the reset time through the usage API.':
           'Ollama resets usage server-side on its own schedule and does not expose the reset time through the usage API.',
       },
@@ -146,9 +150,18 @@ function successfulResponse() {
         weekly: {
           window_seconds: 604800,
           since: 1787446000,
+          resets_at: 1787446000 + 604800,
           models: [],
           total_tokens: 3600,
           weighted_usage: 6600,
+        },
+        monthly: {
+          window_seconds: 2678400,
+          since: 1785542400,
+          resets_at: 1788220800,
+          models: [],
+          total_tokens: 5000,
+          weighted_usage: 0,
         },
       },
     },
@@ -172,8 +185,13 @@ describe('Ollama usage dialog', () => {
     // Local weighted tokens, local request total (3), and upstream request
     // total for the same window (2 + 1).
     expect(screen.getAllByText('6,600')).toHaveLength(2)
-    expect(screen.getAllByText('Requests:').length).toBe(2)
+    expect(screen.getAllByText('Requests:').length).toBe(3)
     expect(screen.getAllByText('3').length).toBeGreaterThanOrEqual(1)
+    // Fixed periods (weekly, monthly) show their reset rows even without a
+    // monitored snapshot.
+    expect(screen.getByText('Monthly Window')).toBeInTheDocument()
+    expect(screen.getAllByText('Period start:')).toHaveLength(2)
+    expect(screen.getAllByText('Resets at:')).toHaveLength(2)
     // The session window has upstream model counts, so it shows the upstream
     // request total next to its own; the upstream weekly window has no model
     // list, so no upstream count is invented for it.
@@ -296,8 +314,10 @@ describe('Ollama usage dialog', () => {
     expect(screen.getByText('7.8%')).toBeInTheDocument()
     expect(screen.getByText('43.8%')).toBeInTheDocument()
     expect(screen.getByText('Stale')).toBeInTheDocument()
-    expect(screen.getAllByText('Resets at:')).toHaveLength(2)
-    expect(screen.getAllByText('Resets in:')).toHaveLength(2)
+    // Two upstream snapshot cards plus the local weekly and monthly fixed
+    // periods all carry reset rows.
+    expect(screen.getAllByText('Resets at:')).toHaveLength(4)
+    expect(screen.getAllByText('Resets in:')).toHaveLength(4)
     expect(screen.getAllByText(/in \d+ years/)).toHaveLength(2)
     expect(screen.getAllByText('Usage units:')).toHaveLength(2)
     expect(screen.getByText('30')).toBeInTheDocument()
@@ -315,13 +335,38 @@ describe('Ollama usage dialog', () => {
       screen.queryByText('Recovery projection (estimate)')
     ).not.toBeInTheDocument()
     expect(screen.queryByText('Earliest release:')).not.toBeInTheDocument()
-    // And the local note drops both the estimate sentence and the claim that
-    // the reset time is not exposed.
+    // With a snapshot the local note keeps the weekly/monthly explanation
+    // but drops the sliding-window estimate sentences.
+    expect(
+      screen.getByText(
+        'The weekly estimate counts requests since the last weekly reset and drops to zero at the next reset (Monday 00:00 UTC when no monitored snapshot is available); the monthly estimate is cumulative for the current calendar month in server time.'
+      )
+    ).toBeInTheDocument()
     expect(
       screen.queryByText(
-        'Recovery timing and the projection are estimates based on when this channel’s own requests slide out of each window. Ollama resets usage server-side on its own schedule and does not expose the reset time through the usage API.'
+        'Recovery timing and the projection are estimates based on when this channel’s own requests slide out of the 5-hour window. Ollama resets usage server-side on its own schedule and does not expose the reset time through the usage API.'
       )
     ).not.toBeInTheDocument()
+  })
+
+  test('shows fixed-period reset rows for the weekly and monthly local cards', () => {
+    render(<DialogHarness response={successfulResponse()} />)
+
+    expect(screen.getAllByText('Period start:')).toHaveLength(2)
+    expect(screen.getAllByText('Resets at:')).toHaveLength(2)
+    expect(screen.getAllByText('Resets in:')).toHaveLength(2)
+    // The weekly period anchors at its own reset instant, one week after
+    // its period start.
+    expect(
+      screen.getByText(dayjs(1788050800 * 1000).format('YYYY-MM-DD HH:mm:ss'))
+    ).toBeInTheDocument()
+    // The monthly window spans the current calendar month.
+    expect(
+      screen.getByText(dayjs(1785542400 * 1000).format('YYYY-MM-DD HH:mm:ss'))
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(dayjs(1788220800 * 1000).format('YYYY-MM-DD HH:mm:ss'))
+    ).toBeInTheDocument()
   })
 
   test('keeps the full recovery note and projection when no snapshot is available', () => {
@@ -341,12 +386,13 @@ describe('Ollama usage dialog', () => {
 
     expect(
       screen.getByText(
-        'Recovery timing and the projection are estimates based on when this channel’s own requests slide out of each window. Ollama resets usage server-side on its own schedule and does not expose the reset time through the usage API.'
+        'The weekly estimate counts requests since the last weekly reset and drops to zero at the next reset (Monday 00:00 UTC when no monitored snapshot is available); the monthly estimate is cumulative for the current calendar month in server time. Recovery timing and the projection are estimates based on when this channel’s own requests slide out of the 5-hour window. Ollama resets usage server-side on its own schedule and does not expose the reset time through the usage API.'
       )
     ).toBeInTheDocument()
     // Without a snapshot the upstream cards fall back to the plain units
-    // headline and no reset rows.
-    expect(screen.queryByText('Resets at:')).not.toBeInTheDocument()
+    // headline; the weekly and monthly local cards still show their own
+    // fixed reset rows.
+    expect(screen.getAllByText('Resets at:')).toHaveLength(2)
     expect(screen.queryByText('Usage units:')).not.toBeInTheDocument()
     // The recovery projection stays visible as the only reset-time signal.
     expect(

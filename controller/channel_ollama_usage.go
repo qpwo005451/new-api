@@ -87,9 +87,14 @@ type ollamaLocalUsageWindow struct {
 	TotalTokens   int64                   `json:"total_tokens"`
 	WeightedUsage float64                 `json:"weighted_usage"`
 	// EarliestReleaseAt is the moment the oldest request still counted in
-	// the window slides out and usage starts recovering; 0 for empty windows.
-	EarliestReleaseAt int64                      `json:"earliest_release_at"`
-	Projection        ollamaLocalUsageProjection `json:"projection"`
+	// the sliding window slides out and usage starts recovering; 0 for empty
+	// windows and for fixed periods, which reset instead of sliding.
+	EarliestReleaseAt int64 `json:"earliest_release_at"`
+	// ResetsAt is the instant a fixed period (weekly, monthly) drops to zero
+	// regardless of when requests were made; 0 for sliding windows, which
+	// recover gradually as requests slide out.
+	ResetsAt   int64                      `json:"resets_at"`
+	Projection ollamaLocalUsageProjection `json:"projection"`
 }
 
 type ollamaUsageProjectionPoint struct {
@@ -116,7 +121,7 @@ type ollamaSnapshotWindow struct {
 type ollamaSnapshotUsage struct {
 	// Ok mirrors the webhook's ok flag so the frontend can distinguish a
 	// valid snapshot from a null/absent one.
-	Ok        bool                   `json:"ok"`
+	Ok        bool                  `json:"ok"`
 	FiveHour  *ollamaSnapshotWindow `json:"fiveHour"`
 	Weekly    *ollamaSnapshotWindow `json:"weekly"`
 	FetchedAt *string               `json:"fetchedAt"`
@@ -128,12 +133,12 @@ type ollamaSnapshotUsage struct {
 // are accepted.
 type ollamaSnapshotResponse struct {
 	Ok           bool                  `json:"ok"`
-	FailureClass string               `json:"failureClass"`
-	Usage        *ollamaSnapshotUsage `json:"usage"`
+	FailureClass string                `json:"failureClass"`
+	Usage        *ollamaSnapshotUsage  `json:"usage"`
 	FiveHour     *ollamaSnapshotWindow `json:"fiveHour"`
 	Weekly       *ollamaSnapshotWindow `json:"weekly"`
-	FetchedAt    *string              `json:"fetchedAt"`
-	Source       string               `json:"source"`
+	FetchedAt    *string               `json:"fetchedAt"`
+	Source       string                `json:"source"`
 }
 
 // Header carrying the webhook secret; the N8N httpHeaderAuth credential must
@@ -238,31 +243,20 @@ func foldChannelModelUsage(
 	return folded
 }
 
-func estimateOllamaChannelUsage(rows []model.ModelUsageSecond, windowSeconds int64, now time.Time) ollamaLocalUsageWindow {
-	// Hourly checkpoints for the 5-hour window, daily ones for the weekly
-	// window — the two window shapes this endpoint estimates.
-	bucketSeconds := int64(24 * 3600)
-	if windowSeconds <= 24*3600 {
-		bucketSeconds = 3600
-	}
-	since := now.Add(-time.Duration(windowSeconds) * time.Second).Unix()
-	window := ollamaLocalUsageWindow{
-		WindowSeconds: windowSeconds,
-		Since:         since,
-		Models:        []ollamaLocalModelUsage{},
-		Projection: ollamaLocalUsageProjection{
-			BucketSeconds: bucketSeconds,
-			Points:        make([]ollamaUsageProjectionPoint, 0, int(windowSeconds/bucketSeconds)),
-		},
-	}
+// ollamaUsageSample is one per-second usage point feeding the sliding-window
+// slide-out projection.
+type ollamaUsageSample struct {
+	createdAt int64
+	weighted  float64
+	requests  int64
+}
 
+// aggregateOllamaModelUsage folds rows into the window's per-model entries
+// and token/weighted totals, and returns the per-second samples sorted
+// chronologically for the caller's window-shape specific projections.
+func aggregateOllamaModelUsage(rows []model.ModelUsageSecond, window *ollamaLocalUsageWindow) []ollamaUsageSample {
 	modelIndex := make(map[string]int, len(rows))
-	type usageSample struct {
-		createdAt int64
-		weighted  float64
-		requests  int64
-	}
-	samples := make([]usageSample, 0, len(rows))
+	samples := make([]ollamaUsageSample, 0, len(rows))
 	for _, row := range rows {
 		level := ollamaModelUsageLevel(row.ModelName)
 		tokens := row.PromptTokens + row.CompletionTokens
@@ -284,7 +278,7 @@ func estimateOllamaChannelUsage(rows []model.ModelUsageSecond, windowSeconds int
 		}
 		window.TotalTokens += tokens
 		window.WeightedUsage += weighted
-		samples = append(samples, usageSample{createdAt: row.CreatedAt, weighted: weighted, requests: row.Requests})
+		samples = append(samples, ollamaUsageSample{createdAt: row.CreatedAt, weighted: weighted, requests: row.Requests})
 	}
 	// Most-requested models first so the panel keeps a stable order.
 	sort.Slice(window.Models, func(i, j int) bool {
@@ -293,11 +287,32 @@ func estimateOllamaChannelUsage(rows []model.ModelUsageSecond, windowSeconds int
 		}
 		return window.Models[i].ModelName < window.Models[j].ModelName
 	})
+	sort.Slice(samples, func(i, j int) bool { return samples[i].createdAt < samples[j].createdAt })
+	return samples
+}
+
+func estimateOllamaChannelUsage(rows []model.ModelUsageSecond, windowSeconds int64, now time.Time) ollamaLocalUsageWindow {
+	// Hourly checkpoints for the 5-hour window, daily ones for longer
+	// sliding windows this estimator may be called with.
+	bucketSeconds := int64(24 * 3600)
+	if windowSeconds <= 24*3600 {
+		bucketSeconds = 3600
+	}
+	since := now.Add(-time.Duration(windowSeconds) * time.Second).Unix()
+	window := ollamaLocalUsageWindow{
+		WindowSeconds: windowSeconds,
+		Since:         since,
+		Models:        []ollamaLocalModelUsage{},
+		Projection: ollamaLocalUsageProjection{
+			BucketSeconds: bucketSeconds,
+			Points:        make([]ollamaUsageProjectionPoint, 0, int(windowSeconds/bucketSeconds)),
+		},
+	}
+	samples := aggregateOllamaModelUsage(rows, &window)
 
 	if len(samples) == 0 {
 		return window
 	}
-	sort.Slice(samples, func(i, j int) bool { return samples[i].createdAt < samples[j].createdAt })
 	window.EarliestReleaseAt = samples[0].createdAt + windowSeconds
 
 	// Suffix sums let each checkpoint report the weighted usage and request
@@ -320,6 +335,54 @@ func estimateOllamaChannelUsage(rows []model.ModelUsageSecond, windowSeconds int
 	return window
 }
 
+// estimateOllamaChannelPeriodUsage sums usage inside a fixed period
+// [since, reset): the total keeps growing while requests arrive and drops to
+// zero at reset, mirroring Ollama's fixed weekly reset instead of a sliding
+// window. Rows are trusted to lie inside the period, like the sliding
+// estimator relies on its SQL pre-filter.
+func estimateOllamaChannelPeriodUsage(rows []model.ModelUsageSecond, since, reset time.Time) ollamaLocalUsageWindow {
+	window := ollamaLocalUsageWindow{
+		WindowSeconds: int64(reset.Sub(since).Seconds()),
+		Since:         since.Unix(),
+		ResetsAt:      reset.Unix(),
+		Models:        []ollamaLocalModelUsage{},
+	}
+	aggregateOllamaModelUsage(rows, &window)
+	return window
+}
+
+// ollamaWeeklyReset returns the instant the current weekly usage period ends
+// and Ollama resets it to zero. The N8N snapshot's weekly resetsAt is
+// authoritative; without it the period follows the Monday 00:00 UTC cadence
+// observed on ollama.com (the activity period starts on a Monday). A stale
+// snapshot whose reset already passed keeps the 7-day cadence anchored at
+// resetsAt instead of counting a closed period.
+func ollamaWeeklyReset(snapshot *ollamaSnapshotUsage, now time.Time) time.Time {
+	if snapshot != nil && snapshot.Weekly != nil && snapshot.Weekly.ResetsAt != nil {
+		if resetAt, err := time.Parse(time.RFC3339, *snapshot.Weekly.ResetsAt); err == nil {
+			for !resetAt.After(now) {
+				resetAt = resetAt.Add(time.Duration(ollamaWeeklyWindowSeconds) * time.Second)
+			}
+			return resetAt
+		}
+	}
+	// Next Monday 00:00 UTC strictly after now.
+	utcNow := now.UTC()
+	midnight := time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day(), 0, 0, 0, 0, time.UTC).
+		AddDate(0, 0, (int(time.Monday)-int(utcNow.Weekday())+7)%7)
+	if !midnight.After(now) {
+		midnight = midnight.AddDate(0, 0, 7)
+	}
+	return midnight
+}
+
+// ollamaMonthPeriod returns the current calendar month in the location of
+// now as [start, nextStart): the monthly cumulative usage window.
+func ollamaMonthPeriod(now time.Time) (time.Time, time.Time) {
+	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	return start, start.AddDate(0, 1, 0)
+}
+
 func GetOllamaChannelUsage(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -337,6 +400,22 @@ func GetOllamaChannelUsage(c *gin.Context) {
 			"message": "仅支持 Ollama 渠道",
 		})
 		return
+	}
+
+	// Authoritative snapshot from the N8N refresh webhook, configured via
+	// OllamaUsageWebhookUrl/Secret. One call triggers an immediate upstream
+	// scrape and returns its result; on any failure the panel falls back to
+	// the local estimates below without affecting the main flow. Fetched
+	// first because its weekly resetsAt anchors the local weekly period.
+	var snapshot *ollamaSnapshotUsage
+	if webhookURL := common.OptionMap["OllamaUsageWebhookUrl"]; webhookURL != "" {
+		secret := common.OptionMap["OllamaUsageWebhookSecret"]
+		fetched, err := fetchOllamaUsageSnapshot(webhookURL, secret, ollamaUsageWebhookClient)
+		if err != nil {
+			common.SysError("获取 Ollama 用量快照失败: " + err.Error())
+		} else {
+			snapshot = fetched
+		}
 	}
 
 	now := time.Now()
@@ -358,7 +437,19 @@ func GetOllamaChannelUsage(c *gin.Context) {
 		return
 	}
 
-	weeklyRows, err := model.SumModelUsageByChannelSecond(id, now.Add(-time.Duration(ollamaWeeklyWindowSeconds)*time.Second).Unix())
+	// Weekly usage follows Ollama's fixed reset: it accumulates from the
+	// last weekly reset instant and drops to zero at the next one, instead
+	// of sliding with the oldest request. Monthly usage is cumulative for
+	// the current calendar month.
+	weeklyReset := ollamaWeeklyReset(snapshot, now)
+	weeklyStart := weeklyReset.Add(-time.Duration(ollamaWeeklyWindowSeconds) * time.Second)
+	monthStart, monthReset := ollamaMonthPeriod(now)
+
+	querySince := weeklyStart.Unix()
+	if monthStart.Before(weeklyStart) {
+		querySince = monthStart.Unix()
+	}
+	rows, err := model.SumModelUsageByChannelSecond(id, querySince)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -373,29 +464,20 @@ func GetOllamaChannelUsage(c *gin.Context) {
 			served[strings.TrimSpace(m)] = true
 		}
 	}
-	weeklyRows = foldChannelModelUsage(weeklyRows, modelMapping, served)
+	rows = foldChannelModelUsage(rows, modelMapping, served)
 	sessionSince := now.Add(-time.Duration(ollamaSessionWindowSeconds) * time.Second).Unix()
-	sessionRows := make([]model.ModelUsageSecond, 0, len(weeklyRows))
-	for _, row := range weeklyRows {
-		if row.CreatedAt >= sessionSince {
-			sessionRows = append(sessionRows, row)
+	rowsWithin := func(since int64) []model.ModelUsageSecond {
+		filtered := make([]model.ModelUsageSecond, 0, len(rows))
+		for _, row := range rows {
+			if row.CreatedAt >= since {
+				filtered = append(filtered, row)
+			}
 		}
+		return filtered
 	}
-
-	// Authoritative snapshot from the N8N refresh webhook, configured via
-	// OllamaUsageWebhookUrl/Secret. One call triggers an immediate upstream
-	// scrape and returns its result; on any failure the panel falls back to
-	// the local estimates below without affecting the main flow.
-	var snapshot *ollamaSnapshotUsage
-	if webhookURL := common.OptionMap["OllamaUsageWebhookUrl"]; webhookURL != "" {
-		secret := common.OptionMap["OllamaUsageWebhookSecret"]
-		fetched, err := fetchOllamaUsageSnapshot(webhookURL, secret, ollamaUsageWebhookClient)
-		if err != nil {
-			common.SysError("获取 Ollama 用量快照失败: " + err.Error())
-		} else {
-			snapshot = fetched
-		}
-	}
+	sessionRows := rowsWithin(sessionSince)
+	weeklyRows := rowsWithin(weeklyStart.Unix())
+	monthlyRows := rowsWithin(monthStart.Unix())
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -411,7 +493,8 @@ func GetOllamaChannelUsage(c *gin.Context) {
 			},
 			"local": gin.H{
 				"session": estimateOllamaChannelUsage(sessionRows, ollamaSessionWindowSeconds, now),
-				"weekly":  estimateOllamaChannelUsage(weeklyRows, ollamaWeeklyWindowSeconds, now),
+				"weekly":  estimateOllamaChannelPeriodUsage(weeklyRows, weeklyStart, weeklyReset),
+				"monthly": estimateOllamaChannelPeriodUsage(monthlyRows, monthStart, monthReset),
 			},
 		},
 	})

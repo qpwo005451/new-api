@@ -4,11 +4,11 @@ Use this fixed matrix for `standard` verification. Do not auto-pick substitute c
 
 | Sample Id | Channel Label | Required In Standard | Model | Endpoint | Expected Result |
 | --- | --- | --- | --- | --- | --- |
-| input-baseline | input | yes | `gpt-5.4-mini` | `/v1/chat/completions` | Request succeeds through the primary input-backed OpenAI-compatible path |
 | deepseek-baseline | deepseek | yes | `deepseek-v4-flash` | `/v1/chat/completions` | Request succeeds through the dedicated deepseek route |
+| ollama-baseline | ollama | yes | `gpt-oss:20b` | `/v1/chat/completions` | Request succeeds through the ollama cloud channel |
 
 ## Rules
 - Keep this matrix fixed until a human explicitly changes it.
 - Fail the check if a required sample cannot be executed.
 - Report the sample ID, model, endpoint, and observed failure mode.
-- Do not silently swap `gpt-5.4-mini` or `deepseek-v4-flash` for a different model.
+- Do not silently swap `deepseek-v4-flash` or `gpt-oss:20b` for a different model.

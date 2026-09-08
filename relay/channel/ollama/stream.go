@@ -20,6 +20,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const maxOllamaToolCalls = 128
+
 type ollamaChatStreamChunk struct {
 	Model     string `json:"model"`
 	CreatedAt string `json:"created_at"`
@@ -98,7 +100,7 @@ func toUnix(ts string) int64 {
 // buildOllamaChatStreamDelta converts one streamed ollama chat frame into the
 // matching OpenAI chat-completions chunk. toolCallIndex tracks the running
 // tool-call index across frames; the returned value is the updated index.
-func buildOllamaChatStreamDelta(chunk ollamaChatStreamChunk, model, responseId string, created int64, toolCallIndex int) (dto.ChatCompletionsStreamResponse, int) {
+func buildOllamaChatStreamDelta(chunk ollamaChatStreamChunk, model, responseId string, created int64, toolCallIndex int, seenToolCalls map[string]struct{}) (dto.ChatCompletionsStreamResponse, int, error) {
 	// delta content
 	var content string
 	if chunk.Message != nil {
@@ -134,9 +136,24 @@ func buildOllamaChatStreamDelta(chunk ollamaChatStreamChunk, model, responseId s
 	}
 	// tool calls
 	if chunk.Message != nil && len(chunk.Message.ToolCalls) > 0 {
-		delta.Choices[0].Delta.ToolCalls, toolCallIndex = ollamaToolCallsToOpenAI(chunk.Message.ToolCalls, toolCallIndex, true)
+		unique := make([]OllamaToolCall, 0, len(chunk.Message.ToolCalls))
+		for _, tc := range chunk.Message.ToolCalls {
+			args, _ := common.Marshal(tc.Function.Arguments)
+			key := tc.ID + "\x00" + tc.Function.Name + "\x00" + string(args)
+			if tc.ID != "" {
+				if _, exists := seenToolCalls[key]; exists {
+					continue
+				}
+				seenToolCalls[key] = struct{}{}
+			}
+			unique = append(unique, tc)
+		}
+		if len(unique) > maxOllamaToolCalls-toolCallIndex {
+			return delta, toolCallIndex, fmt.Errorf("ollama response contains too many tool calls (limit %d)", maxOllamaToolCalls)
+		}
+		delta.Choices[0].Delta.ToolCalls, toolCallIndex = ollamaToolCallsToOpenAI(unique, toolCallIndex, true)
 	}
-	return delta, toolCallIndex
+	return delta, toolCallIndex, nil
 }
 
 func ollamaStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
@@ -152,6 +169,7 @@ func ollamaStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	var responseId = common.GetUUID()
 	var created = time.Now().Unix()
 	var toolCallIndex int
+	seenToolCalls := make(map[string]struct{})
 	start := helper.GenerateStartEmptyResponse(responseId, created, model, nil)
 	if data, err := common.Marshal(start); err == nil {
 		_ = helper.StringData(c, string(data))
@@ -174,7 +192,10 @@ func ollamaStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		created = toUnix(chunk.CreatedAt)
 
 		if !chunk.Done {
-			delta, nextToolCallIndex := buildOllamaChatStreamDelta(chunk, model, responseId, created, toolCallIndex)
+			delta, nextToolCallIndex, err := buildOllamaChatStreamDelta(chunk, model, responseId, created, toolCallIndex, seenToolCalls)
+			if err != nil {
+				return usage, types.NewOpenAIError(err, types.ErrorCode("ollama_tool_call_limit"), http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+			}
 			toolCallIndex = nextToolCallIndex
 			if data, err := common.Marshal(delta); err == nil {
 				_ = helper.StringData(c, string(data))
@@ -190,7 +211,7 @@ func ollamaStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		if finishReason == "" {
 			finishReason = "stop"
 		}
-		if toolCallIndex > 0 {
+		if finishReason == "stop" && toolCallIndex > 0 {
 			finishReason = constant.FinishReasonToolCalls
 		}
 		// emit stop delta
@@ -247,6 +268,7 @@ func parseOllamaChatResponse(body []byte, info *relaycommon.RelayInfo) (*dto.Ope
 		parsedAny        bool
 		toolCallIndex    int
 		toolCalls        []dto.ToolCallResponse
+		seenToolCalls    = make(map[string]struct{})
 	)
 	for _, ln := range lines {
 		ln = strings.TrimSpace(ln)
@@ -281,8 +303,23 @@ func parseOllamaChatResponse(body []byte, info *relaycommon.RelayInfo) (*dto.Ope
 			aggContent.WriteString(ck.Response)
 		}
 		if ck.Message != nil && len(ck.Message.ToolCalls) > 0 {
+			unique := make([]OllamaToolCall, 0, len(ck.Message.ToolCalls))
+			for _, tc := range ck.Message.ToolCalls {
+				args, _ := common.Marshal(tc.Function.Arguments)
+				key := tc.ID + "\x00" + tc.Function.Name + "\x00" + string(args)
+				if tc.ID != "" {
+					if _, exists := seenToolCalls[key]; exists {
+						continue
+					}
+					seenToolCalls[key] = struct{}{}
+				}
+				unique = append(unique, tc)
+			}
+			if toolCallIndex+len(unique) > maxOllamaToolCalls {
+				return nil, nil, fmt.Errorf("ollama response contains too many tool calls (limit %d)", maxOllamaToolCalls)
+			}
 			var converted []dto.ToolCallResponse
-			converted, toolCallIndex = ollamaToolCallsToOpenAI(ck.Message.ToolCalls, toolCallIndex, false)
+			converted, toolCallIndex = ollamaToolCallsToOpenAI(unique, toolCallIndex, false)
 			toolCalls = append(toolCalls, converted...)
 		}
 	}
@@ -309,6 +346,9 @@ func parseOllamaChatResponse(body []byte, info *relaycommon.RelayInfo) (*dto.Ope
 			}
 			aggContent.WriteString(single.Message.Content)
 			if len(single.Message.ToolCalls) > 0 {
+				if len(single.Message.ToolCalls) > maxOllamaToolCalls {
+					return nil, nil, fmt.Errorf("ollama response contains too many tool calls (limit %d)", maxOllamaToolCalls)
+				}
 				var converted []dto.ToolCallResponse
 				converted, toolCallIndex = ollamaToolCallsToOpenAI(single.Message.ToolCalls, toolCallIndex, false)
 				toolCalls = append(toolCalls, converted...)
@@ -329,7 +369,7 @@ func parseOllamaChatResponse(body []byte, info *relaycommon.RelayInfo) (*dto.Ope
 	if finishReason == "" {
 		finishReason = "stop"
 	}
-	if len(toolCalls) > 0 {
+	if finishReason == "stop" && len(toolCalls) > 0 {
 		finishReason = constant.FinishReasonToolCalls
 	}
 

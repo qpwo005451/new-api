@@ -120,6 +120,7 @@ func ollamaResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 	usage := &dto.Usage{}
 	var model = info.UpstreamModelName
 	var toolCallIndex int
+	seenToolCalls := make(map[string]struct{})
 	finishReason := constant.FinishReasonStop
 
 	for scanner.Scan() && streamErr == nil {
@@ -138,7 +139,11 @@ func ollamaResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 		created = toUnix(chunk.CreatedAt)
 
 		if !chunk.Done {
-			delta, nextToolCallIndex := buildOllamaChatStreamDelta(chunk, model, responseID, created, toolCallIndex)
+			delta, nextToolCallIndex, err := buildOllamaChatStreamDelta(chunk, model, responseID, created, toolCallIndex, seenToolCalls)
+			if err != nil {
+				streamErr = types.NewOpenAIError(err, types.ErrorCode("ollama_tool_call_limit"), http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+				break
+			}
 			toolCallIndex = nextToolCallIndex
 			if !sendChatChunk(&delta) {
 				break
@@ -153,7 +158,7 @@ func ollamaResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 		if chunk.DoneReason != "" {
 			finishReason = chunk.DoneReason
 		}
-		if toolCallIndex > 0 {
+		if finishReason == constant.FinishReasonStop && toolCallIndex > 0 {
 			finishReason = constant.FinishReasonToolCalls
 		}
 		if !sendChatChunk(helper.GenerateStopResponse(responseID, created, model, finishReason)) {

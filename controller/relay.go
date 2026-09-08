@@ -105,6 +105,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				c.Writer.Header().Del("X-Accel-Buffering")
 				c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 			}
+			if newAPIError.GetErrorCode() == types.ErrorCode("ollama_tool_call_limit") && c.Writer.Written() {
+				writeOllamaToolLimitStream(c, relayFormat, newAPIError)
+				return
+			}
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:
 				helper.WssError(c, ws, newAPIError.ToOpenAIError())
@@ -947,4 +951,22 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *taskdto.TaskEr
 		return false
 	}
 	return true
+}
+
+func writeOllamaToolLimitStream(c *gin.Context, format types.RelayFormat, apiErr *types.NewAPIError) {
+	openAIError := apiErr.ToOpenAIError()
+	var payload any = gin.H{"error": openAIError}
+	if format == types.RelayFormatOpenAIResponses {
+		payload = gin.H{"type": "error", "code": openAIError.Code, "message": openAIError.Message, "param": nil}
+	}
+	data, err := common.Marshal(payload)
+	if err != nil {
+		return
+	}
+	helper.ExtendWriteDeadline(c)
+	if format == types.RelayFormatOpenAIResponses {
+		_, _ = fmt.Fprint(c.Writer, "event: error\n")
+	}
+	_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", data)
+	c.Writer.Flush()
 }

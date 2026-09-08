@@ -20,10 +20,11 @@ $toolchainRoot = if ($env:LOCAL_TOOLCHAIN_ROOT) {
 } else {
     [System.IO.Path]::GetFullPath((Join-Path $repoRoot '.local-tools'))
 }
-$bash = if ($env:GIT_BASH) { $env:GIT_BASH } else { 'C:\Program Files\Git\bin\bash.exe' }
-$fileBin = if ($env:FILE_BIN) { $env:FILE_BIN } else { 'C:\Program Files\Git\usr\bin\file.exe' }
-$go = Join-Path $toolchainRoot 'go\bin\go.exe'
-$bun = Join-Path $toolchainRoot 'bun\bun.exe'
+$windowsHost = $env:OS -eq 'Windows_NT'
+$bash = if ($env:GIT_BASH) { $env:GIT_BASH } elseif ($windowsHost) { 'C:\Program Files\Git\bin\bash.exe' } else { '/usr/bin/bash' }
+$fileBin = if ($env:FILE_BIN) { $env:FILE_BIN } elseif ($windowsHost) { 'C:\Program Files\Git\usr\bin\file.exe' } else { '/usr/bin/file' }
+$go = Join-Path $toolchainRoot $(if ($windowsHost) { 'go/bin/go.exe' } else { 'go/bin/go' })
+$bun = Join-Path $toolchainRoot $(if ($windowsHost) { 'bun/bun.exe' } else { 'bun/bun' })
 $buildScript = Join-Path $scriptRoot 'build_release_candidate.sh'
 $releasesRoot = [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'releases'))
 $releaseRoot = [System.IO.Path]::GetFullPath((Join-Path $releasesRoot $ReleaseId))
@@ -144,7 +145,7 @@ $env:BUN_INSTALL_CACHE_DIR = $bunCacheRoot.Replace('\', '/')
 $env:FRONTEND_CACHE_ROOT = $frontendCacheRoot.Replace('\', '/')
 
 $escapedBuildScript = $buildScript.Replace("'", "'\''")
-$unixBuildScript = (& $bash -lc "cygpath -u '$escapedBuildScript'").Trim()
+$unixBuildScript = if ($windowsHost) { (& $bash -lc "cygpath -u '$escapedBuildScript'").Trim() } else { $buildScript }
 if (-not $unixBuildScript) {
     throw 'Failed to resolve the release build script for Git Bash'
 }

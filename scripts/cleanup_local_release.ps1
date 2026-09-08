@@ -98,7 +98,14 @@ function Invoke-GitWithTimeout {
         [string]$Description
     )
 
-    $process = Start-Process -FilePath 'git.exe' -ArgumentList $Arguments -PassThru -WindowStyle Hidden
+    $startOptions = @{ ArgumentList = $Arguments; PassThru = $true }
+    if ($env:OS -eq 'Windows_NT') {
+        $startOptions.FilePath = 'git.exe'
+        $startOptions.WindowStyle = 'Hidden'
+    } else {
+        $startOptions.FilePath = 'git'
+    }
+    $process = Start-Process @startOptions
     if (-not $process.WaitForExit(60000)) {
         try {
             $process.Kill($true)

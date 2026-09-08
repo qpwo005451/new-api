@@ -136,6 +136,12 @@ unset PORT SQL_DSN LOG_SQL_DSN SQLITE_PATH
 source "$env_path"
 set +a
 
+# Candidate must not share the production cache or execute master-only jobs.
+export NODE_TYPE=slave
+export REDIS_CONN_STRING=
+export ENABLE_PPROF=false
+export BATCH_UPDATE_ENABLED=false
+
 cd "$runtime_root"
 nohup "$candidate_bin" --port 4003 >"$log_path" 2>&1 &
 printf '%s\n' "$!" > "$pid_path"

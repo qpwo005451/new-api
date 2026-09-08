@@ -28,3 +28,23 @@ Action class: `prepare` + candidate `verify` (standard scope, staging only — n
 ## Next Safe Action
 - Human review of the `input-baseline` matrix entry and the host checkout risk.
 - On explicit confirmation, `cutover` release `2026-09-08-rc01`, then `finalize_release.sh 2026-09-08-rc01` + local release cleanup after stability.
+
+
+## Follow-up — same-day hotfix reconciliation and unified cutover (rc02)
+
+### Hotfix reconciliation ("hotfix 并回 251 主线")
+- The host working tree carried 4 uncommitted Go-source edits (`price.go`, `price_test.go`, `stream_scanner.go`, `responses_handler.go`). Investigation showed they are STALE duplicates of work already migrated into `prod/251` via `03aee639f feat: migrate prod 251 source customizations` (input-channel billing alias incl. `inputBillingAliasModels` superset, tiered `priceModelName` plumbing, single clean `filterImageGenerationTool`); the stream-scanner ping timeout was superseded by the upstream rework (configurable ping interval + 30s write deadline). Applying them onto `prod/251` would not even compile (references removed `ratio_setting.CompactModelSuffix`; `responses_handler.go` contained a tripled `filterImageGenerationTool` definition). No Go-source merge was needed; the intent is fully covered by `prod/251`.
+- REAL host-only deltas were in ops scripts: `scripts/channel_guard.py` and `watchdog.sh` carried n8n/Telegram notification hooks existing only on disk. Merged into `prod/251` via PR #18 (`ops: merge host-only notify hooks into channel guard and watchdog`, merge `d36f64eaf`); `watchdog.sh` intentionally keeps the hardened `WATCHDOG_KEY` check (host copy had degraded to an always-false empty check; `watchdog.env` supplies the key).
+- Host `/opt/new-api` checkout moved `main (0936e2504, dirty)` → `prod/251 (d36f64eaf, clean)`; `sync_origin_prod_251.sh` now works. All replaced host files were backed up under `/root/newapi-hotfix-backup-20260908/` (4 relay source files stashed in git stash + 18 untracked asset copies).
+
+### rc02 candidate and unified cutover
+- Release `2026-09-08-rc02` built from `prod/251` `d36f64eaf` (frontend cache hit), binary sha256 `fa9ca43e90863403472cffbed3aadd6a96212146b444f9521e1b3dad3ef2de3f`, uploaded and hash-verified.
+- rc01 candidate (PID 2970780) stopped after PID/port/binary ownership proof; rc02 staged: PID 2987941 owns 4003, `SQL_DSN=local`, runtime DB copy at `releases/2026-09-08-rc02/runtime/new-api.db`.
+- Standard-scope candidate verify: full smoke `smoke full ok` (deepseek-v4-flash, chat+responses), settings surface 200, ollama usage feature schema verified (weekly `[2026-09-07 00:00 UTC, 2026-09-14 00:00 UTC)`, monthly `[2026-09-01 00:00 CST, 2026-10-01 00:00 CST)`), snapshot ok. Note: `schema-changed.flag` set — the candidate migrates the DB copy (new tables/columns from prod/251 evolution); cutover auto-backup covers rollback.
+- `input-baseline` sample (`gpt-5.4-mini`) still FAILS (model absent from `/v1/models`) — matrix needs a human decision (unchanged finding).
+- Cutover executed with explicit operator confirmation in-thread: `scripts/cutover_release.sh 2026-09-08-rc02` → live binary sha256 matches candidate exactly, `new-api.service` active on 4002 (PID 2989000), post-cutover fast smoke `smoke fast ok: http://127.0.0.1:4002`, production settings surface 200, production `GET /api/channel/46/ollama_usage` returns the new weekly/monthly schema with snapshot ok.
+- rc01 transient runtime (DB copy/logs) removed; `releases/2026-09-08-rc0{1,2}/bin` + manifests retained on the host. rc02 runtime (cutover backup) stays until finalize.
+
+### Next safe action
+- After operator confirms production stability: `scripts/finalize_release.sh 2026-09-08-rc02` (stops the 4003 candidate, removes runtime/candidate DB, preserves binary+manifest+backup), then local `releases/2026-09-08-rc02` cleanup.
+- Human decision still pending on the stale `input-baseline` matrix entry.

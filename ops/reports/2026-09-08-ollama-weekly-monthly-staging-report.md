@@ -48,3 +48,9 @@ Action class: `prepare` + candidate `verify` (standard scope, staging only — n
 ### Next safe action
 - After operator confirms production stability: `scripts/finalize_release.sh 2026-09-08-rc02` (stops the 4003 candidate, removes runtime/candidate DB, preserves binary+manifest+backup), then local `releases/2026-09-08-rc02` cleanup.
 - Human decision still pending on the stale `input-baseline` matrix entry.
+
+### Follow-up — operator matrix decision and backup cleanup (same day)
+- Operator decision: drop `input-baseline` (`gpt-5.4-mini`) from the fixed sample matrix and pin the samples to `deepseek-v4-flash` (deepseek route) and `gpt-oss:20b` (ollama cloud channel). `gpt-oss:20b` was validated on the rc02 staging candidate first (full smoke, chat + responses both 200) before recording. Committed to `prod/251` (`d4c99373c`) in both `ops/codex/newapi-prod-upgrade-251/references/channel-samples.md` and `ops/instance/251/channel-samples.md`.
+- rc02 finalized: `scripts/finalize_release.sh 2026-09-08-rc02` (live binary hash matched manifest, 4003 candidate PID 2987941 stopped, candidate runtime removed, `finalized.env` written).
+- Backup cleanup per explicit operator instruction: removed the cutover rollback backups (`live-new-api.*.bak` binary + DB inside `releases/2026-09-08-rc02/runtime/`), the superseded `releases/2026-09-08-rc01/` release dir, `/root/newapi-hotfix-backup-20260908/`, and the host git stash holding the stale relay edits. Host `releases/` went 894M → 115M (~1.4 GB total freed with the finalize-time candidate DB copy); only the current `rc02/bin/new-api` + `manifest.env` + `finalized.env` are retained.
+- Note: with the rollback backup deleted, reverting to the pre-rc02 runtime would require rebuilding from git history; `prod/251` head is now `d4c99373c` and production runs rc02 (`fa9ca43e...`).

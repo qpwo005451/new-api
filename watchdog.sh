@@ -1,4 +1,8 @@
 #!/bin/bash
+# new-api relay health watchdog
+# Cron can run this frequently, but the script only performs a real relay check
+# when CHECK_INTERVAL_SECONDS has elapsed. It restarts new-api only after
+# FAIL_THRESHOLD consecutive transport/server failures.
 set -u
 
 ENV_FILE="/opt/new-api/watchdog.env"
@@ -16,6 +20,17 @@ MAX_TOKENS="${MAX_TOKENS:-3}"
 if [ -f "$ENV_FILE" ]; then
   . "$ENV_FILE"
 fi
+
+# --- n8n/Telegram 事件通知钩子（凭据见 /etc/ops-notify.env, root:600）---
+OPS_ENV="/etc/ops-notify.env"
+[ -f "$OPS_ENV" ] && . "$OPS_ENV"
+
+notify() { # notify <importance> <event> <subject> <description>
+  [ -n "${N8N_TOKEN:-}" ] && [ -n "${N8N_URL:-}" ] || return 0
+  curl -s -m 15 -X POST -H "X-Agent-Token: $N8N_TOKEN" -H 'Content-Type: application/json' \
+    --data "{\"type\":\"fnos-event\",\"hostname\":\"${HOST_LABEL:-newapi-251}\",\"importance\":\"$1\",\"event\":\"$2\",\"subject\":\"$3\",\"description\":\"$4\"}" \
+    "$N8N_URL" >/dev/null 2>&1 || true
+}
 
 WATCHDOG_KEY="${NEW_API_WATCHDOG_KEY:-}"
 if [ -z "$WATCHDOG_KEY" ]; then
@@ -61,18 +76,33 @@ http_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time "$REQUEST_TIMEOUT_
 
 case "$http_code" in
   2*)
+    if [ "$fail_count" -gt 0 ]; then
+      echo "$(date) | OK (HTTP $http_code), clearing $fail_count previous failure(s)"
+    else
+      echo "$(date) | OK (HTTP $http_code)"
+    fi
     printf "0\n" > "$FAIL_COUNT_FILE"
     ;;
   000|500|502|503|504|"")
     fail_count=$((fail_count + 1))
     printf "%s\n" "$fail_count" > "$FAIL_COUNT_FILE"
+    echo "$(date) | FAIL $fail_count/$FAIL_THRESHOLD (HTTP ${http_code:-empty})"
     if [ "$fail_count" -ge "$FAIL_THRESHOLD" ]; then
+      echo "$(date) | RELAY HUNG after $fail_count consecutive failures. Restarting..."
       printf "0\n" > "$FAIL_COUNT_FILE"
       systemctl restart new-api
       sleep 5
+      after_restart=$(curl -s -o /dev/null -w "%{http_code}" --max-time "$REQUEST_TIMEOUT_SECONDS" \
+        "$URL" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $WATCHDOG_KEY" \
+        -d "$payload" 2>/dev/null || true)
+      echo "$(date) | After restart: HTTP ${after_restart:-empty}"
+      notify alert "newapi-auto-restart" "new-api 已自动重启" "连续 $fail_count 次探测失败触发重启；重启后探测 HTTP ${after_restart:-无响应}（服务中断已发生）"
     fi
     ;;
   *)
+    echo "$(date) | WARN non-restart HTTP $http_code"
     printf "0\n" > "$FAIL_COUNT_FILE"
     ;;
 esac

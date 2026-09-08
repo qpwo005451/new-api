@@ -18,6 +18,51 @@ LEGACY_INPUT_STATE_PATH = Path("/opt/new-api/data/input_budget_guard_state.json"
 DEFAULT_QUOTA_PER_UNIT = 500000.0
 DEFAULT_INPUT_CHANNEL_ID = 9
 DEFAULT_INPUT_BUDGET_USD = 300.0
+OPS_ENV_PATH = Path("/etc/ops-notify.env")
+
+
+def _load_ops_env(path: Path = OPS_ENV_PATH) -> dict[str, str]:
+    """cron 环境无 shell source，自行解析 KEY=VALUE（不覆盖已有环境变量）"""
+    out: dict[str, str] = {}
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            out.setdefault(k.strip(), v.strip())
+    except OSError:
+        pass
+    return out
+
+
+def notify_transition(channel_id: int, name: str, enabled: bool, reason: str | None) -> None:
+    """渠道启用状态变化 → n8n 中继 → Telegram；通知失败绝不阻塞主流程"""
+    cfg = _load_ops_env()
+    for k in ("N8N_TOKEN", "N8N_URL", "HOST_LABEL"):
+        v = os.environ.get(k)
+        if v:
+            cfg[k] = v   # 仅非空环境变量才覆盖文件值
+    token, url = cfg.get("N8N_TOKEN", ""), cfg.get("N8N_URL", "")
+    if not token or not url:
+        return
+    host = cfg.get("HOST_LABEL") or "newapi-251"
+    payload = {
+        "type": "fnos-event", "hostname": host,
+        "importance": "normal" if enabled else "warning",
+        "event": "channel-auto-enabled" if enabled else "channel-auto-disabled",
+        "subject": f"LLM渠道{'恢复' if enabled else '自动禁用'}: {name} (id={channel_id})",
+        "description": reason or ("input daily budget guard" if enabled else ""),
+    }
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json", "X-Agent-Token": token},
+        )
+        urllib.request.urlopen(req, timeout=15).read()
+    except Exception as exc:  # noqa: BLE001 — 通知属旁路，失败仅记日志
+        print(f"notify_transition failed for channel {channel_id}: {exc}", file=sys.stderr)
 CONSUME_LOG_TYPE = 2
 ERROR_LOG_TYPE = 5
 CHANNEL_STATUS_ENABLED = 1
@@ -162,6 +207,12 @@ def set_channel_enabled(
                 info = parsed
         except json.JSONDecodeError:
             info = {}
+
+    # 仅在真实状态翻转时通知（调用方可能重复调用）
+    prev_row = conn.execute("select status, name from channels where id = ?", (channel_id,)).fetchone()
+    if prev_row is not None and prev_row[0] != status:
+        notify_transition(channel_id, prev_row[1] if len(prev_row) > 1 else f"id={channel_id}", enabled, None if enabled else (reason or "input daily budget guard"))
+
     if enabled:
         info.pop("status_reason", None)
         info.pop("status_time", None)

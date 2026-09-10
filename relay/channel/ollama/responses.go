@@ -28,9 +28,12 @@ func ollamaResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	}
 	logger.LogDebug(c, "ollama responses response body: %s", body)
 
-	full, usage, err := parseOllamaChatResponse(body, info)
+	full, usage, truncated, err := parseOllamaChatResponse(body, info)
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	}
+	if truncated {
+		logger.LogWarn(c, fmt.Sprintf("ollama response contains too many tool calls (limit %d); response truncated", maxOllamaToolCalls))
 	}
 	if responseID := helper.GetResponseID(c); responseID != "" {
 		full.Id = responseID
@@ -122,6 +125,7 @@ func ollamaResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 	var toolCallIndex int
 	seenToolCalls := make(map[string]struct{})
 	finishReason := constant.FinishReasonStop
+	truncated := false
 
 	for scanner.Scan() && streamErr == nil {
 		line := strings.TrimSpace(scanner.Text())
@@ -139,14 +143,23 @@ func ollamaResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 		created = toUnix(chunk.CreatedAt)
 
 		if !chunk.Done {
-			delta, nextToolCallIndex, err := buildOllamaChatStreamDelta(chunk, model, responseID, created, toolCallIndex, seenToolCalls)
-			if err != nil {
-				streamErr = types.NewOpenAIError(err, types.ErrorCode("ollama_tool_call_limit"), http.StatusBadGateway, types.ErrOptionWithSkipRetry())
-				break
+			if truncated {
+				// Drain remaining frames so the done frame still provides usage
+				// for billing; nothing further is forwarded to the client.
+				continue
 			}
+			delta, nextToolCallIndex, limitHit := buildOllamaChatStreamDelta(chunk, model, responseID, created, toolCallIndex, seenToolCalls)
 			toolCallIndex = nextToolCallIndex
 			if !sendChatChunk(&delta) {
 				break
+			}
+			if limitHit {
+				truncated = true
+				logger.LogWarn(c, fmt.Sprintf("ollama response contains too many tool calls (limit %d); stream truncated", maxOllamaToolCalls))
+				finishReason = constant.FinishReasonToolCalls
+				if !sendChatChunk(helper.GenerateStopResponse(responseID, created, model, finishReason)) {
+					break
+				}
 			}
 			continue
 		}
@@ -155,6 +168,9 @@ func ollamaResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 		usage.PromptTokens = chunk.PromptEvalCount
 		usage.CompletionTokens = chunk.EvalCount
 		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+		if truncated {
+			break
+		}
 		if chunk.DoneReason != "" {
 			finishReason = chunk.DoneReason
 		}

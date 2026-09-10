@@ -101,7 +101,7 @@ func TestOllamaChatHandlerNonStreamToolCalls(t *testing.T) {
 
 func TestParseOllamaChatResponsePreservesLengthWithToolCalls(t *testing.T) {
 	body := []byte(`{"model":"x","message":{"role":"assistant","tool_calls":[{"id":"c1","function":{"name":"f","arguments":{}}}]},"done":true,"done_reason":"length","prompt_eval_count":1,"eval_count":2}`)
-	out, _, err := parseOllamaChatResponse(body, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "x"}})
+	out, _, _, err := parseOllamaChatResponse(body, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "x"}})
 	require.NoError(t, err)
 	require.Len(t, out.Choices, 1)
 	assert.Equal(t, "length", out.Choices[0].FinishReason)
@@ -111,26 +111,82 @@ func TestParseOllamaChatResponseDoesNotDuplicateRepeatedToolCallFrames(t *testin
 	body := []byte(`{"model":"x","message":{"role":"assistant","tool_calls":[{"id":"c1","function":{"name":"f","arguments":{"a":1}}}]}}
 {"model":"x","message":{"role":"assistant","tool_calls":[{"id":"c1","function":{"name":"f","arguments":{"a":1}}}]}}
 {"model":"x","done":true,"done_reason":"stop"}`)
-	out, _, err := parseOllamaChatResponse(body, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "x"}})
+	out, _, _, err := parseOllamaChatResponse(body, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "x"}})
 	require.NoError(t, err)
 	var calls []dto.ToolCallResponse
 	require.NoError(t, common.Unmarshal(out.Choices[0].Message.ToolCalls, &calls))
 	require.Len(t, calls, 1)
 }
 
-func TestOllamaStreamHandlerRejectsExcessiveToolCalls(t *testing.T) {
+func TestParseOllamaChatResponseDedupesNoIDToolCallFrames(t *testing.T) {
+	body := []byte(`{"model":"x","message":{"role":"assistant","tool_calls":[{"function":{"name":"f","arguments":{"a":1}}}]}}
+{"model":"x","message":{"role":"assistant","tool_calls":[{"function":{"name":"f","arguments":{"a":1}}}]}}
+{"model":"x","message":{"role":"assistant","tool_calls":[{"function":{"name":"f","arguments":{"a":1}}}]}}
+{"model":"x","done":true,"done_reason":"stop"}`)
+	out, _, truncated, err := parseOllamaChatResponse(body, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "x"}})
+	require.NoError(t, err)
+	assert.False(t, truncated)
+	var calls []dto.ToolCallResponse
+	require.NoError(t, common.Unmarshal(out.Choices[0].Message.ToolCalls, &calls))
+	require.Len(t, calls, 1)
+	assert.Equal(t, "call_0", calls[0].ID)
+}
+
+func TestParseOllamaChatResponseTruncatesExcessiveToolCalls(t *testing.T) {
+	calls := make([]string, maxOllamaToolCalls+5)
+	for i := range calls {
+		calls[i] = `{"function":{"name":"f","arguments":{"i":` + fmt.Sprint(i) + `}}}`
+	}
+	body := []byte(`{"model":"x","message":{"role":"assistant","tool_calls":[` + strings.Join(calls, ",") + `]}}` + "\n" + `{"model":"x","done":true,"done_reason":"stop","prompt_eval_count":11,"eval_count":13}`)
+	out, usage, truncated, err := parseOllamaChatResponse(body, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "x"}})
+	require.NoError(t, err)
+	assert.True(t, truncated)
+	require.NotNil(t, usage)
+	var converted []dto.ToolCallResponse
+	require.NoError(t, common.Unmarshal(out.Choices[0].Message.ToolCalls, &converted))
+	assert.Len(t, converted, maxOllamaToolCalls)
+	assert.Equal(t, constant.FinishReasonToolCalls, out.Choices[0].FinishReason)
+}
+
+func TestOllamaStreamHandlerTruncatesExcessiveToolCalls(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	items := make([]string, maxOllamaToolCalls+1)
+	items := make([]string, maxOllamaToolCalls+5)
 	for i := range items {
-		items[i] = `{"id":"c` + fmt.Sprint(i) + `","function":{"name":"f","arguments":{}}}`
+		items[i] = `{"function":{"name":"f","arguments":{"i":` + fmt.Sprint(i) + `}}}`
 	}
-	body := `{"model":"x","message":{"role":"assistant","tool_calls":[` + strings.Join(items, ",") + `]}}` + "\n" + `{"model":"x","done":true,"done_reason":"stop"}`
+	body := `{"model":"x","message":{"role":"assistant","tool_calls":[` + strings.Join(items, ",") + `]}}` + "\n" + `{"model":"x","done":true,"done_reason":"stop","prompt_eval_count":11,"eval_count":13}`
 	resp := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
-	_, apiErr := ollamaStreamHandler(c, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "x"}}, resp)
-	require.NotNil(t, apiErr)
-	assert.Contains(t, apiErr.Error(), "too many tool calls")
+	usage, apiErr := ollamaStreamHandler(c, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "x"}}, resp)
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	assert.Equal(t, 11, usage.PromptTokens)
+	assert.Equal(t, 13, usage.CompletionTokens)
+	out := w.Body.String()
+	assert.Equal(t, maxOllamaToolCalls, strings.Count(out, `"name":"f"`))
+	assert.Equal(t, 1, strings.Count(out, `"finish_reason":"tool_calls"`))
+	assert.Contains(t, out, "[DONE]")
+}
+
+func TestOllamaStreamHandlerDedupesRepeatedNoIDToolCallFrames(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	items := make([]string, 130)
+	for i := range items {
+		items[i] = `{"function":{"name":"f","arguments":{"a":1}}}`
+	}
+	body := `{"model":"x","message":{"role":"assistant","tool_calls":[` + strings.Join(items, ",") + `]}}` + "\n" + `{"model":"x","done":true,"done_reason":"stop","prompt_eval_count":3,"eval_count":5}`
+	resp := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
+	usage, apiErr := ollamaStreamHandler(c, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "x"}}, resp)
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	assert.Equal(t, 3, usage.PromptTokens)
+	assert.Equal(t, 5, usage.CompletionTokens)
+	out := w.Body.String()
+	assert.Equal(t, 1, strings.Count(out, `"name":"f"`))
+	assert.Contains(t, out, `"finish_reason":"tool_calls"`)
 }
 
 func TestOllamaStreamHandlerPreservesLengthWithToolCalls(t *testing.T) {
@@ -147,32 +203,50 @@ func TestOllamaStreamHandlerPreservesLengthWithToolCalls(t *testing.T) {
 	assert.NotContains(t, w.Body.String(), `"finish_reason":"tool_calls"`)
 }
 
-func TestParseOllamaChatResponseRejectsExcessiveToolCalls(t *testing.T) {
-	calls := make([]string, maxOllamaToolCalls+1)
-	for i := range calls {
-		calls[i] = `{"id":"c` + fmt.Sprint(i) + `","function":{"name":"f","arguments":{}}}`
-	}
-	body := []byte(`{"model":"x","message":{"role":"assistant","tool_calls":[` + strings.Join(calls, ",") + `]}}
-{"model":"x","done":true,"done_reason":"stop"}`)
-	_, _, err := parseOllamaChatResponse(body, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "x"}})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "too many tool calls")
-}
-
-func TestOllamaStreamToolCallBudgetAcrossFrames(t *testing.T) {
+func TestBuildOllamaChatStreamDeltaDedupesNoIDRepeatedCalls(t *testing.T) {
 	seen := make(map[string]struct{})
 	var chunk ollamaChatStreamChunk
-	require.NoError(t, common.Unmarshal([]byte(`{"message":{"tool_calls":[{"function":{"name":"f","arguments":{}}}]}}`), &chunk))
-	index := 0
-	for i := 0; i < 128; i++ {
-		delta, next, err := buildOllamaChatStreamDelta(chunk, "x", "response", 1, index, seen)
-		require.NoError(t, err)
+	require.NoError(t, common.Unmarshal([]byte(`{"message":{"tool_calls":[{"function":{"name":"f","arguments":{"a":1}}}]}}`), &chunk))
+	delta, next, truncated := buildOllamaChatStreamDelta(chunk, "x", "response", 1, 0, seen)
+	require.False(t, truncated)
+	require.Len(t, delta.Choices[0].Delta.ToolCalls, 1)
+	assert.Equal(t, 1, next)
+
+	// Cumulative upstream frames repeat the same call without an id and must collapse.
+	delta, next, truncated = buildOllamaChatStreamDelta(chunk, "x", "response", 1, next, seen)
+	require.False(t, truncated)
+	assert.Empty(t, delta.Choices[0].Delta.ToolCalls)
+	assert.Equal(t, 1, next)
+}
+
+func TestBuildOllamaChatStreamDeltaKeepsDistinctNoIDCalls(t *testing.T) {
+	seen := make(map[string]struct{})
+	var first, second ollamaChatStreamChunk
+	require.NoError(t, common.Unmarshal([]byte(`{"message":{"tool_calls":[{"function":{"name":"f","arguments":{"a":1}}}]}}`), &first))
+	require.NoError(t, common.Unmarshal([]byte(`{"message":{"tool_calls":[{"function":{"name":"f","arguments":{"a":2}}}]}}`), &second))
+	delta, next, truncated := buildOllamaChatStreamDelta(first, "x", "response", 1, 0, seen)
+	require.False(t, truncated)
+	require.Len(t, delta.Choices[0].Delta.ToolCalls, 1)
+	delta, next, truncated = buildOllamaChatStreamDelta(second, "x", "response", 1, next, seen)
+	require.False(t, truncated)
+	require.Len(t, delta.Choices[0].Delta.ToolCalls, 1)
+	assert.Equal(t, 2, next)
+}
+
+func TestBuildOllamaChatStreamDeltaTruncatesAtLimit(t *testing.T) {
+	seen := make(map[string]struct{})
+	for i := 0; i < maxOllamaToolCalls; i++ {
+		var chunk ollamaChatStreamChunk
+		require.NoError(t, common.Unmarshal([]byte(`{"message":{"tool_calls":[{"function":{"name":"f","arguments":{"i":`+fmt.Sprint(i)+`}}}]}}`), &chunk))
+		delta, next, truncated := buildOllamaChatStreamDelta(chunk, "x", "response", 1, i, seen)
+		require.False(t, truncated)
 		require.Len(t, delta.Choices[0].Delta.ToolCalls, 1)
 		assert.Equal(t, i+1, next)
-		index = next
 	}
-	delta, next, err := buildOllamaChatStreamDelta(chunk, "x", "response", 1, index, seen)
-	require.ErrorContains(t, err, "too many tool calls")
-	assert.Equal(t, index, next)
+	var chunk ollamaChatStreamChunk
+	require.NoError(t, common.Unmarshal([]byte(`{"message":{"tool_calls":[{"function":{"name":"f","arguments":{"i":`+fmt.Sprint(maxOllamaToolCalls)+`}}}]}}`), &chunk))
+	delta, next, truncated := buildOllamaChatStreamDelta(chunk, "x", "response", 1, maxOllamaToolCalls, seen)
+	require.True(t, truncated)
 	assert.Empty(t, delta.Choices[0].Delta.ToolCalls)
+	assert.Equal(t, maxOllamaToolCalls, next)
 }

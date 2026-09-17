@@ -15,7 +15,7 @@ func TestValidateOptionValueRejectsInvalidVirtualModelRoutes(t *testing.T) {
 	))
 	assert.NoError(t, validateOptionValue(
 		key,
-		`{"auto-free":{"rotation":"round_robin","max_attempts":3,"targets":[{"model":"gpt-5.6-luna"},{"model":"nvidia/nemotron-3-super-120b-a12b"}]}}`,
+		`{"auto-free":{"rotation":"round_robin","max_attempts":3,"health":{"enabled":true,"failure_threshold":2,"cooldown_seconds":60},"targets":[{"model":"gpt-5.6-luna"},{"model":"nvidia/nemotron-3-super-120b-a12b"}]}}`,
 	))
 	assert.Error(t, validateOptionValue(key, `{"auto-subagent":[]}`))
 	assert.Error(t, validateOptionValue(key, `{"auto-free":{"rotation":"shuffle","targets":[{"model":"gpt-5.6-luna"}]}}`))

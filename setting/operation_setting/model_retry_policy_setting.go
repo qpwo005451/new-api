@@ -22,13 +22,52 @@ type VirtualModelRouteTarget struct {
 	ReasoningEffortMap map[string]string `json:"reasoning_effort_map,omitempty"`
 }
 
+// Health policy defaults for routes that enable availability based selection.
+const (
+	DefaultVirtualModelRouteFailureThreshold = 2
+	DefaultVirtualModelRouteCooldownSeconds  = 60
+	DefaultVirtualModelRouteMaxCooldownSecs  = 600
+)
+
+// VirtualModelRouteHealth turns observed failures into a cooldown, so a pool
+// entry that stopped serving is used only after the healthy entries were tried.
+// The signal comes from relayed traffic; no probe or extra request is issued.
+type VirtualModelRouteHealth struct {
+	Enabled            bool `json:"enabled"`
+	FailureThreshold   int  `json:"failure_threshold,omitempty"`
+	CooldownSeconds    int  `json:"cooldown_seconds,omitempty"`
+	MaxCooldownSeconds int  `json:"max_cooldown_seconds,omitempty"`
+}
+
+// Normalize fills the documented defaults so callers read concrete values.
+func (health VirtualModelRouteHealth) Normalize() VirtualModelRouteHealth {
+	if !health.Enabled {
+		return health
+	}
+	if health.FailureThreshold <= 0 {
+		health.FailureThreshold = DefaultVirtualModelRouteFailureThreshold
+	}
+	if health.CooldownSeconds <= 0 {
+		health.CooldownSeconds = DefaultVirtualModelRouteCooldownSeconds
+	}
+	if health.MaxCooldownSeconds <= 0 {
+		health.MaxCooldownSeconds = DefaultVirtualModelRouteMaxCooldownSecs
+	}
+	if health.MaxCooldownSeconds < health.CooldownSeconds {
+		health.MaxCooldownSeconds = health.CooldownSeconds
+	}
+	return health
+}
+
 // VirtualModelRoute describes one virtual model: the upstream models a request
-// may be sent to, how the first attempt picks a target, and how many pool
-// entries a single request may try. A bare target array is still accepted,
-// which is the ordered form without an attempt limit.
+// may be sent to, how the first attempt picks a target, how many pool entries a
+// single request may try, and whether observed failures move an entry to the
+// back of the pool. A bare target array is still accepted, which is the ordered
+// form without an attempt limit.
 type VirtualModelRoute struct {
 	Rotation    string                    `json:"rotation,omitempty"`
 	MaxAttempts int                       `json:"max_attempts,omitempty"`
+	Health      VirtualModelRouteHealth   `json:"health,omitempty"`
 	Targets     []VirtualModelRouteTarget `json:"targets"`
 }
 
@@ -95,7 +134,11 @@ func GetVirtualModelRoute(modelName string) VirtualModelRoute {
 			continue
 		}
 		// Return a copy so routing never mutates the registered configuration.
-		routed := VirtualModelRoute{Rotation: route.Rotation, MaxAttempts: route.MaxAttempts}
+		routed := VirtualModelRoute{
+			Rotation:    route.Rotation,
+			MaxAttempts: route.MaxAttempts,
+			Health:      route.Health.Normalize(),
+		}
 		routed.Targets = make([]VirtualModelRouteTarget, 0, len(route.Targets))
 		for _, target := range route.Targets {
 			effortMap := make(map[string]string, len(target.ReasoningEffortMap))
@@ -144,6 +187,9 @@ func ValidateVirtualModelRoutes(value string) error {
 		}
 		if route.MaxAttempts < 0 {
 			return fmt.Errorf("virtual model %q cannot have a negative max_attempts", virtualModel)
+		}
+		if route.Health.FailureThreshold < 0 || route.Health.CooldownSeconds < 0 || route.Health.MaxCooldownSeconds < 0 {
+			return fmt.Errorf("virtual model %q has a negative health value", virtualModel)
 		}
 		for index, target := range route.Targets {
 			if strings.TrimSpace(target.Model) == "" {

@@ -52,8 +52,19 @@ func TestValidateVirtualModelRoutes(t *testing.T) {
 	assert.NoError(t, ValidateVirtualModelRoutes(`{"auto-free":{"rotation":"round_robin","max_attempts":3,"targets":[{"model":"gpt-5.6-luna"}]}}`))
 	assert.Error(t, ValidateVirtualModelRoutes(`{"auto-subagent":[]}`))
 	assert.Error(t, ValidateVirtualModelRoutes(`{"auto-subagent":[{"model":""}]}`))
+	assert.NoError(t, ValidateVirtualModelRoutes(`{"auto-free":{"rotation":"random","health":{"enabled":true,"failure_threshold":1,"cooldown_seconds":30,"max_cooldown_seconds":300},"targets":[{"model":"gpt-5.6-luna"}]}}`))
 	assert.Error(t, ValidateVirtualModelRoutes(`{"auto-free":{"rotation":"shuffle","targets":[{"model":"gpt-5.6-luna"}]}}`))
 	assert.Error(t, ValidateVirtualModelRoutes(`{"auto-free":{"max_attempts":-1,"targets":[{"model":"gpt-5.6-luna"}]}}`))
+	assert.Error(t, ValidateVirtualModelRoutes(`{"auto-free":{"health":{"enabled":true,"cooldown_seconds":-1},"targets":[{"model":"gpt-5.6-luna"}]}}`))
+}
+
+func TestVirtualModelRouteHealthNormalizeFillsDefaults(t *testing.T) {
+	health := VirtualModelRouteHealth{Enabled: true, CooldownSeconds: 90, MaxCooldownSeconds: 10}.Normalize()
+	assert.Equal(t, DefaultVirtualModelRouteFailureThreshold, health.FailureThreshold)
+	assert.Equal(t, 90, health.CooldownSeconds)
+	assert.Equal(t, 90, health.MaxCooldownSeconds, "a maximum below the base cooldown is raised to it")
+
+	assert.Equal(t, VirtualModelRouteHealth{}, VirtualModelRouteHealth{}.Normalize(), "a disabled policy stays untouched")
 }
 
 func TestVirtualModelRouteAcceptsLegacyArrayAndObjectForms(t *testing.T) {

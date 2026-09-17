@@ -365,6 +365,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		if newAPIError == nil {
 			relayInfo.LastError = nil
+			service.RecordVirtualRouteSuccess(c, channel.Id, relayInfo.OriginModelName)
 			service.ReportOpenCodeRouteFeedback(relayInfo, true)
 			return
 		}
@@ -412,6 +413,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			relayInfo.LastError = newAPIError
 			willRetry = false
 		}
+		service.RecordVirtualRouteFailure(c, channel.Id, relayInfo.OriginModelName, newAPIError.StatusCode)
 		processChannelError(
 			c,
 			*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),

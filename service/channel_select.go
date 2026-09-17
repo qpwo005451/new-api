@@ -2,7 +2,11 @@ package service
 
 import (
 	"errors"
+	"math/rand"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -12,20 +16,28 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// virtualRouteRotationCounters holds the round_robin position of each virtual
+// model, keyed by the lowercased model name.
+var virtualRouteRotationCounters sync.Map
+
 type RetryParam struct {
-	Ctx          *gin.Context
-	TokenGroup   string
-	ModelName    string
-	RequestPath  string
-	Retry        *int
-	virtualRoute []virtualRouteCandidate
-	virtualReady bool
-	virtualErr   error
-	resetNextTry bool
+	Ctx            *gin.Context
+	TokenGroup     string
+	ModelName      string
+	RequestPath    string
+	Retry          *int
+	virtualRoute   []virtualRouteCandidate
+	virtualReady   bool
+	virtualErr     error
+	virtualOffset  int
+	virtualLimit   int
+	virtualHealthy int
+	resetNextTry   bool
 }
 
 type virtualRouteCandidate struct {
 	channel         *model.Channel
+	virtualModel    string
 	upstreamModel   string
 	reasoningEffort string
 	group           string
@@ -59,10 +71,10 @@ func (p *RetryParam) ResetRetryNextTry() {
 
 func (p *RetryParam) RetryLimit(defaultLimit int) int {
 	if err := p.prepareVirtualRoute(); err == nil && p.virtualReady {
-		if len(p.virtualRoute) == 0 {
+		if p.virtualLimit == 0 {
 			return 0
 		}
-		return len(p.virtualRoute) - 1
+		return p.virtualLimit - 1
 	}
 	return defaultLimit
 }
@@ -72,7 +84,7 @@ func (p *RetryParam) prepareVirtualRoute() error {
 		return p.virtualErr
 	}
 	route := operation_setting.GetVirtualModelRoute(p.ModelName)
-	if len(route) == 0 {
+	if !route.HasPool() {
 		return nil
 	}
 
@@ -86,39 +98,89 @@ func (p *RetryParam) prepareVirtualRoute() error {
 			return p.virtualErr
 		}
 	}
-	reasoningEffort := getRequestReasoningEffort(p.Ctx)
-	for _, target := range route {
-		upstreamModel := strings.TrimSpace(target.Model)
-		if upstreamModel == "" {
-			continue
-		}
-		mappedReasoningEffort := operation_setting.MapVirtualModelReasoningEffort(target, reasoningEffort)
+	for _, entry := range virtualRoutePool(route, getRequestReasoningEffort(p.Ctx)) {
 		seenChannels := make(map[int]struct{})
 		for _, group := range groups {
-			channels, err := model.GetOrderedSatisfiedChannels(group, upstreamModel, p.RequestPath)
+			channels, err := model.GetOrderedSatisfiedChannels(group, entry.model, p.RequestPath)
 			if err != nil {
 				p.virtualErr = err
 				return err
 			}
 			for _, channel := range channels {
+				if entry.channelId != 0 && channel.Id != entry.channelId {
+					continue
+				}
 				if _, exists := seenChannels[channel.Id]; exists {
 					continue
 				}
 				seenChannels[channel.Id] = struct{}{}
 				p.virtualRoute = append(p.virtualRoute, virtualRouteCandidate{
 					channel:         channel,
-					upstreamModel:   upstreamModel,
-					reasoningEffort: mappedReasoningEffort,
+					virtualModel:    p.ModelName,
+					upstreamModel:   entry.model,
+					reasoningEffort: entry.reasoningEffort,
 					group:           group,
 				})
 			}
 		}
 	}
+	if route.Health.Enabled {
+		p.virtualHealthy = moveCoolingCandidatesLast(p.virtualRoute)
+	} else {
+		p.virtualHealthy = 0
+	}
+	p.virtualLimit = len(p.virtualRoute)
+	if route.MaxAttempts > 0 && route.MaxAttempts < p.virtualLimit {
+		p.virtualLimit = route.MaxAttempts
+	}
+	startScope := p.virtualLimit
+	if p.virtualHealthy > 0 {
+		startScope = p.virtualHealthy
+	}
+	p.virtualOffset = virtualRouteStartIndex(p.ModelName, route.RotationMode(), startScope)
 	return nil
 }
 
+// moveCoolingCandidatesLast keeps the pool order but moves entries that are
+// cooling down behind the healthy ones. It returns how many entries stayed in
+// the healthy part.
+func moveCoolingCandidatesLast(candidates []virtualRouteCandidate) int {
+	now := time.Now()
+	healthy := make([]virtualRouteCandidate, 0, len(candidates))
+	cooling := make([]virtualRouteCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		key := virtualRouteHealthKey(candidate.virtualModel, candidate.channel.Id, candidate.upstreamModel)
+		if virtualRouteHealthFor(key).isCoolingDown(now) {
+			cooling = append(cooling, candidate)
+			continue
+		}
+		healthy = append(healthy, candidate)
+	}
+	copy(candidates, append(healthy, cooling...))
+	return len(healthy)
+}
+
+// virtualRouteStartIndex picks the pool position the first attempt starts at.
+// Ordered routes always start at the head; random and round_robin spread the
+// pool across requests.
+func virtualRouteStartIndex(modelName string, rotation string, poolSize int) int {
+	if poolSize <= 1 {
+		return 0
+	}
+	switch rotation {
+	case operation_setting.VirtualModelRouteRotationRandom:
+		return rand.Intn(poolSize)
+	case operation_setting.VirtualModelRouteRotationRoundRobin:
+		counter, _ := virtualRouteRotationCounters.LoadOrStore(strings.ToLower(strings.TrimSpace(modelName)), new(uint64))
+		position := atomic.AddUint64(counter.(*uint64), 1) - 1
+		return int(position % uint64(poolSize))
+	default:
+		return 0
+	}
+}
+
 func (p *RetryParam) UsesVirtualRoute() bool {
-	return len(operation_setting.GetVirtualModelRoute(p.ModelName)) > 0
+	return len(operation_setting.GetVirtualModelRoute(p.ModelName).Targets) > 0
 }
 
 func (p *RetryParam) getVirtualRouteChannel() (*model.Channel, string, bool, error) {
@@ -128,16 +190,28 @@ func (p *RetryParam) getVirtualRouteChannel() (*model.Channel, string, bool, err
 	if !p.virtualReady {
 		return nil, p.TokenGroup, false, nil
 	}
-	if p.GetRetry() >= len(p.virtualRoute) {
+	if p.GetRetry() >= p.virtualLimit {
 		return nil, p.TokenGroup, true, model.ErrPriorityFallbackExhausted
 	}
-	candidate := p.virtualRoute[p.GetRetry()]
+	candidate := p.virtualRoute[p.virtualCandidateIndex(p.GetRetry())]
 	common.SetContextKey(p.Ctx, constant.ContextKeyVirtualUpstreamModel, candidate.upstreamModel)
 	common.SetContextKey(p.Ctx, constant.ContextKeyVirtualReasoningEffort, candidate.reasoningEffort)
 	if p.TokenGroup == "auto" {
 		common.SetContextKey(p.Ctx, constant.ContextKeyAutoGroup, candidate.group)
 	}
 	return candidate.channel, candidate.group, true, nil
+}
+
+// virtualCandidateIndex walks the healthy part of the pool first and only then
+// the entries that are cooling down.
+func (p *RetryParam) virtualCandidateIndex(retry int) int {
+	if p.virtualHealthy <= 0 || p.virtualHealthy >= len(p.virtualRoute) {
+		return (p.virtualOffset + retry) % len(p.virtualRoute)
+	}
+	if retry < p.virtualHealthy {
+		return (p.virtualOffset + retry) % p.virtualHealthy
+	}
+	return retry
 }
 
 func getRequestReasoningEffort(c *gin.Context) string {

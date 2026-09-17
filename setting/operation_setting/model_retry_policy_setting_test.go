@@ -56,6 +56,15 @@ func TestValidateVirtualModelRoutes(t *testing.T) {
 	assert.Error(t, ValidateVirtualModelRoutes(`{"auto-free":{"rotation":"shuffle","targets":[{"model":"gpt-5.6-luna"}]}}`))
 	assert.Error(t, ValidateVirtualModelRoutes(`{"auto-free":{"max_attempts":-1,"targets":[{"model":"gpt-5.6-luna"}]}}`))
 	assert.Error(t, ValidateVirtualModelRoutes(`{"auto-free":{"health":{"enabled":true,"cooldown_seconds":-1},"targets":[{"model":"gpt-5.6-luna"}]}}`))
+	assert.NoError(t, ValidateVirtualModelRoutes(`{"auto-free":{"rotation":"round_robin","max_attempts":3,"sources":[{"channel_id":5},{"channel_id":6}]}}`))
+	assert.Error(t, ValidateVirtualModelRoutes(`{"auto-free":{"sources":[{"channel_id":0}]}}`))
+	assert.Error(t, ValidateVirtualModelRoutes(`{"auto-free":{"sources":[{"channel_id":5}],"rotation":"shuffle"}}`))
+}
+
+func TestVirtualModelRouteHasPoolCoversSourcesAndTargets(t *testing.T) {
+	assert.False(t, VirtualModelRoute{}.HasPool())
+	assert.True(t, VirtualModelRoute{Sources: []VirtualModelRouteSource{{ChannelId: 5}}}.HasPool())
+	assert.True(t, VirtualModelRoute{Targets: []VirtualModelRouteTarget{{Model: "gpt-5.6-luna"}}}.HasPool())
 }
 
 func TestVirtualModelRouteHealthNormalizeFillsDefaults(t *testing.T) {

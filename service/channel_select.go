@@ -84,7 +84,7 @@ func (p *RetryParam) prepareVirtualRoute() error {
 		return p.virtualErr
 	}
 	route := operation_setting.GetVirtualModelRoute(p.ModelName)
-	if len(route.Targets) == 0 {
+	if !route.HasPool() {
 		return nil
 	}
 
@@ -98,21 +98,18 @@ func (p *RetryParam) prepareVirtualRoute() error {
 			return p.virtualErr
 		}
 	}
-	reasoningEffort := getRequestReasoningEffort(p.Ctx)
-	for _, target := range route.Targets {
-		upstreamModel := strings.TrimSpace(target.Model)
-		if upstreamModel == "" {
-			continue
-		}
-		mappedReasoningEffort := operation_setting.MapVirtualModelReasoningEffort(target, reasoningEffort)
+	for _, entry := range virtualRoutePool(route, getRequestReasoningEffort(p.Ctx)) {
 		seenChannels := make(map[int]struct{})
 		for _, group := range groups {
-			channels, err := model.GetOrderedSatisfiedChannels(group, upstreamModel, p.RequestPath)
+			channels, err := model.GetOrderedSatisfiedChannels(group, entry.model, p.RequestPath)
 			if err != nil {
 				p.virtualErr = err
 				return err
 			}
 			for _, channel := range channels {
+				if entry.channelId != 0 && channel.Id != entry.channelId {
+					continue
+				}
 				if _, exists := seenChannels[channel.Id]; exists {
 					continue
 				}
@@ -120,8 +117,8 @@ func (p *RetryParam) prepareVirtualRoute() error {
 				p.virtualRoute = append(p.virtualRoute, virtualRouteCandidate{
 					channel:         channel,
 					virtualModel:    p.ModelName,
-					upstreamModel:   upstreamModel,
-					reasoningEffort: mappedReasoningEffort,
+					upstreamModel:   entry.model,
+					reasoningEffort: entry.reasoningEffort,
 					group:           group,
 				})
 			}

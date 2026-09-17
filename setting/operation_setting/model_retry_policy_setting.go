@@ -2,6 +2,7 @@ package operation_setting
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -59,6 +60,13 @@ func (health VirtualModelRouteHealth) Normalize() VirtualModelRouteHealth {
 	return health
 }
 
+// VirtualModelRouteSource derives pool entries from a channel model list, so an
+// aggregate model follows the channel instead of a hand-kept target list. The
+// channel stays the single place to add or remove models.
+type VirtualModelRouteSource struct {
+	ChannelId int `json:"channel_id"`
+}
+
 // VirtualModelRoute describes one virtual model: the upstream models a request
 // may be sent to, how the first attempt picks a target, how many pool entries a
 // single request may try, and whether observed failures move an entry to the
@@ -68,7 +76,13 @@ type VirtualModelRoute struct {
 	Rotation    string                    `json:"rotation,omitempty"`
 	MaxAttempts int                       `json:"max_attempts,omitempty"`
 	Health      VirtualModelRouteHealth   `json:"health,omitempty"`
-	Targets     []VirtualModelRouteTarget `json:"targets"`
+	Sources     []VirtualModelRouteSource `json:"sources,omitempty"`
+	Targets     []VirtualModelRouteTarget `json:"targets,omitempty"`
+}
+
+// HasPool reports whether the route has anything to route to.
+func (route VirtualModelRoute) HasPool() bool {
+	return len(route.Targets) > 0 || len(route.Sources) > 0
 }
 
 // UnmarshalJSON accepts both the route object and the legacy target array.
@@ -139,6 +153,8 @@ func GetVirtualModelRoute(modelName string) VirtualModelRoute {
 			MaxAttempts: route.MaxAttempts,
 			Health:      route.Health.Normalize(),
 		}
+		routed.Sources = make([]VirtualModelRouteSource, len(route.Sources))
+		copy(routed.Sources, route.Sources)
 		routed.Targets = make([]VirtualModelRouteTarget, 0, len(route.Targets))
 		for _, target := range route.Targets {
 			effortMap := make(map[string]string, len(target.ReasoningEffortMap))
@@ -177,8 +193,8 @@ func ValidateVirtualModelRoutes(value string) error {
 		if strings.TrimSpace(virtualModel) == "" {
 			return fmt.Errorf("virtual model name cannot be empty")
 		}
-		if len(route.Targets) == 0 {
-			return fmt.Errorf("virtual model %q must contain at least one route target", virtualModel)
+		if !route.HasPool() {
+			return fmt.Errorf("virtual model %q must contain at least one route target or source", virtualModel)
 		}
 		switch strings.ToLower(strings.TrimSpace(route.Rotation)) {
 		case "", VirtualModelRouteRotationOrdered, VirtualModelRouteRotationRandom, VirtualModelRouteRotationRoundRobin:
@@ -190,6 +206,11 @@ func ValidateVirtualModelRoutes(value string) error {
 		}
 		if route.Health.FailureThreshold < 0 || route.Health.CooldownSeconds < 0 || route.Health.MaxCooldownSeconds < 0 {
 			return fmt.Errorf("virtual model %q has a negative health value", virtualModel)
+		}
+		for index, source := range route.Sources {
+			if source.ChannelId <= 0 {
+				return fmt.Errorf("virtual model %q source %d needs a positive channel_id", virtualModel, index)
+			}
 		}
 		for index, target := range route.Targets {
 			if strings.TrimSpace(target.Model) == "" {
@@ -203,6 +224,20 @@ func ValidateVirtualModelRoutes(value string) error {
 		}
 	}
 	return nil
+}
+
+// GetVirtualModelRouteNames lists the configured virtual model names that have
+// a pool, so callers can expose them without a channel model list entry.
+func GetVirtualModelRouteNames() []string {
+	names := make([]string, 0, len(modelRetryPolicySetting.VirtualModelRoutes))
+	for name, route := range modelRetryPolicySetting.VirtualModelRoutes {
+		if strings.TrimSpace(name) == "" || !route.HasPool() {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func GetModelRetryPolicySetting() *ModelRetryPolicySetting {

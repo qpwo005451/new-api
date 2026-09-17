@@ -7,6 +7,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 )
@@ -117,6 +118,14 @@ func GetGroupsEnabledModels(groups []string) []string {
 				models = append(models, modelName)
 			}
 		}
+	}
+	// 虚拟模型的成员来自路由配置，不需要渠道模型列表条目，这里单独并入使其可见。
+	for _, virtualModel := range operation_setting.GetVirtualModelRouteNames() {
+		if _, ok := seen[virtualModel]; ok {
+			continue
+		}
+		seen[virtualModel] = struct{}{}
+		models = append(models, virtualModel)
 	}
 	return models
 }

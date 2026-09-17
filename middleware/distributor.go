@@ -113,7 +113,7 @@ func Distribute() func(c *gin.Context) {
 				}
 
 				virtualRoute := operation_setting.GetVirtualModelRoute(modelRequest.Model)
-				if len(virtualRoute.Targets) == 0 {
+				if !virtualRoute.HasPool() {
 					if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
 						affinityUsable := false
 						preferred, err := model.CacheGetChannel(preferredChannelID)

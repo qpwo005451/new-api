@@ -1,6 +1,6 @@
 # 虚拟模型路由（Virtual Model Route）设计说明
 
-状态：已在 `prod/251` 使用（`auto-subagent`、`auto-subagent-codex`）；本文补充"轮询聚合"能力
+状态：已在 `prod/251` 使用（`auto-subagent`、`auto-subagent-codex`）；本文补充"轮询 + 健康优选 + 渠道自动派生"能力
 范围：NewAPI 网关内的对外模型名到模型池的路由；不改变上游 provider 自身的路由
 日期：2026-09-17
 
@@ -29,14 +29,16 @@
     "rotation": "round_robin",
     "max_attempts": 3,
     "health": { "enabled": true, "failure_threshold": 2, "cooldown_seconds": 60, "max_cooldown_seconds": 600 },
-    "targets": [
-      { "model": "inclusionai/ling-3.0-flash-vl:free" },
-      { "model": "z-ai/glm-5.2:free" },
-      { "model": "nvidia/nemotron-3-super-120b-a12b" }
+    "sources": [
+      { "channel_id": 5 },
+      { "channel_id": 6 }
     ]
   }
 }
 ```
+
+`targets`（写死的池成员）与 `sources`（按渠道模型列表自动派生）可以只用一个，也可以同时用：
+`targets` 的成员排在前面并保留优先权，`sources` 的成员按渠道模型列表顺序跟在后面。
 
 字段：
 
@@ -47,12 +49,13 @@
 | `targets[].model` | 上游模型名 | 池成员，必须是某条渠道真实可路由的模型名 |
 | `targets[].reasoning_effort_map` | 可选映射 | 按客户端 `reasoning.effort` / `reasoning_effort` 改成该目标可接受的取值 |
 | `health` | 可选对象 | 按真实请求结果做"健康优先"，见第 4 节 |
+| `sources[].channel_id` | 渠道 ID | 池成员取该渠道 `models` 列表里的全部模型，见第 3.1 节 |
 
 兼容性：`"name": [ ... ]` 这种旧的目标数组写法仍然接受，等价于 `ordered` + 无上限。
 
 ## 3. 行为
 
-候选池构造顺序：遍历 `targets` → 对每个目标按 token 分组（`auto` 分组时按 auto 分组顺序）→
+候选池构造顺序：先放 `targets`，再按 `sources` 顺序放各渠道的模型 → 对每个池成员按 token 分组（`auto` 分组时按 auto 分组顺序）→
 取该分组的可用渠道，按 优先级降序、权重降序、渠道 ID 升序 排列，跨分组按渠道去重。
 因此池条目是「目标模型 × 渠道」的组合。
 
@@ -63,6 +66,16 @@
 - 池为空或尝试次数用尽时返回 `ErrPriorityFallbackExhausted`，由调用方决定最终错误。
 - 命中候选后，请求会被改写为对应上游模型名（并写入虚拟 reasoning effort），
   通过渠道 model_mapping 合并后发送上游。
+
+### 3.1 渠道自动派生（`sources`）
+
+`sources` 让池跟随渠道，而不是跟随一份手写清单：
+
+- 池成员 = 各 `source` 渠道 `models` 字段里的全部模型（去重），条目与**该渠道**绑定；
+  同一个模型即使别的渠道也有，也不会从别的渠道进入池。
+- 因此维护方式只剩一种：在渠道里增删模型。改完渠道（重建 abilities）后池自动跟随，无需改本配置。
+- 渠道被禁用、模型没有对应 ability、或渠道不支持该请求路径时，该条目自然不进入池。
+- `sources` 里的渠道不存在时该来源贡献 0 个成员；全部来源都为空时该虚拟名退回普通路由路径。
 
 ## 4. 可用性优选（可选）
 
@@ -92,10 +105,11 @@
 
 ## 5. 可见性、权限与计费
 
-- 路由的真相源是虚拟路由配置 + 目标模型在各渠道的 abilities；虚拟名本身**不需要**有 ability 才能路由。
-- 但 `/v1/models`、token 模型白名单、价格页都按"模型"维度工作，所以对外暴露的虚拟名
-  仍应像现有 `auto-subagent` 那样挂到渠道的 `models` 里，并在该渠道配置 `model_mapping`
-  指向一个具体模型作为兜底（例如 `{"auto-free":"z-ai/glm-5.2:free"}`）。
+- 路由的真相源是虚拟路由配置 + 池成员在各渠道的 abilities；虚拟名本身**不需要**有 ability 才能路由。
+- 配置了池的虚拟名会自动并入 `/v1/models` 与用户可用模型列表（`GetGroupsEnabledModels`），
+  因此**不需要**把它写进任何渠道的 `models`，也不需要 `model_mapping` 兜底：
+  请求命中池成员后，网关会把模型改写为该成员的上游模型名。
+- 若某虚拟名只希望内部使用，后续可加一个 `hidden` 字段来关闭自动可见（当前未实现）。
 - 计费按客户端请求的模型名（虚拟名）计算，因此虚拟名需要价格/倍率配置；
   自用模式（`SelfUseModeEnabled`）或分组倍率为 0 时不额外收费。
 
@@ -104,6 +118,7 @@
 - 修改该 option 立即生效；不要直连 SQLite 改 `channels.models`（不会重建 abilities）。
 - `round_robin` 的计数是**进程内**状态：多实例部署时各实例独立轮询，不构成全局严格轮询；
   需要无共享状态的均匀分摊时可用 `random`。
-- 池内成员失效（上游下线）不会自动剔除，建议按周期对免费池做目录 diff 并更新 targets。
+- 用 `sources` 时池内成员完全跟随渠道模型列表；`health` 会把失效成员降权，但不会删除它。
+  要彻底剔除某个模型，请在该渠道的 `models` 里删掉它（这也符合"只维护渠道"的思路）。
 - 与 `single_pass_priority_models` 的区别：后者控制"同一模型是否只走每个优先级一次"，
   不改变模型名；虚拟路由改变的是"用哪个上游模型"。

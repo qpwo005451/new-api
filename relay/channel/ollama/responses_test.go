@@ -2,15 +2,19 @@ package ollama
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 
@@ -210,4 +214,38 @@ func TestOllamaResponsesStreamHandlerToolCallFinishReason(t *testing.T) {
 	require.Contains(t, body, `"name":"get_weather"`)
 	require.Contains(t, body, `"call_id":"call_1"`)
 	require.Contains(t, body, "event: response.completed")
+}
+
+func TestOllamaResponsesStreamHandlerIdleTimeout(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 1
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+
+	pr, pw := io.Pipe()
+	t.Cleanup(func() {
+		_ = pr.Close()
+		_ = pw.Close()
+	})
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	info := responsesRelayInfo()
+	info.IsStream = true
+	done := make(chan *types.NewAPIError, 1)
+	go func() {
+		_, apiErr := ollamaResponsesStreamHandler(c, info, &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: pr})
+		done <- apiErr
+	}()
+
+	select {
+	case apiErr := <-done:
+		require.NotNil(t, apiErr)
+		assert.Equal(t, http.StatusGatewayTimeout, apiErr.StatusCode)
+		assert.True(t, errors.Is(apiErr, helper.ErrStreamIdleTimeout))
+	case <-time.After(3 * time.Second):
+		t.Fatal("ollama responses stream handler did not return after idle timeout")
+	}
+	assert.NotContains(t, recorder.Body.String(), "response.completed")
 }

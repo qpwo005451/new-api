@@ -2,7 +2,10 @@ package service
 
 import (
 	"errors"
+	"math/rand"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -12,16 +15,22 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// virtualRouteRotationCounters holds the round_robin position of each virtual
+// model, keyed by the lowercased model name.
+var virtualRouteRotationCounters sync.Map
+
 type RetryParam struct {
-	Ctx          *gin.Context
-	TokenGroup   string
-	ModelName    string
-	RequestPath  string
-	Retry        *int
-	virtualRoute []virtualRouteCandidate
-	virtualReady bool
-	virtualErr   error
-	resetNextTry bool
+	Ctx           *gin.Context
+	TokenGroup    string
+	ModelName     string
+	RequestPath   string
+	Retry         *int
+	virtualRoute  []virtualRouteCandidate
+	virtualReady  bool
+	virtualErr    error
+	virtualOffset int
+	virtualLimit  int
+	resetNextTry  bool
 }
 
 type virtualRouteCandidate struct {
@@ -59,10 +68,10 @@ func (p *RetryParam) ResetRetryNextTry() {
 
 func (p *RetryParam) RetryLimit(defaultLimit int) int {
 	if err := p.prepareVirtualRoute(); err == nil && p.virtualReady {
-		if len(p.virtualRoute) == 0 {
+		if p.virtualLimit == 0 {
 			return 0
 		}
-		return len(p.virtualRoute) - 1
+		return p.virtualLimit - 1
 	}
 	return defaultLimit
 }
@@ -72,7 +81,7 @@ func (p *RetryParam) prepareVirtualRoute() error {
 		return p.virtualErr
 	}
 	route := operation_setting.GetVirtualModelRoute(p.ModelName)
-	if len(route) == 0 {
+	if len(route.Targets) == 0 {
 		return nil
 	}
 
@@ -87,7 +96,7 @@ func (p *RetryParam) prepareVirtualRoute() error {
 		}
 	}
 	reasoningEffort := getRequestReasoningEffort(p.Ctx)
-	for _, target := range route {
+	for _, target := range route.Targets {
 		upstreamModel := strings.TrimSpace(target.Model)
 		if upstreamModel == "" {
 			continue
@@ -114,11 +123,35 @@ func (p *RetryParam) prepareVirtualRoute() error {
 			}
 		}
 	}
+	p.virtualLimit = len(p.virtualRoute)
+	if route.MaxAttempts > 0 && route.MaxAttempts < p.virtualLimit {
+		p.virtualLimit = route.MaxAttempts
+	}
+	p.virtualOffset = virtualRouteStartIndex(p.ModelName, route.RotationMode(), p.virtualLimit)
 	return nil
 }
 
+// virtualRouteStartIndex picks the pool position the first attempt starts at.
+// Ordered routes always start at the head; random and round_robin spread the
+// pool across requests.
+func virtualRouteStartIndex(modelName string, rotation string, poolSize int) int {
+	if poolSize <= 1 {
+		return 0
+	}
+	switch rotation {
+	case operation_setting.VirtualModelRouteRotationRandom:
+		return rand.Intn(poolSize)
+	case operation_setting.VirtualModelRouteRotationRoundRobin:
+		counter, _ := virtualRouteRotationCounters.LoadOrStore(strings.ToLower(strings.TrimSpace(modelName)), new(uint64))
+		position := atomic.AddUint64(counter.(*uint64), 1) - 1
+		return int(position % uint64(poolSize))
+	default:
+		return 0
+	}
+}
+
 func (p *RetryParam) UsesVirtualRoute() bool {
-	return len(operation_setting.GetVirtualModelRoute(p.ModelName)) > 0
+	return len(operation_setting.GetVirtualModelRoute(p.ModelName).Targets) > 0
 }
 
 func (p *RetryParam) getVirtualRouteChannel() (*model.Channel, string, bool, error) {
@@ -128,10 +161,10 @@ func (p *RetryParam) getVirtualRouteChannel() (*model.Channel, string, bool, err
 	if !p.virtualReady {
 		return nil, p.TokenGroup, false, nil
 	}
-	if p.GetRetry() >= len(p.virtualRoute) {
+	if p.GetRetry() >= p.virtualLimit {
 		return nil, p.TokenGroup, true, model.ErrPriorityFallbackExhausted
 	}
-	candidate := p.virtualRoute[p.GetRetry()]
+	candidate := p.virtualRoute[(p.virtualOffset+p.GetRetry())%len(p.virtualRoute)]
 	common.SetContextKey(p.Ctx, constant.ContextKeyVirtualUpstreamModel, candidate.upstreamModel)
 	common.SetContextKey(p.Ctx, constant.ContextKeyVirtualReasoningEffort, candidate.reasoningEffort)
 	if p.TokenGroup == "auto" {

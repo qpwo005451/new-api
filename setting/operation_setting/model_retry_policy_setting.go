@@ -8,16 +8,68 @@ import (
 	"github.com/QuantumNous/new-api/setting/config"
 )
 
+// Virtual model route rotations. "ordered" keeps the configured target order,
+// so every request starts at the first target. "random" and "round_robin" pick
+// the starting target per request and spread the pool across requests.
+const (
+	VirtualModelRouteRotationOrdered    = "ordered"
+	VirtualModelRouteRotationRandom     = "random"
+	VirtualModelRouteRotationRoundRobin = "round_robin"
+)
+
 type VirtualModelRouteTarget struct {
 	Model              string            `json:"model"`
 	ReasoningEffortMap map[string]string `json:"reasoning_effort_map,omitempty"`
 }
 
+// VirtualModelRoute describes one virtual model: the upstream models a request
+// may be sent to, how the first attempt picks a target, and how many pool
+// entries a single request may try. A bare target array is still accepted,
+// which is the ordered form without an attempt limit.
+type VirtualModelRoute struct {
+	Rotation    string                    `json:"rotation,omitempty"`
+	MaxAttempts int                       `json:"max_attempts,omitempty"`
+	Targets     []VirtualModelRouteTarget `json:"targets"`
+}
+
+// UnmarshalJSON accepts both the route object and the legacy target array.
+func (route *VirtualModelRoute) UnmarshalJSON(data []byte) error {
+	if strings.HasPrefix(strings.TrimSpace(string(data)), "[") {
+		var targets []VirtualModelRouteTarget
+		if err := common.Unmarshal(data, &targets); err != nil {
+			return err
+		}
+		route.Targets = targets
+		return nil
+	}
+	// The alias type keeps this method from recursing into itself.
+	type routeAlias VirtualModelRoute
+	var parsed routeAlias
+	if err := common.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	*route = VirtualModelRoute(parsed)
+	return nil
+}
+
+// RotationMode returns the configured rotation, defaulting to the ordered walk
+// so routes configured before rotations existed keep their behavior.
+func (route VirtualModelRoute) RotationMode() string {
+	switch strings.ToLower(strings.TrimSpace(route.Rotation)) {
+	case VirtualModelRouteRotationRandom:
+		return VirtualModelRouteRotationRandom
+	case VirtualModelRouteRotationRoundRobin:
+		return VirtualModelRouteRotationRoundRobin
+	default:
+		return VirtualModelRouteRotationOrdered
+	}
+}
+
 // ModelRetryPolicySetting controls models that should visit each channel
 // priority exactly once. Other models keep the gateway-wide retry behavior.
 type ModelRetryPolicySetting struct {
-	SinglePassPriorityModels []string                             `json:"single_pass_priority_models"`
-	VirtualModelRoutes       map[string][]VirtualModelRouteTarget `json:"virtual_model_routes"`
+	SinglePassPriorityModels []string                     `json:"single_pass_priority_models"`
+	VirtualModelRoutes       map[string]VirtualModelRoute `json:"virtual_model_routes"`
 }
 
 var modelRetryPolicySetting = ModelRetryPolicySetting{
@@ -37,24 +89,27 @@ func UseSinglePassPriorityFallback(modelName string) bool {
 	return false
 }
 
-func GetVirtualModelRoute(modelName string) []VirtualModelRouteTarget {
+func GetVirtualModelRoute(modelName string) VirtualModelRoute {
 	for configuredModel, route := range modelRetryPolicySetting.VirtualModelRoutes {
-		if strings.EqualFold(strings.TrimSpace(configuredModel), strings.TrimSpace(modelName)) {
-			copied := make([]VirtualModelRouteTarget, 0, len(route))
-			for _, target := range route {
-				effortMap := make(map[string]string, len(target.ReasoningEffortMap))
-				for effort, mappedEffort := range target.ReasoningEffortMap {
-					effortMap[effort] = mappedEffort
-				}
-				copied = append(copied, VirtualModelRouteTarget{
-					Model:              target.Model,
-					ReasoningEffortMap: effortMap,
-				})
-			}
-			return copied
+		if !strings.EqualFold(strings.TrimSpace(configuredModel), strings.TrimSpace(modelName)) {
+			continue
 		}
+		// Return a copy so routing never mutates the registered configuration.
+		routed := VirtualModelRoute{Rotation: route.Rotation, MaxAttempts: route.MaxAttempts}
+		routed.Targets = make([]VirtualModelRouteTarget, 0, len(route.Targets))
+		for _, target := range route.Targets {
+			effortMap := make(map[string]string, len(target.ReasoningEffortMap))
+			for effort, mappedEffort := range target.ReasoningEffortMap {
+				effortMap[effort] = mappedEffort
+			}
+			routed.Targets = append(routed.Targets, VirtualModelRouteTarget{
+				Model:              target.Model,
+				ReasoningEffortMap: effortMap,
+			})
+		}
+		return routed
 	}
-	return nil
+	return VirtualModelRoute{}
 }
 
 func MapVirtualModelReasoningEffort(target VirtualModelRouteTarget, effort string) string {
@@ -71,18 +126,26 @@ func MapVirtualModelReasoningEffort(target VirtualModelRouteTarget, effort strin
 }
 
 func ValidateVirtualModelRoutes(value string) error {
-	var routes map[string][]VirtualModelRouteTarget
+	var routes map[string]VirtualModelRoute
 	if err := common.UnmarshalJsonStr(value, &routes); err != nil {
 		return fmt.Errorf("invalid virtual model routes JSON: %w", err)
 	}
-	for virtualModel, targets := range routes {
+	for virtualModel, route := range routes {
 		if strings.TrimSpace(virtualModel) == "" {
 			return fmt.Errorf("virtual model name cannot be empty")
 		}
-		if len(targets) == 0 {
+		if len(route.Targets) == 0 {
 			return fmt.Errorf("virtual model %q must contain at least one route target", virtualModel)
 		}
-		for index, target := range targets {
+		switch strings.ToLower(strings.TrimSpace(route.Rotation)) {
+		case "", VirtualModelRouteRotationOrdered, VirtualModelRouteRotationRandom, VirtualModelRouteRotationRoundRobin:
+		default:
+			return fmt.Errorf("virtual model %q has unsupported rotation %q", virtualModel, route.Rotation)
+		}
+		if route.MaxAttempts < 0 {
+			return fmt.Errorf("virtual model %q cannot have a negative max_attempts", virtualModel)
+		}
+		for index, target := range route.Targets {
 			if strings.TrimSpace(target.Model) == "" {
 				return fmt.Errorf("virtual model %q route target %d has an empty model", virtualModel, index)
 			}

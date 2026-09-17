@@ -134,10 +134,12 @@ func TestCacheGetRandomSatisfiedChannelExhaustsEachVirtualRouteModelInOrder(t *t
 
 	retrySetting := operation_setting.GetModelRetryPolicySetting()
 	originalRoutes := retrySetting.VirtualModelRoutes
-	retrySetting.VirtualModelRoutes = map[string][]operation_setting.VirtualModelRouteTarget{
+	retrySetting.VirtualModelRoutes = map[string]operation_setting.VirtualModelRoute{
 		"auto-subagent-codex": {
-			{Model: "gpt-5.6-luna"},
-			{Model: "gpt-5.6-terra"},
+			Targets: []operation_setting.VirtualModelRouteTarget{
+				{Model: "gpt-5.6-luna"},
+				{Model: "gpt-5.6-terra"},
+			},
 		},
 	}
 	t.Cleanup(func() {
@@ -204,11 +206,13 @@ func TestCacheGetRandomSatisfiedChannelVirtualRouteIgnoresDisabledChannels(t *te
 
 	retrySetting := operation_setting.GetModelRetryPolicySetting()
 	originalRoutes := retrySetting.VirtualModelRoutes
-	retrySetting.VirtualModelRoutes = map[string][]operation_setting.VirtualModelRouteTarget{
+	retrySetting.VirtualModelRoutes = map[string]operation_setting.VirtualModelRoute{
 		"auto-subagent": {
-			{Model: "gpt-5.6-luna"},
-			{Model: "grok-4.5"},
-			{Model: "deepseek-v4-flash"},
+			Targets: []operation_setting.VirtualModelRouteTarget{
+				{Model: "gpt-5.6-luna"},
+				{Model: "grok-4.5"},
+				{Model: "deepseek-v4-flash"},
+			},
 		},
 	}
 	t.Cleanup(func() {
@@ -250,11 +254,13 @@ func TestRetryParamVirtualRouteWithNoAvailableChannelsExhaustsImmediately(t *tes
 
 	retrySetting := operation_setting.GetModelRetryPolicySetting()
 	originalRoutes := retrySetting.VirtualModelRoutes
-	retrySetting.VirtualModelRoutes = map[string][]operation_setting.VirtualModelRouteTarget{
+	retrySetting.VirtualModelRoutes = map[string]operation_setting.VirtualModelRoute{
 		"auto-subagent": {
-			{Model: "gpt-5.6-luna"},
-			{Model: "grok-4.5"},
-			{Model: "deepseek-v4-flash"},
+			Targets: []operation_setting.VirtualModelRouteTarget{
+				{Model: "gpt-5.6-luna"},
+				{Model: "grok-4.5"},
+				{Model: "deepseek-v4-flash"},
+			},
 		},
 	}
 	t.Cleanup(func() {
@@ -285,10 +291,12 @@ func TestCacheGetRandomSatisfiedChannelVirtualRouteDeduplicatesChannelsAcrossAut
 
 	retrySetting := operation_setting.GetModelRetryPolicySetting()
 	originalRoutes := retrySetting.VirtualModelRoutes
-	retrySetting.VirtualModelRoutes = map[string][]operation_setting.VirtualModelRouteTarget{
+	retrySetting.VirtualModelRoutes = map[string]operation_setting.VirtualModelRoute{
 		"auto-subagent-codex": {
-			{Model: "gpt-5.6-luna"},
-			{Model: "gpt-5.6-terra"},
+			Targets: []operation_setting.VirtualModelRouteTarget{
+				{Model: "gpt-5.6-luna"},
+				{Model: "gpt-5.6-terra"},
+			},
 		},
 	}
 	t.Cleanup(func() {
@@ -340,13 +348,15 @@ func TestCacheGetRandomSatisfiedChannelVirtualRouteMapsReasoningEffortPerTarget(
 
 	retrySetting := operation_setting.GetModelRetryPolicySetting()
 	originalRoutes := retrySetting.VirtualModelRoutes
-	retrySetting.VirtualModelRoutes = map[string][]operation_setting.VirtualModelRouteTarget{
+	retrySetting.VirtualModelRoutes = map[string]operation_setting.VirtualModelRoute{
 		"auto-subagent": {
-			{Model: "gpt-5.6-luna"},
-			{
-				Model: "grok-4.5",
-				ReasoningEffortMap: map[string]string{
-					"max": "high",
+			Targets: []operation_setting.VirtualModelRouteTarget{
+				{Model: "gpt-5.6-luna"},
+				{
+					Model: "grok-4.5",
+					ReasoningEffortMap: map[string]string{
+						"max": "high",
+					},
 				},
 			},
 		},
@@ -388,4 +398,164 @@ func TestCacheGetRandomSatisfiedChannelVirtualRouteMapsReasoningEffortPerTarget(
 	require.NotNil(t, second)
 	assert.Equal(t, 2602, second.Id)
 	assert.Equal(t, "high", common.GetContextKeyString(ctx, constant.ContextKeyVirtualReasoningEffort))
+}
+
+func TestCacheGetRandomSatisfiedChannelRotatesVirtualRouteStartRoundRobin(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	const modelName = "auto-free-round-robin"
+	createChannelSelectAutoGroupsChannel(t, db, 2301, "default", "rotation-alpha")
+	createChannelSelectAutoGroupsChannel(t, db, 2302, "default", "rotation-beta")
+	model.InitChannelCache()
+
+	retrySetting := operation_setting.GetModelRetryPolicySetting()
+	originalRoutes := retrySetting.VirtualModelRoutes
+	retrySetting.VirtualModelRoutes = map[string]operation_setting.VirtualModelRoute{
+		modelName: {
+			Rotation: operation_setting.VirtualModelRouteRotationRoundRobin,
+			Targets: []operation_setting.VirtualModelRouteTarget{
+				{Model: "rotation-alpha"},
+				{Model: "rotation-beta"},
+			},
+		},
+	}
+	t.Cleanup(func() {
+		retrySetting.VirtualModelRoutes = originalRoutes
+	})
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+
+	// Every request starts one pool position further than the previous one.
+	for index, wantFirstChannelID := range []int{2301, 2302, 2301, 2302} {
+		retry := 0
+		param := &RetryParam{
+			Ctx:         ctx,
+			TokenGroup:  "default",
+			ModelName:   modelName,
+			RequestPath: "/v1/chat/completions",
+			Retry:       &retry,
+		}
+
+		first, _, err := CacheGetRandomSatisfiedChannel(param)
+		require.NoError(t, err)
+		require.NotNil(t, first)
+		assert.Equal(t, wantFirstChannelID, first.Id, "request %d must rotate the starting pool position", index)
+
+		// A failing first attempt still walks the remaining pool entry.
+		param.IncreaseRetry()
+		second, _, err := CacheGetRandomSatisfiedChannel(param)
+		require.NoError(t, err)
+		require.NotNil(t, second)
+		assert.NotEqual(t, wantFirstChannelID, second.Id)
+
+		param.IncreaseRetry()
+		_, _, err = CacheGetRandomSatisfiedChannel(param)
+		require.ErrorIs(t, err, model.ErrPriorityFallbackExhausted)
+	}
+}
+
+func TestCacheGetRandomSatisfiedChannelSpreadsVirtualRouteStartRandomly(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	const modelName = "auto-free-random"
+	createChannelSelectAutoGroupsChannel(t, db, 2321, "default", "random-alpha")
+	createChannelSelectAutoGroupsChannel(t, db, 2322, "default", "random-beta")
+	model.InitChannelCache()
+
+	retrySetting := operation_setting.GetModelRetryPolicySetting()
+	originalRoutes := retrySetting.VirtualModelRoutes
+	retrySetting.VirtualModelRoutes = map[string]operation_setting.VirtualModelRoute{
+		modelName: {
+			Rotation: operation_setting.VirtualModelRouteRotationRandom,
+			Targets: []operation_setting.VirtualModelRouteTarget{
+				{Model: "random-alpha"},
+				{Model: "random-beta"},
+			},
+		},
+	}
+	t.Cleanup(func() {
+		retrySetting.VirtualModelRoutes = originalRoutes
+	})
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+
+	observed := make(map[int]int)
+	for draw := 0; draw < 40; draw++ {
+		retry := 0
+		param := &RetryParam{
+			Ctx:         ctx,
+			TokenGroup:  "default",
+			ModelName:   modelName,
+			RequestPath: "/v1/chat/completions",
+			Retry:       &retry,
+		}
+		channel, _, err := CacheGetRandomSatisfiedChannel(param)
+		require.NoError(t, err)
+		require.NotNil(t, channel)
+		observed[channel.Id]++
+	}
+
+	assert.Len(t, observed, 2, "random rotation must spread requests across the whole pool")
+}
+
+func TestCacheGetRandomSatisfiedChannelHonorsVirtualRouteMaxAttempts(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	const modelName = "auto-free-bounded"
+	createChannelSelectAutoGroupsChannel(t, db, 2311, "default", "bounded-alpha")
+	createChannelSelectAutoGroupsChannel(t, db, 2312, "default", "bounded-beta")
+	model.InitChannelCache()
+
+	retrySetting := operation_setting.GetModelRetryPolicySetting()
+	originalRoutes := retrySetting.VirtualModelRoutes
+	retrySetting.VirtualModelRoutes = map[string]operation_setting.VirtualModelRoute{
+		modelName: {
+			MaxAttempts: 1,
+			Targets: []operation_setting.VirtualModelRouteTarget{
+				{Model: "bounded-alpha"},
+				{Model: "bounded-beta"},
+			},
+		},
+	}
+	t.Cleanup(func() {
+		retrySetting.VirtualModelRoutes = originalRoutes
+	})
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	retry := 0
+	bounded := &RetryParam{
+		Ctx:         ctx,
+		TokenGroup:  "default",
+		ModelName:   modelName,
+		RequestPath: "/v1/chat/completions",
+		Retry:       &retry,
+	}
+
+	assert.Equal(t, 0, bounded.RetryLimit(9))
+	channel, _, err := CacheGetRandomSatisfiedChannel(bounded)
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	bounded.IncreaseRetry()
+	_, _, err = CacheGetRandomSatisfiedChannel(bounded)
+	require.ErrorIs(t, err, model.ErrPriorityFallbackExhausted)
+
+	// Without max_attempts the whole pool stays available, as before.
+	retrySetting.VirtualModelRoutes[modelName] = operation_setting.VirtualModelRoute{
+		Targets: []operation_setting.VirtualModelRouteTarget{
+			{Model: "bounded-alpha"},
+			{Model: "bounded-beta"},
+		},
+	}
+	retry = 0
+	unbounded := &RetryParam{
+		Ctx:         ctx,
+		TokenGroup:  "default",
+		ModelName:   modelName,
+		RequestPath: "/v1/chat/completions",
+		Retry:       &retry,
+	}
+	assert.Equal(t, 1, unbounded.RetryLimit(9))
 }

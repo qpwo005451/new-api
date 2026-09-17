@@ -37,10 +37,12 @@ func TestGetChannelUsesVirtualRouteOnFirstRelayAttempt(t *testing.T) {
 
 	retrySetting := operation_setting.GetModelRetryPolicySetting()
 	originalRoutes := retrySetting.VirtualModelRoutes
-	retrySetting.VirtualModelRoutes = map[string][]operation_setting.VirtualModelRouteTarget{
+	retrySetting.VirtualModelRoutes = map[string]operation_setting.VirtualModelRoute{
 		"auto-subagent-codex": {
-			{Model: "gpt-5.6-luna"},
-			{Model: "gpt-5.6-terra"},
+			Targets: []operation_setting.VirtualModelRouteTarget{
+				{Model: "gpt-5.6-luna"},
+				{Model: "gpt-5.6-terra"},
+			},
 		},
 	}
 	t.Cleanup(func() {

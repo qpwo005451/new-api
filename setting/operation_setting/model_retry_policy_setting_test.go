@@ -3,15 +3,19 @@ package operation_setting
 import (
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGetVirtualModelRouteUsesCaseInsensitiveExactMatch(t *testing.T) {
 	originalRoutes := modelRetryPolicySetting.VirtualModelRoutes
-	modelRetryPolicySetting.VirtualModelRoutes = map[string][]VirtualModelRouteTarget{
+	modelRetryPolicySetting.VirtualModelRoutes = map[string]VirtualModelRoute{
 		"auto-subagent-codex": {
-			{Model: "gpt-5.6-luna"},
-			{Model: "gpt-5.6-terra"},
+			Targets: []VirtualModelRouteTarget{
+				{Model: "gpt-5.6-luna"},
+				{Model: "gpt-5.6-terra"},
+			},
 		},
 	}
 	t.Cleanup(func() {
@@ -22,11 +26,11 @@ func TestGetVirtualModelRouteUsesCaseInsensitiveExactMatch(t *testing.T) {
 	assert.Equal(t, []VirtualModelRouteTarget{
 		{Model: "gpt-5.6-luna", ReasoningEffortMap: map[string]string{}},
 		{Model: "gpt-5.6-terra", ReasoningEffortMap: map[string]string{}},
-	}, route)
+	}, route.Targets)
 
-	route[0].Model = "changed"
-	assert.Equal(t, "gpt-5.6-luna", GetVirtualModelRoute("auto-subagent-codex")[0].Model)
-	assert.Nil(t, GetVirtualModelRoute("auto-subagent"))
+	route.Targets[0].Model = "changed"
+	assert.Equal(t, "gpt-5.6-luna", GetVirtualModelRoute("auto-subagent-codex").Targets[0].Model)
+	assert.Empty(t, GetVirtualModelRoute("auto-subagent").Targets)
 }
 
 func TestMapVirtualModelReasoningEffort(t *testing.T) {
@@ -45,6 +49,33 @@ func TestMapVirtualModelReasoningEffort(t *testing.T) {
 
 func TestValidateVirtualModelRoutes(t *testing.T) {
 	assert.NoError(t, ValidateVirtualModelRoutes(`{"auto-subagent":[{"model":"gpt-5.6-luna"},{"model":"grok-4.5","reasoning_effort_map":{"minimal":"low","max":"high"}}]}`))
+	assert.NoError(t, ValidateVirtualModelRoutes(`{"auto-free":{"rotation":"round_robin","max_attempts":3,"targets":[{"model":"gpt-5.6-luna"}]}}`))
 	assert.Error(t, ValidateVirtualModelRoutes(`{"auto-subagent":[]}`))
 	assert.Error(t, ValidateVirtualModelRoutes(`{"auto-subagent":[{"model":""}]}`))
+	assert.Error(t, ValidateVirtualModelRoutes(`{"auto-free":{"rotation":"shuffle","targets":[{"model":"gpt-5.6-luna"}]}}`))
+	assert.Error(t, ValidateVirtualModelRoutes(`{"auto-free":{"max_attempts":-1,"targets":[{"model":"gpt-5.6-luna"}]}}`))
+}
+
+func TestVirtualModelRouteAcceptsLegacyArrayAndObjectForms(t *testing.T) {
+	var legacy map[string]VirtualModelRoute
+	require.NoError(t, common.UnmarshalJsonStr(`{"auto-free":[{"model":"gpt-5.6-luna"},{"model":"gpt-5.6-terra"}]}`, &legacy))
+	assert.Equal(t, VirtualModelRouteRotationOrdered, legacy["auto-free"].RotationMode())
+	assert.Equal(t, []VirtualModelRouteTarget{
+		{Model: "gpt-5.6-luna"},
+		{Model: "gpt-5.6-terra"},
+	}, legacy["auto-free"].Targets)
+	assert.Equal(t, 2, len(legacy["auto-free"].Targets))
+
+	var configured map[string]VirtualModelRoute
+	require.NoError(t, common.UnmarshalJsonStr(`{"auto-free":{"rotation":"random","max_attempts":1,"targets":[{"model":"gpt-5.6-luna"},{"model":"gpt-5.6-terra"}]}}`, &configured))
+	assert.Equal(t, VirtualModelRouteRotationRandom, configured["auto-free"].RotationMode())
+	assert.Equal(t, 1, configured["auto-free"].MaxAttempts)
+}
+
+func TestVirtualModelRouteRotationModeNormalizesConfiguredValue(t *testing.T) {
+	route := VirtualModelRoute{Rotation: "ROUND_ROBIN", Targets: []VirtualModelRouteTarget{{Model: "a"}}}
+	assert.Equal(t, VirtualModelRouteRotationRoundRobin, route.RotationMode())
+
+	route = VirtualModelRoute{Rotation: "unknown", Targets: []VirtualModelRouteTarget{{Model: "a"}}}
+	assert.Equal(t, VirtualModelRouteRotationOrdered, route.RotationMode())
 }

@@ -1,10 +1,12 @@
 package ollama
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -119,7 +121,8 @@ func ollamaResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 	}
 
 	helper.SetEventStreamHeaders(c)
-	scanner := helper.NewStreamScanner(resp.Body)
+	scanner := helper.NewStreamScannerWithIdleTimeout(resp.Body, time.Duration(constant.StreamingTimeout)*time.Second)
+	defer scanner.Stop()
 	usage := &dto.Usage{}
 	var model = info.UpstreamModelName
 	var toolCallIndex int
@@ -185,7 +188,10 @@ func ollamaResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 	if streamErr != nil {
 		return nil, streamErr
 	}
-	if err := scanner.Err(); err != nil && err != io.EOF {
+	if err := scanner.Err(); errors.Is(err, helper.ErrStreamIdleTimeout) {
+		logger.LogError(c, "ollama responses stream idle timeout")
+		return usage, newOllamaStreamTimeoutError(info, err)
+	} else if err != nil && err != io.EOF {
 		logger.LogError(c, "ollama stream scan error: "+err.Error())
 	}
 

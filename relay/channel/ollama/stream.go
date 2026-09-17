@@ -2,6 +2,7 @@ package ollama
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,6 +22,16 @@ import (
 )
 
 const maxOllamaToolCalls = 128
+
+func newOllamaStreamTimeoutError(info *relaycommon.RelayInfo, err error) *types.NewAPIError {
+	if info != nil {
+		if info.StreamStatus == nil {
+			info.StreamStatus = relaycommon.NewStreamStatus()
+		}
+		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonTimeout, err)
+	}
+	return types.NewErrorWithStatusCode(err, types.ErrorCodeReadResponseBodyFailed, http.StatusGatewayTimeout, types.ErrOptionWithSkipRetry())
+}
 
 type ollamaChatStreamChunk struct {
 	Model     string `json:"model"`
@@ -178,7 +189,8 @@ func ollamaStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	defer service.CloseResponseBodyGracefully(resp)
 
 	helper.SetEventStreamHeaders(c)
-	scanner := helper.NewStreamScanner(resp.Body)
+	scanner := helper.NewStreamScannerWithIdleTimeout(resp.Body, time.Duration(constant.StreamingTimeout)*time.Second)
+	defer scanner.Stop()
 	usage := &dto.Usage{}
 	var model = info.UpstreamModelName
 	var responseId = common.GetUUID()
@@ -266,7 +278,10 @@ func ollamaStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		helper.Done(c)
 		break
 	}
-	if err := scanner.Err(); err != nil && err != io.EOF {
+	if err := scanner.Err(); errors.Is(err, helper.ErrStreamIdleTimeout) {
+		logger.LogError(c, "ollama stream idle timeout")
+		return usage, newOllamaStreamTimeoutError(info, err)
+	} else if err != nil && err != io.EOF {
 		logger.LogError(c, "ollama stream scan error: "+err.Error())
 	}
 	return usage, nil

@@ -228,10 +228,10 @@ func DispatchDueModelMonitorAlerts(ctx context.Context, runnerID string, now int
 
 func deliverModelMonitorAlert(ctx context.Context, event model.ModelMonitorAlertOutbox) error {
 	setting := operation_setting.GetModelMonitorAlertSetting()
-	if isModelMonitorRepeatEvent(event) {
-		current, err := model.IsCurrentModelMonitorUnavailableTransition(event)
+	if event.Status == model.ModelMonitorStatusUnavailable {
+		current, err := model.IsCurrentModelMonitorAlert(event)
 		if err != nil {
-			return &modelMonitorAlertDeliveryError{message: "model monitor repeat state lookup failed", retryable: true}
+			return &modelMonitorAlertDeliveryError{message: "model monitor alert state lookup failed", retryable: true}
 		}
 		if !current {
 			return nil

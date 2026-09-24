@@ -16,6 +16,7 @@ func setupModelMonitorTestDB(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
+		&Channel{},
 		&ModelMonitorSite{},
 		&ModelMonitorSiteChannel{},
 		&ModelMonitorTarget{},
@@ -215,6 +216,10 @@ func TestClaimModelMonitorAlertOutboxSupportsRetryAndLeaseRecovery(t *testing.T)
 
 func TestQueueDueModelMonitorTelegramRepeatsDeduplicatesIntervalAndStopsAfterRecovery(t *testing.T) {
 	setupModelMonitorTestDB(t)
+	require.NoError(t, DB.Create(&ModelMonitorSite{ID: 2, Name: "input", SiteType: ModelMonitorSiteTypeNewAPI, Enabled: true}).Error)
+	require.NoError(t, DB.Create(&Channel{Id: 9, Models: "gpt-5.6-sol"}).Error)
+	require.NoError(t, DB.Create(&ModelMonitorSiteChannel{SiteID: 2, ChannelID: 9}).Error)
+	require.NoError(t, DB.Create(&ModelMonitorTarget{ID: 7, SiteID: 2, ModelName: "gpt-5.6-sol", Weight: 5, Enabled: true}).Error)
 	state := ModelMonitorPathState{
 		SiteID: 2, TargetID: 7, ChannelID: 9, ModelName: "gpt-5.6-sol",
 		Status: ModelMonitorStatusUnavailable, LastTransitionAt: 100,
@@ -246,6 +251,47 @@ func TestQueueDueModelMonitorTelegramRepeatsDeduplicatesIntervalAndStopsAfterRec
 	created, err = QueueDueModelMonitorTelegramRepeats(2800, 900, matches)
 	require.NoError(t, err)
 	assert.Zero(t, created)
+}
+
+func TestModelMonitorTelegramRepeatsStopWhenChannelNoLongerSupportsModel(t *testing.T) {
+	setupModelMonitorTestDB(t)
+
+	site := ModelMonitorSite{Name: "input", SiteType: ModelMonitorSiteTypeNewAPI, Enabled: true}
+	require.NoError(t, DB.Create(&site).Error)
+	channel := Channel{Id: 9, Name: "input-0.1X", Models: "gpt-5.6-sol"}
+	require.NoError(t, DB.Create(&channel).Error)
+	require.NoError(t, DB.Create(&ModelMonitorSiteChannel{SiteID: site.ID, ChannelID: channel.Id}).Error)
+	target := ModelMonitorTarget{SiteID: site.ID, ModelName: "gpt-5.6-sol", Weight: 5, Enabled: true}
+	require.NoError(t, DB.Create(&target).Error)
+	state := ModelMonitorPathState{
+		SiteID: site.ID, TargetID: target.ID, ChannelID: channel.Id, ModelName: target.ModelName,
+		Status: ModelMonitorStatusUnavailable, LastTransitionAt: 100,
+		TransitionVersion: 3, LastFailureType: ModelMonitorFailureTypeModelNotFound,
+	}
+	require.NoError(t, DB.Create(&state).Error)
+	matches := func(siteID int64, channelID int, modelName string) bool {
+		return siteID == site.ID && channelID == channel.Id && modelName == target.ModelName
+	}
+
+	due, err := HasDueModelMonitorTelegramRepeat(1000, 900, matches)
+	require.NoError(t, err)
+	assert.True(t, due)
+	created, err := QueueDueModelMonitorTelegramRepeats(1000, 900, matches)
+	require.NoError(t, err)
+	assert.Equal(t, 1, created)
+	var repeat ModelMonitorAlertOutbox
+	require.NoError(t, DB.Where("event_key LIKE ?", "model-monitor-repeat:%").First(&repeat).Error)
+
+	require.NoError(t, DB.Model(&Channel{}).Where("id = ?", channel.Id).Update("models", "gpt-5.6-terra").Error)
+	due, err = HasDueModelMonitorTelegramRepeat(2000, 900, matches)
+	require.NoError(t, err)
+	assert.False(t, due)
+	created, err = QueueDueModelMonitorTelegramRepeats(2000, 900, matches)
+	require.NoError(t, err)
+	assert.Zero(t, created)
+	current, err := IsCurrentModelMonitorUnavailableTransition(repeat)
+	require.NoError(t, err)
+	assert.False(t, current)
 }
 
 func TestModelMonitorAggregateDeduplicatesPathsAndWeights(t *testing.T) {

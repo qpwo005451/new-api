@@ -283,6 +283,33 @@ func ListEnabledModelMonitorPassivePaths(channelID int, modelName string) ([]Mod
 	return paths, err
 }
 
+func IsEnabledModelMonitorPath(siteID int64, targetID int64, channelID int, modelName string) (bool, error) {
+	var channelModels struct {
+		Models       string  `gorm:"column:models"`
+		ModelMapping *string `gorm:"column:model_mapping"`
+	}
+	result := DB.Table("model_monitor_targets AS target").
+		Select("channel.models, channel.model_mapping").
+		Joins("JOIN model_monitor_sites AS site ON site.id = target.site_id").
+		Joins("JOIN model_monitor_site_channels AS site_channel ON site_channel.site_id = target.site_id").
+		Joins("JOIN channels AS channel ON channel.id = site_channel.channel_id").
+		Where(
+			"target.id = ? AND target.site_id = ? AND target.model_name = ? AND target.enabled = ? AND "+
+				"site.enabled = ? AND site_channel.channel_id = ?",
+			targetID, siteID, modelName, true, true, channelID,
+		).
+		Limit(1).
+		Scan(&channelModels)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return false, nil
+	}
+	channel := Channel{Models: channelModels.Models, ModelMapping: channelModels.ModelMapping}
+	return channel.SupportsModel(modelName), nil
+}
+
 func GetModelMonitorProbeScheduleState(siteID int64, targetID int64, channelID int) (ModelMonitorProbeScheduleState, error) {
 	state := ModelMonitorProbeScheduleState{}
 

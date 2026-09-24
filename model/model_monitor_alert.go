@@ -232,6 +232,13 @@ func QueueDueModelMonitorTelegramRepeats(
 
 	created := 0
 	for _, state := range states {
+		eligible, err := IsEnabledModelMonitorPath(state.SiteID, state.TargetID, state.ChannelID, state.ModelName)
+		if err != nil {
+			return created, err
+		}
+		if !eligible {
+			continue
+		}
 		if !matches(state.SiteID, state.ChannelID, state.ModelName) {
 			continue
 		}
@@ -286,6 +293,13 @@ func HasDueModelMonitorTelegramRepeat(
 		return false, err
 	}
 	for _, state := range states {
+		eligible, err := IsEnabledModelMonitorPath(state.SiteID, state.TargetID, state.ChannelID, state.ModelName)
+		if err != nil {
+			return false, err
+		}
+		if !eligible {
+			continue
+		}
 		if matches(state.SiteID, state.ChannelID, state.ModelName) {
 			return true, nil
 		}
@@ -332,8 +346,17 @@ func IsCurrentModelMonitorUnavailableTransition(event ModelMonitorAlertOutbox) (
 	if err != nil {
 		return false, err
 	}
-	return state.Status == ModelMonitorStatusUnavailable &&
-		state.TransitionVersion == event.TransitionVersion, nil
+	if state.Status != ModelMonitorStatusUnavailable || state.TransitionVersion != event.TransitionVersion {
+		return false, nil
+	}
+	return IsEnabledModelMonitorPath(state.SiteID, state.TargetID, state.ChannelID, state.ModelName)
+}
+
+func IsCurrentModelMonitorAlert(event ModelMonitorAlertOutbox) (bool, error) {
+	if event.Status != ModelMonitorStatusUnavailable {
+		return true, nil
+	}
+	return IsCurrentModelMonitorUnavailableTransition(event)
 }
 
 func HasDueModelMonitorAlertOutbox(now int64) (bool, error) {

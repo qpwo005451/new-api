@@ -21,6 +21,9 @@ func setupModelMonitorAlertTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&model.ModelMonitorSite{},
+		&model.ModelMonitorSiteChannel{},
+		&model.ModelMonitorTarget{},
+		&model.ModelMonitorPathState{},
 		&model.Channel{},
 		&model.ModelMonitorAlertOutbox{},
 	))
@@ -99,6 +102,14 @@ func TestDispatchModelMonitorAlertsKeepsEmailAndTelegramIndependent(t *testing.T
 	setting.TelegramEnabled = true
 	setting.TelegramNotifyBotToken = "notify-token"
 	setting.TelegramChatID = "12345"
+	require.NoError(t, db.Create(&model.ModelMonitorSite{ID: 2, Name: "input", Enabled: true}).Error)
+	require.NoError(t, db.Create(&model.Channel{Id: 9, Models: "gpt-5.6-luna"}).Error)
+	require.NoError(t, db.Create(&model.ModelMonitorSiteChannel{SiteID: 2, ChannelID: 9}).Error)
+	require.NoError(t, db.Create(&model.ModelMonitorTarget{ID: 7, SiteID: 2, ModelName: "gpt-5.6-luna", Weight: 1, Enabled: true}).Error)
+	require.NoError(t, db.Create(&model.ModelMonitorPathState{
+		SiteID: 2, TargetID: 7, ChannelID: 9, ModelName: "gpt-5.6-luna",
+		Status: model.ModelMonitorStatusUnavailable,
+	}).Error)
 
 	require.NoError(t, db.Create(&[]model.ModelMonitorAlertOutbox{
 		{
@@ -169,6 +180,50 @@ func TestDispatchModelMonitorAlertsSkipsStaleTelegramRepeatAfterRecovery(t *test
 		Transport:         model.ModelMonitorAlertTransportTelegram,
 		DeliveryStatus:    model.ModelMonitorAlertDeliveryPending, NextAttemptAt: 100,
 	}).Error)
+
+	previousTelegramSender := sendModelMonitorAlertTelegram
+	telegramCalls := 0
+	sendModelMonitorAlertTelegram = func(_ context.Context, _, _, _ string) error {
+		telegramCalls++
+		return nil
+	}
+	t.Cleanup(func() { sendModelMonitorAlertTelegram = previousTelegramSender })
+
+	summary, err := DispatchDueModelMonitorAlerts(context.Background(), "runner-a", 100)
+	require.NoError(t, err)
+	assert.Equal(t, 1, summary.Claimed)
+	assert.Equal(t, 1, summary.Sent)
+	assert.Zero(t, telegramCalls)
+}
+
+func TestDispatchModelMonitorAlertsSkipsUnavailableAfterModelRemoval(t *testing.T) {
+	db := setupModelMonitorAlertTestDB(t)
+	setting := operation_setting.GetModelMonitorAlertSetting()
+	setting.Enabled = true
+	setting.TelegramEnabled = true
+	setting.TelegramNotifyBotToken = "notify-token"
+	setting.TelegramChatID = "12345"
+
+	require.NoError(t, db.Create(&model.ModelMonitorSite{ID: 2, Name: "input", Enabled: true}).Error)
+	channel := model.Channel{Id: 9, Name: "input-0.1X", Models: "gpt-5.6-sol"}
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&model.ModelMonitorSiteChannel{SiteID: 2, ChannelID: 9}).Error)
+	require.NoError(t, db.Create(&model.ModelMonitorTarget{ID: 7, SiteID: 2, ModelName: "gpt-5.6-sol", Weight: 1, Enabled: true}).Error)
+	require.NoError(t, db.Create(&model.ModelMonitorPathState{
+		SiteID: 2, TargetID: 7, ChannelID: 9, ModelName: "gpt-5.6-sol",
+		Status: model.ModelMonitorStatusUnavailable, TransitionVersion: 3,
+	}).Error)
+	require.NoError(t, db.Create(&model.ModelMonitorAlertOutbox{
+		EventKey: "model-monitor-repeat:2:7:9:3:1:telegram",
+		SiteID:   2, TargetID: 7, ChannelID: 9, ModelName: "gpt-5.6-sol",
+		PreviousStatus:    model.ModelMonitorStatusUnavailable,
+		Status:            model.ModelMonitorStatusUnavailable,
+		TransitionVersion: 3,
+		Transport:         model.ModelMonitorAlertTransportTelegram,
+		DeliveryStatus:    model.ModelMonitorAlertDeliveryPending,
+		NextAttemptAt:     100,
+	}).Error)
+	require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", channel.Id).Update("models", "gpt-5.6-terra").Error)
 
 	previousTelegramSender := sendModelMonitorAlertTelegram
 	telegramCalls := 0

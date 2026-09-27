@@ -62,8 +62,20 @@ The change is backward compatible: recovery/available events are unaffected (`Is
 
 The `newapi-251` relay watchdog (`n8n-homelab` `agents/newapi-251/newapi-watchdog.sh`) was also corrected in the same window: it now restarts new-api only on process-level failures (liveness `/api/status` non-200, or relay transport failure `000`) and only alerts on relay application errors such as `503 model_not_found`. The probe model moved from the single-channel `deepseek-v4-flash` to the multi-channel `glm-5.3-flash`, and `CHECK_INTERVAL_SECONDS` was tightened to `600` (with `FAIL_THRESHOLD=2`, a real hang is repaired within ~20 minutes). The retired `deepseek-v4-flash` mapping was removed from channel `46`.
 
+## Companion Data Change: auto-subagent Retirement
+
+The virtual route `auto-subagent` was found broken during this release (all three pool members had no channel in group `svip`: `gpt-5.6-luna`, `grok-4.5`, and the retired `deepseek-v4-flash`), which also made it the first model the smoke picked. It is unused (no consume logs in 7 days), so it was retired through the admin API:
+
+- removed the `auto-subagent` key from `model_retry_policy_setting.virtual_model_routes`;
+- removed `auto-subagent` from the `models` and `model_mapping` of channels `21`, `36` (active) and `37` (disabled), which were legacy entries predating automatic virtual-model visibility;
+- removed `auto-subagent` from `model_retry_policy_setting.single_pass_priority_models`.
+
+Verification: `abilities` for the exact model `auto-subagent` is now `0`, `/v1/models` no longer lists it, and `auto-subagent-codex` (routed via `gpt-5.6-terra`) and `auto-free` still return HTTP 200.
+
+Rollback artifacts (pre-change values) are preserved under `/opt/new-api/releases/2026-09-27-rc01/runtime/`: `option-before-virtual-routes.json`, `option-before-single-pass.json`, `channels-before-auto-subagent-removal.txt`.
+
 ## Next Safe Action
 
-- After the release is confirmed stable, finalize release `2026-09-27-rc01` to stop the `4003` candidate and remove transient candidate runtime files while preserving the binary, manifest, and cutover rollback metadata.
-- Push `prod/251` (`054c5b32a` plus this report) to `origin`.
-- Optional follow-ups: repair or retire the broken `auto-subagent` virtual route, and review the `15` stale unavailable model monitor paths.
+- Release `2026-09-27-rc01` is finalized: the `4003` candidate is stopped and transient candidate runtime files are removed, while the binary, manifest, cutover rollback metadata, and the `auto-subagent` rollback artifacts are preserved.
+- `prod/251` (`054c5b32a` plus this report) is pushed to `origin`.
+- Optional follow-up: review the `15` stale unavailable model monitor paths now that the removed-model alert guard is live.

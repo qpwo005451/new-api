@@ -349,6 +349,9 @@ binary 回滚核对 manifest/备份 hash；无迁移时保留现有 DB，避免�
 - 真实 Redis 7 合同：`VIRTUAL_POOL_TEST_REDIS_ADDR=127.0.0.1:16379` 下 `TestVirtualPoolRedis` 全部通过（非 skip）。
 - 三库合同：`TestVirtualPoolDatabaseContract` 在 SQLite、真实 MySQL 8、真实 PostgreSQL 16 上全部通过；`TestVirtualPoolPartialStreamSettlementIsNotRefunded` 通过。
 - 新增 `controller/virtual_pool_e2e_test.go` 覆盖 middleware→controller→fake upstream：同会话同候选复用、每请求只 prepare 一次（并修复了 middleware 在 selection 之前读取 prepared route 导致 controller 二次 prepare 的真实缺陷）、已提交部分 SSE 第二上游调用数为 0。
+- 新增 `previous_response_id` 归属闭环：成功响应记录 `response id -> candidate`（memory/Redis，按 user/token/group/model scope 隔离）；续接请求在选候选前强制命中原 candidate，未知或不可用归属返回 409，不跨上游；覆盖 round-robin、未知 ID、已提交部分流三种 E2E。
+- 新增虚拟路由健康 store：memory 保持原单实例行为，Redis 模式使用原子脚本共享连续失败计数与冷却时间；覆盖两个 client 的跨实例冷却与恢复。
+- 新增 Codex thread/root 行为单测：thread 模式同 root 不同 thread 分开绑定，root 模式显式合并；resume/compact 依赖同一 session/thread，fork 使用新 ID。
 - `gofmt` 与 `git diff --check` 通过。
 
 仍未完成：C5 四个客户端安装版（Hermes、Pi、Codex、Prime）的新建/resume/fork/compact 实际抓取；C7 本地 Linux amd64 候选构建（当前工作树无 `.local-tools/bun/bun`，前端 embed 构建未验证）。未提交、未推送、未部署。

@@ -26,25 +26,26 @@ var ErrVirtualPoolCapacityExhausted = errVirtualPoolCapacityExhausted
 var virtualRouteRotationCounters sync.Map
 
 type RetryParam struct {
-	Ctx            *gin.Context
-	TokenGroup     string
-	ModelName      string
-	RequestPath    string
-	Retry          *int
-	virtualRoute   []virtualRouteCandidate
-	virtualReady   bool
-	virtualErr     error
-	virtualOffset  int
-	virtualLimit   int
-	virtualHealthy int
-	virtualSession *VirtualPoolSession
-	preparedRoute  *VirtualPoolPreparedRoute
-	attempted      map[string]struct{}
-	scheduled      *VirtualPoolScheduledCandidate
-	scheduledTaken bool
-	scheduler      *VirtualPoolScheduler
-	owner          string
-	resetNextTry   bool
+	Ctx                  *gin.Context
+	TokenGroup           string
+	ModelName            string
+	RequestPath          string
+	Retry                *int
+	virtualRoute         []virtualRouteCandidate
+	virtualReady         bool
+	virtualErr           error
+	virtualOffset        int
+	virtualLimit         int
+	virtualHealthy       int
+	virtualSession       *VirtualPoolSession
+	preparedRoute        *VirtualPoolPreparedRoute
+	requiredCandidateKey string
+	attempted            map[string]struct{}
+	scheduled            *VirtualPoolScheduledCandidate
+	scheduledTaken       bool
+	scheduler            *VirtualPoolScheduler
+	owner                string
+	resetNextTry         bool
 }
 
 type virtualRouteCandidate struct {
@@ -64,17 +65,18 @@ type virtualRouteCandidate struct {
 // VirtualPoolPreparedRoute is the request-scoped candidate list. Middleware
 // prepares it once; the controller consumes the same instance on retries.
 type VirtualPoolPreparedRoute struct {
-	ModelName   string
-	RequestPath string
-	TokenGroup  string
-	Candidates  []VirtualPoolCandidate
-	Limit       int
-	Offset      int
-	Healthy     int
-	Session     *VirtualPoolSession
-	Scheduled   *VirtualPoolScheduledCandidate
-	scheduler   *VirtualPoolScheduler
-	owner       string
+	ModelName            string
+	RequestPath          string
+	TokenGroup           string
+	Candidates           []VirtualPoolCandidate
+	Limit                int
+	Offset               int
+	Healthy              int
+	Session              *VirtualPoolSession
+	Scheduled            *VirtualPoolScheduledCandidate
+	RequiredCandidateKey string
+	scheduler            *VirtualPoolScheduler
+	owner                string
 }
 
 // VirtualPoolCandidate is one immutable execution identity for a virtual model
@@ -150,9 +152,10 @@ func (p *RetryParam) prepareVirtualRoute() error {
 	p.virtualReady = true
 	if p.preparedRoute == nil {
 		p.preparedRoute = &VirtualPoolPreparedRoute{
-			ModelName:   p.ModelName,
-			RequestPath: p.RequestPath,
-			TokenGroup:  p.TokenGroup,
+			ModelName:            p.ModelName,
+			RequestPath:          p.RequestPath,
+			TokenGroup:           p.TokenGroup,
+			RequiredCandidateKey: p.requiredCandidateKey,
 		}
 	}
 	groups := []string{p.TokenGroup}
@@ -222,7 +225,12 @@ func (p *RetryParam) prepareVirtualRoute() error {
 		}
 	}
 	if route.Health.Enabled {
-		p.virtualHealthy = moveCoolingCandidatesLast(p.virtualRoute)
+		healthy, err := moveCoolingCandidatesLast(serviceContext(p.Ctx), p.virtualRoute)
+		if err != nil {
+			p.virtualErr = err
+			return err
+		}
+		p.virtualHealthy = healthy
 	} else {
 		p.virtualHealthy = 0
 	}
@@ -349,12 +357,18 @@ func (p *RetryParam) PrepareVirtualPoolAttempt(c *gin.Context) error {
 	}
 	available := make([]VirtualPoolCandidate, 0, len(p.preparedRoute.Candidates))
 	for _, candidate := range p.preparedRoute.Candidates {
+		if p.requiredCandidateKey != "" && candidate.AttemptKey() != p.requiredCandidateKey {
+			continue
+		}
 		if _, attempted := p.attempted[candidate.AttemptKey()]; attempted {
 			continue
 		}
 		available = append(available, candidate)
 	}
 	if len(available) == 0 {
+		if p.requiredCandidateKey != "" {
+			return ErrVirtualPoolResponseOwnerUnknown
+		}
 		return nil
 	}
 	waitDeadline := time.Now().Add(time.Duration(setting.CapacityWaitMillis) * time.Millisecond)
@@ -510,20 +524,28 @@ func virtualPoolSessionKeyIndex(session *VirtualPoolSession, channel *model.Chan
 // moveCoolingCandidatesLast keeps the pool order but moves entries that are
 // cooling down behind the healthy ones. It returns how many entries stayed in
 // the healthy part.
-func moveCoolingCandidatesLast(candidates []virtualRouteCandidate) int {
+func moveCoolingCandidatesLast(ctx context.Context, candidates []virtualRouteCandidate) (int, error) {
 	now := time.Now()
 	healthy := make([]virtualRouteCandidate, 0, len(candidates))
 	cooling := make([]virtualRouteCandidate, 0, len(candidates))
+	store, err := virtualRouteHealthStore()
+	if err != nil {
+		return 0, err
+	}
 	for _, candidate := range candidates {
 		key := virtualRouteHealthKey(candidate.virtualModel, candidate.channel.Id, candidate.upstreamModel)
-		if virtualRouteHealthFor(key).isCoolingDown(now) {
+		cooldown, err := store.IsCoolingDown(ctx, key, now)
+		if err != nil {
+			return 0, err
+		}
+		if cooldown {
 			cooling = append(cooling, candidate)
 			continue
 		}
 		healthy = append(healthy, candidate)
 	}
 	copy(candidates, append(healthy, cooling...))
-	return len(healthy)
+	return len(healthy), nil
 }
 
 // virtualRouteStartIndex picks the pool position the first attempt starts at.
@@ -555,6 +577,16 @@ func (p *RetryParam) SetVirtualPoolSession(session *VirtualPoolSession) {
 	p.virtualSession = session
 	if p.preparedRoute != nil {
 		p.preparedRoute.Session = session
+	}
+}
+
+// SetRequiredVirtualPoolCandidate pins this request to one pool candidate.
+// It is used for provider-private continuation state such as
+// previous_response_id, where falling back to another upstream would be wrong.
+func (p *RetryParam) SetRequiredVirtualPoolCandidate(candidateKey string) {
+	p.requiredCandidateKey = strings.TrimSpace(candidateKey)
+	if p.preparedRoute != nil {
+		p.preparedRoute.RequiredCandidateKey = p.requiredCandidateKey
 	}
 }
 
@@ -651,6 +683,7 @@ func (p *RetryParam) AdoptPreparedVirtualPoolRoute(prepared *VirtualPoolPrepared
 	}
 	p.preparedRoute = prepared
 	p.virtualSession = prepared.Session
+	p.requiredCandidateKey = prepared.RequiredCandidateKey
 	p.scheduled = prepared.Scheduled
 	p.scheduledTaken = false
 	p.scheduler = prepared.scheduler
@@ -686,6 +719,9 @@ func (p *RetryParam) getVirtualRouteChannel() (*model.Channel, string, bool, err
 	}
 	candidate, ok := p.nextVirtualRouteChannelCandidate()
 	if !ok {
+		if p.requiredCandidateKey != "" {
+			return nil, p.TokenGroup, true, ErrVirtualPoolResponseOwnerUnknown
+		}
 		return nil, p.TokenGroup, true, model.ErrPriorityFallbackExhausted
 	}
 	common.SetContextKey(p.Ctx, constant.ContextKeyVirtualUpstreamModel, candidate.upstreamModel)

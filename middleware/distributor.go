@@ -535,7 +535,7 @@ func getTaskOriginModelName(c *gin.Context) string {
 }
 
 func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, modelName string) *types.NewAPIError {
-	c.Set("original_model", modelName) // for retry
+	common.SetContextKey(c, constant.ContextKeyOriginalModel, modelName) // for retry
 	if channel == nil {
 		return types.NewError(errors.New("channel is nil"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}
@@ -609,7 +609,7 @@ func SetupContextForPreparedVirtualCandidate(c *gin.Context, candidate service.V
 	if c == nil || candidate.Channel == nil {
 		return types.NewError(errors.New("virtual pool candidate is nil"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}
-	c.Set("original_model", modelName)
+	common.SetContextKey(c, constant.ContextKeyOriginalModel, modelName)
 	common.SetContextKey(c, constant.ContextKeyChannelId, candidate.Channel.Id)
 	common.SetContextKey(c, constant.ContextKeyChannelName, candidate.Channel.Name)
 	common.SetContextKey(c, constant.ContextKeyChannelType, candidate.Channel.Type)

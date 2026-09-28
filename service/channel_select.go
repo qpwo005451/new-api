@@ -31,6 +31,7 @@ type RetryParam struct {
 	ModelName            string
 	RequestPath          string
 	Retry                *int
+	attemptedChannelIDs  map[int]struct{}
 	virtualRoute         []virtualRouteCandidate
 	virtualReady         bool
 	virtualErr           error
@@ -129,6 +130,19 @@ func (p *RetryParam) IncreaseRetry() {
 
 func (p *RetryParam) ResetRetryNextTry() {
 	p.resetNextTry = true
+}
+
+// MarkAttemptedChannel records that a relay attempt already ran on a channel.
+// Later in-request retries on policy models must prefer fresh channels over
+// re-hitting one that just failed (see selectSatisfiedChannelWithModelHealth).
+func (p *RetryParam) MarkAttemptedChannel(channelID int) {
+	if p == nil || channelID <= 0 {
+		return
+	}
+	if p.attemptedChannelIDs == nil {
+		p.attemptedChannelIDs = make(map[int]struct{})
+	}
+	p.attemptedChannelIDs[channelID] = struct{}{}
 }
 
 func (p *RetryParam) RetryLimit(defaultLimit int) int {
@@ -996,6 +1010,21 @@ func selectSatisfiedChannelWithModelHealth(param *RetryParam, group string, retr
 	channels, err = FilterModelHealthCandidates(channels, param.ModelName, group)
 	if err != nil {
 		return nil, err
+	}
+	// Once a cooldown is active the generic filter above already removed the
+	// failing channel. Between threshold and cooldown there is a window where
+	// the model is still selectable, and a same-priority retry would otherwise
+	// be able to pick the channel that just failed again. Mirror the virtual
+	// route candidate walk: retries take the first untried entry of the
+	// priority-ordered list, so a healthy same-tier sibling is preferred over
+	// descending to the next priority level. When every entry was already
+	// attempted in this request, fall back to the normal tier/weight selection.
+	if len(param.attemptedChannelIDs) > 0 {
+		for _, channel := range channels {
+			if _, attempted := param.attemptedChannelIDs[channel.Id]; !attempted {
+				return channel, nil
+			}
+		}
 	}
 	return model.SelectSatisfiedChannelFromCandidates(channels, retry)
 }

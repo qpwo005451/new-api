@@ -11,8 +11,13 @@ import requests
 RUN_TAG = "model-health-4003"
 SHARED_CHANNEL_NAME = RUN_TAG + "-shared-model-channel"
 SOLO_CHANNEL_NAME = RUN_TAG + "-solo-model-channel"
+SHARED_MOCK_CHANNEL = "8801"
+SOLO_MOCK_CHANNEL = "8802"
 BASE_MODEL = "deepseek-v4.1-flash"
 SOLO_MODEL = "glm-5.3-flash"
+# Recovery uses a dedicated model name so its per-(model, channel) health state
+# is untouched by the earlier threshold cases.
+RECOVERY_MODEL = "deepseek-recovery-test"
 
 
 @dataclass
@@ -89,10 +94,10 @@ class Harness:
             "group": self.args.group,
             "priority": 700,
             "auto_ban": 0,
-            "models": BASE_MODEL + "," + SOLO_MODEL,
+            "models": BASE_MODEL + "," + SOLO_MODEL + "," + RECOVERY_MODEL,
         }
-        shared_payload = dict(common, name=SHARED_CHANNEL_NAME, key=self.args.mock_key)
-        solo_payload = dict(common, name=SOLO_CHANNEL_NAME, key=self.args.mock_key)
+        shared_payload = dict(common, name=SHARED_CHANNEL_NAME, key=self.args.shared_mock_key)
+        solo_payload = dict(common, name=SOLO_CHANNEL_NAME, key=self.args.solo_mock_key)
         response = self.api("POST", "/api/channel/", json={"mode": "single", "channel": shared_payload})
         response.raise_for_status()
         payload = response.json()
@@ -160,8 +165,8 @@ class Harness:
 
     def calls(self, stats: dict[str, Any]) -> dict[str, int]:
         return {
-            str(self.shared_channel_id): int(stats["calls_by_channel"].get(str(self.shared_channel_id), 0)),
-            str(self.solo_channel_id): int(stats["calls_by_channel"].get(str(self.solo_channel_id), 0)),
+            str(self.shared_channel_id): int(stats["calls_by_channel"].get(SHARED_MOCK_CHANNEL, 0)),
+            str(self.solo_channel_id): int(stats["calls_by_channel"].get(SOLO_MOCK_CHANNEL, 0)),
         }
 
     def chat(self, model: str, timeout: float = 15.0) -> tuple[int, str]:
@@ -180,13 +185,24 @@ class Harness:
             raise AssertionError(message)
 
     def install_policy(self) -> None:
+        # Background model-monitor probes relay real requests to the mock and
+        # record model-health failures for the same (model, channel) keys, so
+        # they must stay off while the harness drives all traffic.
+        self.monitor_probe_original = self.options().get(
+            "model_monitor_setting.auto_probe_enabled", "true"
+        )
+        self.monitor_original = self.options().get("model_monitor_setting.enabled", "true")
+        self.update_option("model_monitor_setting.auto_probe_enabled", "false")
+        self.update_option("model_monitor_setting.enabled", "false")
         rules = [
             {
                 "name": "ordinary deepseek and glm cooldown",
                 "enabled": True,
-                "models": [BASE_MODEL, SOLO_MODEL],
+                "models": [BASE_MODEL, SOLO_MODEL, RECOVERY_MODEL],
                 "failure_threshold": 2,
-                "cooldown_seconds": 2,
+                # Six seconds keeps the cooldown window comfortably wider than
+                # the per-request latency of the during-cooldown checks.
+                "cooldown_seconds": 6,
                 "status_codes": [429, 500, 502, 503, 504],
                 "groups": [self.args.group],
             }
@@ -206,9 +222,26 @@ class Harness:
         self.record(
             "H02-read-policy",
             stored["model_health_policy_setting.enabled"] == "true"
-            and parsed[0]["models"] == [BASE_MODEL, SOLO_MODEL],
+            and parsed[0]["models"] == [BASE_MODEL, SOLO_MODEL, RECOVERY_MODEL],
             {"enabled": stored["model_health_policy_setting.enabled"], "rules": parsed},
         )
+        # Wait out any cooldowns left in the candidate's in-memory health store
+        # by an earlier aborted run before the threshold cases begin.
+        time.sleep(7)
+
+    def wait_for_shared_calls(self, model: str, target: int, deadline_s: float, spacing: float = 0.5) -> dict[str, Any]:
+        """Send chat requests until the shared mock channel has served `target`
+        calls or the deadline passes. A failing channel cools down for the
+        policy cooldown after each attempt, so reaching a second hit can take
+        more requests than a fixed iteration budget allows.
+        """
+        deadline = time.monotonic() + deadline_s
+        stats = self.mock_get_stats()
+        while self.calls(stats)[str(self.shared_channel_id)] < target and time.monotonic() < deadline:
+            self.chat(model)
+            time.sleep(spacing)
+            stats = self.mock_get_stats()
+        return stats
 
     def case_shared_model_cooldowns(self) -> dict[str, Any]:
         self.update_shared_model(BASE_MODEL)
@@ -216,18 +249,14 @@ class Harness:
             {
                 "default_delay_ms": 0,
                 "channels": {
-                    str(self.shared_channel_id): {"status": 503},
-                    str(self.solo_channel_id): {"status": 0},
+                    SHARED_MOCK_CHANNEL: {"status": 503},
+                    SOLO_MOCK_CHANNEL: {"status": 0},
                 },
             }
         )
         self.require(self.calls(stats)[str(self.shared_channel_id)] == 0, "mock counters must start clean")
 
-        for _ in range(30):
-            self.chat(BASE_MODEL)
-            stats = self.mock_get_stats()
-            if self.calls(stats)[str(self.shared_channel_id)] >= 2:
-                break
+        stats = self.wait_for_shared_calls(BASE_MODEL, 2, 45)
         calls_before = self.calls(stats)
         self.require(
             calls_before[str(self.shared_channel_id)] == 2,
@@ -237,6 +266,7 @@ class Harness:
 
         for _ in range(3):
             self.chat(BASE_MODEL)
+            time.sleep(0.8)
             stats = self.mock_get_stats()
         calls_during = self.calls(stats)
         self.require(
@@ -249,46 +279,59 @@ class Harness:
     def case_same_channel_other_model(self) -> dict[str, Any]:
         self.update_shared_model(BASE_MODEL + "," + SOLO_MODEL)
         time.sleep(0.2)
-        self.mock_config({"channels": {str(self.shared_channel_id): {"status": 503}}})
-        status, body = self.chat(SOLO_MODEL)
-        stats = self.mock_get_stats()
-        self.require(status in (200, 503), "solo model request must reach mock upstream, got " + str(status) + " " + body[:300])
+        self.mock_config({"channels": {SHARED_MOCK_CHANNEL: {"status": 503}}})
+        # Selection inside the top priority tier is weighted-random, so keep
+        # sending until the shared channel is actually exercised.
+        baseline = self.calls(self.mock_get_stats())[str(self.shared_channel_id)]
+        status = 0
+        body = ""
+        deadline = time.monotonic() + 45
+        while True:
+            status, body = self.chat(SOLO_MODEL)
+            stats = self.mock_get_stats()
+            if self.calls(stats)[str(self.shared_channel_id)] > baseline or time.monotonic() >= deadline:
+                break
         self.require(
-            self.calls(stats)[str(self.shared_channel_id)] > 0,
-            "same channel remains selectable for a model that is not cooling",
+            self.calls(stats)[str(self.shared_channel_id)] > baseline,
+            "same channel remains selectable for a model that is not cooling, got " + json.dumps(self.calls(stats)),
         )
+        self.require(status in (200, 503), "solo model request must reach mock upstream, got " + str(status) + " " + body[:300])
+        stats = self.mock_get_stats()
         return {"status": status, "calls": self.calls(stats)}
 
     def case_recovery(self) -> dict[str, Any]:
-        self.update_shared_model(BASE_MODEL)
+        # Keep the recovery model on both channels regardless of earlier cases.
+        self.update_shared_model(BASE_MODEL + "," + SOLO_MODEL + "," + RECOVERY_MODEL)
         self.mock_reset(
             {
                 "default_delay_ms": 0,
                 "channels": {
-                    str(self.shared_channel_id): {"status": 429},
-                    str(self.solo_channel_id): {"status": 0},
+                    SHARED_MOCK_CHANNEL: {"status": 429},
+                    SOLO_MOCK_CHANNEL: {"status": 0},
                 },
             }
         )
-        for _ in range(30):
-            self.chat(BASE_MODEL)
-            stats = self.mock_get_stats()
-            if self.calls(stats)[str(self.shared_channel_id)] >= 2:
-                break
+        stats = self.wait_for_shared_calls(RECOVERY_MODEL, 2, 45)
         calls_before = self.calls(stats)
         self.require(calls_before[str(self.shared_channel_id)] == 2, "recovery test failed to reach threshold: " + json.dumps(calls_before))
 
-        self.mock_config({"channels": {str(self.shared_channel_id): {"status": 0}}})
-        status, body = self.chat(BASE_MODEL)
+        self.mock_config({"channels": {SHARED_MOCK_CHANNEL: {"status": 0}}})
+        status, body = self.chat(RECOVERY_MODEL)
         stats = self.mock_get_stats()
         self.require(status == 200, "cooldown should still be active, got " + str(status) + " " + body[:300])
         self.require(self.calls(stats)[str(self.shared_channel_id)] == 2, "channel must stay cooling after fewer than two seconds")
 
-        time.sleep(2.2)
-        status, body = self.chat(BASE_MODEL)
-        stats = self.mock_get_stats()
+        time.sleep(7.2)
+        for _ in range(15):
+            status, body = self.chat(RECOVERY_MODEL)
+            stats = self.mock_get_stats()
+            if self.calls(stats)[str(self.shared_channel_id)] > 2:
+                break
         self.require(status == 200, "recovered call should succeed, got " + str(status) + " " + body[:300])
-        self.require(self.calls(stats)[str(self.shared_channel_id)] > 2, "channel must be retried after cooldown expiry")
+        self.require(
+            self.calls(stats)[str(self.shared_channel_id)] > 2,
+            "channel must be retried after cooldown expiry, got " + json.dumps(self.calls(stats)),
+        )
         return {"before": calls_before, "recovered_status": status, "calls": self.calls(stats)}
 
     def run(self) -> None:
@@ -312,15 +355,19 @@ class Harness:
 
 def run(args: argparse.Namespace) -> tuple[int, int]:
     harness = Harness(args)
-    options = harness.options()
-    original_enabled = options.get("model_health_policy_setting.enabled", "false")
-    original_rules = options.get("model_health_policy_setting.rules", "[]")
+    # The candidate database is test-only: always restore a clean baseline
+    # instead of echoing back whatever a previously aborted run left behind
+    # (stale 300s cooldown policies used to survive across runs this way).
     try:
         harness.run()
     finally:
         try:
-            harness.update_option("model_health_policy_setting.enabled", original_enabled)
-            harness.update_option("model_health_policy_setting.rules", original_rules)
+            harness.update_option("model_health_policy_setting.enabled", "false")
+            harness.update_option("model_health_policy_setting.rules", "[]")
+            if getattr(harness, "monitor_probe_original", None) is not None:
+                harness.update_option("model_monitor_setting.auto_probe_enabled", harness.monitor_probe_original)
+            if getattr(harness, "monitor_original", None) is not None:
+                harness.update_option("model_monitor_setting.enabled", harness.monitor_original)
             harness.restore_affinity()
         finally:
             harness.delete_channels()
@@ -333,7 +380,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://127.0.0.1:4003")
     parser.add_argument("--mock-url", default="http://127.0.0.1:18083")
-    parser.add_argument("--mock-key", default="mock-key-shared")
+    parser.add_argument("--shared-mock-key", default="mock-key-a")
+    parser.add_argument("--solo-mock-key", default="mock-key-b")
     parser.add_argument("--group", default="svip")
     parser.add_argument("--admin-token", required=True)
     parser.add_argument("--relay-token", required=True)

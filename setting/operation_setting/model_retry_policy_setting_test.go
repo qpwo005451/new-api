@@ -99,3 +99,53 @@ func TestVirtualModelRouteRotationModeNormalizesConfiguredValue(t *testing.T) {
 	route = VirtualModelRoute{Rotation: "unknown", Targets: []VirtualModelRouteTarget{{Model: "a"}}}
 	assert.Equal(t, VirtualModelRouteRotationOrdered, route.RotationMode())
 }
+
+func TestVirtualPoolStickySettingNormalizeDefaultsAndBounds(t *testing.T) {
+	setting := VirtualPoolStickySetting{Enabled: true}.Normalize()
+	assert.Equal(t, VirtualPoolSessionModeThread, setting.SessionMode)
+	assert.Equal(t, VirtualPoolBindingModeMemory, setting.BindingMode)
+	assert.Equal(t, VirtualPoolMultiKeyPolicyBindIndex, setting.MultiKeyPolicy)
+	assert.Equal(t, DefaultVirtualPoolPendingLeaseSeconds, setting.PendingLeaseSeconds)
+	assert.Equal(t, DefaultVirtualPoolPendingRenewSeconds, setting.PendingRenewSeconds)
+	assert.Equal(t, DefaultVirtualPoolConfirmedTTLSeconds, setting.ConfirmedTTLSeconds)
+	assert.Equal(t, DefaultVirtualPoolClaimWaitMillis, setting.ClaimWaitMillis)
+	assert.Equal(t, DefaultVirtualPoolCapacityWaitMillis, setting.CapacityWaitMillis)
+	assert.Equal(t, DefaultVirtualPoolCapacityLeaseSeconds, setting.CapacityLeaseSeconds)
+
+	bounded := VirtualPoolStickySetting{
+		Enabled:              true,
+		PendingLeaseSeconds:  99999,
+		PendingRenewSeconds:  99999,
+		ConfirmedTTLSeconds:  999999999,
+		ClaimWaitMillis:      999999,
+		CapacityWaitMillis:   999999,
+		CapacityLeaseSeconds: 999999,
+	}.Normalize()
+	assert.Equal(t, 3600, bounded.PendingLeaseSeconds)
+	assert.Equal(t, 3600, bounded.PendingRenewSeconds)
+	assert.Equal(t, 7*24*3600, bounded.ConfirmedTTLSeconds)
+	assert.Equal(t, 30000, bounded.ClaimWaitMillis)
+	assert.Equal(t, 30000, bounded.CapacityWaitMillis)
+	assert.Equal(t, 24*3600, bounded.CapacityLeaseSeconds)
+}
+
+func TestValidateVirtualModelRoutesCapacityBounds(t *testing.T) {
+	assert.NoError(t, ValidateVirtualModelRoutes(`{"auto-free":{"targets":[{"model":"m","capacity":2,"weight":0.5,"shared_capacity_group":"ollama"}]}}`))
+	assert.Error(t, ValidateVirtualModelRoutes(`{"auto-free":{"targets":[{"model":"m","capacity":-1}]}}`))
+	assert.Error(t, ValidateVirtualModelRoutes(`{"auto-free":{"sources":[{"channel_id":1,"weight":-1}]}}`))
+}
+
+func TestVirtualPoolStickySettingAllowsUsesAllowlists(t *testing.T) {
+	setting := VirtualPoolStickySetting{
+		Enabled: true,
+		Users:   []int{7},
+		Tokens:  []int{9},
+		Groups:  []string{"default"},
+		Models:  []string{"deepseek v4.1 flash"},
+	}
+	assert.True(t, setting.Allows(7, 9, "default", "deepseek v4.1 flash"))
+	assert.False(t, setting.Allows(8, 9, "default", "deepseek v4.1 flash"))
+	assert.False(t, setting.Allows(7, 10, "default", "deepseek v4.1 flash"))
+	assert.False(t, setting.Allows(7, 9, "vip", "deepseek v4.1 flash"))
+	assert.False(t, setting.Allows(7, 9, "default", "other-model"))
+}

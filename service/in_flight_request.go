@@ -53,6 +53,11 @@ func RelayRequestContext(c *gin.Context) context.Context {
 	if c == nil || c.Request == nil {
 		return context.Background()
 	}
+	if ctxValue, ok := c.Get(virtualPoolAttemptContextKeyName); ok {
+		if ctx, ok := ctxValue.(context.Context); ok && ctx != nil {
+			return ctx
+		}
+	}
 	ctxValue, ok := c.Get(string(inFlightRequestContextKeyName))
 	if !ok {
 		return c.Request.Context()
@@ -62,6 +67,26 @@ func RelayRequestContext(c *gin.Context) context.Context {
 		return c.Request.Context()
 	}
 	return ctx
+}
+
+// SetVirtualPoolAttemptContext installs a child context for one relay
+// attempt. Replacing the context is safe because RelayRequestContext prefers
+// it over the request and in-flight cancellation contexts.
+func SetVirtualPoolAttemptContext(c *gin.Context, ctx context.Context) {
+	if c == nil {
+		return
+	}
+	c.Set(virtualPoolAttemptContextKeyName, ctx)
+}
+
+// ClearVirtualPoolAttemptContext removes the per-attempt context after the
+// attempt has been released. The cancellation function remains owned by the
+// scheduled candidate until ReleaseVirtualPoolAttempt is called.
+func ClearVirtualPoolAttemptContext(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	c.Set(virtualPoolAttemptContextKeyName, nil)
 }
 
 func IsInFlightRequestCancelled(c *gin.Context) bool {
@@ -78,3 +103,4 @@ func NewInFlightRequestCancelledError() *types.NewAPIError {
 }
 
 const inFlightRequestContextKeyName = "in_flight_request_context"
+const virtualPoolAttemptContextKeyName = "virtual_pool_attempt_context"

@@ -20,6 +20,7 @@ schema_after="$runtime_root/schema-after.sha256"
 schema_changed_flag="$runtime_root/schema-changed.flag"
 source_env="$app_root/.env"
 source_db="$app_root/data/new-api.db"
+isolation_ack="${VIRTUAL_POOL_STAGING_ISOLATED:-}"
 
 fail() {
   printf 'ERROR: %s\n' "$1" >&2
@@ -40,6 +41,10 @@ validate_release_id() {
       fail "release id may only contain letters, digits, dot, underscore, and dash"
       ;;
   esac
+}
+
+require_isolation_ack() {
+  [ "$isolation_ack" = "1" ] || fail "set VIRTUAL_POOL_STAGING_ISOLATED=1 only after the copied runtime is egress-isolated"
 }
 
 ensure_release_path() {
@@ -97,6 +102,7 @@ ensure_release_path "$runtime_root"
 [ ! -L "$candidate_bin" ] || fail "refusing symlinked candidate binary: $candidate_bin"
 [ -f "$source_env" ] || fail "missing source env: $source_env"
 [ -f "$source_db" ] || fail "missing source db: $source_db"
+require_isolation_ack
 
 mkdir -p "$runtime_root"
 stop_existing_candidate

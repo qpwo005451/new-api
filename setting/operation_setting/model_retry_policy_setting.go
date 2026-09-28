@@ -19,8 +19,11 @@ const (
 )
 
 type VirtualModelRouteTarget struct {
-	Model              string            `json:"model"`
-	ReasoningEffortMap map[string]string `json:"reasoning_effort_map,omitempty"`
+	Model               string            `json:"model"`
+	ReasoningEffortMap  map[string]string `json:"reasoning_effort_map,omitempty"`
+	Capacity            int               `json:"capacity,omitempty"`
+	Weight              float64           `json:"weight,omitempty"`
+	SharedCapacityGroup string            `json:"shared_capacity_group,omitempty"`
 }
 
 // Health policy defaults for routes that enable availability based selection.
@@ -64,7 +67,10 @@ func (health VirtualModelRouteHealth) Normalize() VirtualModelRouteHealth {
 // aggregate model follows the channel instead of a hand-kept target list. The
 // channel stays the single place to add or remove models.
 type VirtualModelRouteSource struct {
-	ChannelId int `json:"channel_id"`
+	ChannelId           int     `json:"channel_id"`
+	Capacity            int     `json:"capacity,omitempty"`
+	Weight              float64 `json:"weight,omitempty"`
+	SharedCapacityGroup string  `json:"shared_capacity_group,omitempty"`
 }
 
 // VirtualModelRoute describes one virtual model: the upstream models a request
@@ -123,6 +129,156 @@ func (route VirtualModelRoute) RotationMode() string {
 type ModelRetryPolicySetting struct {
 	SinglePassPriorityModels []string                     `json:"single_pass_priority_models"`
 	VirtualModelRoutes       map[string]VirtualModelRoute `json:"virtual_model_routes"`
+	VirtualPoolSticky        VirtualPoolStickySetting     `json:"virtual_pool_sticky"`
+}
+
+const (
+	VirtualPoolSessionModeThread = "thread"
+	VirtualPoolSessionModeRoot   = "root"
+
+	VirtualPoolMultiKeyPolicyBindIndex = "bind_index"
+	VirtualPoolMultiKeyPolicyExclude   = "exclude"
+
+	VirtualPoolBindingModeMemory = "memory"
+	VirtualPoolBindingModeRedis  = "redis"
+)
+
+// VirtualPoolStickySetting controls session affinity for virtual model pools.
+// The feature is off by default so existing routing keeps its current behavior.
+type VirtualPoolStickySetting struct {
+	Enabled bool `json:"enabled"`
+
+	SessionMode string `json:"session_mode,omitempty"`
+
+	AllowPromptCacheKey bool `json:"allow_prompt_cache_key,omitempty"`
+
+	PendingLeaseSeconds   int    `json:"pending_lease_seconds,omitempty"`
+	PendingRenewSeconds   int    `json:"pending_renew_seconds,omitempty"`
+	ConfirmedTTLSeconds   int    `json:"confirmed_ttl_seconds,omitempty"`
+	ClaimWaitMillis       int    `json:"claim_wait_millis,omitempty"`
+	CapacityWaitMillis    int    `json:"capacity_wait_millis,omitempty"`
+	CapacityLeaseSeconds  int    `json:"capacity_lease_seconds,omitempty"`
+	BusyEscape            bool   `json:"busy_escape,omitempty"`
+	BindingMode           string `json:"binding_mode,omitempty"`
+	MultiKeyPolicy        string `json:"multi_key_policy,omitempty"`
+	RedisRequiredForReady bool   `json:"redis_required_for_ready,omitempty"`
+
+	Groups []string `json:"groups,omitempty"`
+	Users  []int    `json:"users,omitempty"`
+	Tokens []int    `json:"tokens,omitempty"`
+	Models []string `json:"models,omitempty"`
+}
+
+const (
+	DefaultVirtualPoolPendingLeaseSeconds  = 30
+	DefaultVirtualPoolPendingRenewSeconds  = 10
+	DefaultVirtualPoolConfirmedTTLSeconds  = 3600
+	DefaultVirtualPoolClaimWaitMillis      = 2000
+	DefaultVirtualPoolCapacityWaitMillis   = 2000
+	DefaultVirtualPoolCapacityLeaseSeconds = 900
+)
+
+// Normalize fills defaults and clamps values to safe operating ranges.
+func (setting VirtualPoolStickySetting) Normalize() VirtualPoolStickySetting {
+	if !setting.Enabled {
+		return setting
+	}
+	if setting.SessionMode != VirtualPoolSessionModeRoot {
+		setting.SessionMode = VirtualPoolSessionModeThread
+	}
+	if setting.BindingMode != VirtualPoolBindingModeRedis {
+		setting.BindingMode = VirtualPoolBindingModeMemory
+	}
+	if setting.MultiKeyPolicy != VirtualPoolMultiKeyPolicyExclude {
+		setting.MultiKeyPolicy = VirtualPoolMultiKeyPolicyBindIndex
+	}
+	if setting.PendingLeaseSeconds <= 0 {
+		setting.PendingLeaseSeconds = DefaultVirtualPoolPendingLeaseSeconds
+	}
+	if setting.PendingLeaseSeconds > 3600 {
+		setting.PendingLeaseSeconds = 3600
+	}
+	if setting.PendingRenewSeconds <= 0 {
+		setting.PendingRenewSeconds = DefaultVirtualPoolPendingRenewSeconds
+	}
+	if setting.PendingRenewSeconds > setting.PendingLeaseSeconds {
+		setting.PendingRenewSeconds = setting.PendingLeaseSeconds
+	}
+	if setting.ConfirmedTTLSeconds <= 0 {
+		setting.ConfirmedTTLSeconds = DefaultVirtualPoolConfirmedTTLSeconds
+	}
+	if setting.ConfirmedTTLSeconds > 7*24*3600 {
+		setting.ConfirmedTTLSeconds = 7 * 24 * 3600
+	}
+	if setting.ClaimWaitMillis < 0 {
+		setting.ClaimWaitMillis = 0
+	}
+	if setting.ClaimWaitMillis == 0 {
+		setting.ClaimWaitMillis = DefaultVirtualPoolClaimWaitMillis
+	}
+	if setting.ClaimWaitMillis > 30000 {
+		setting.ClaimWaitMillis = 30000
+	}
+	if setting.CapacityWaitMillis < 0 {
+		setting.CapacityWaitMillis = 0
+	}
+	if setting.CapacityWaitMillis == 0 {
+		setting.CapacityWaitMillis = DefaultVirtualPoolCapacityWaitMillis
+	}
+	if setting.CapacityWaitMillis > 30000 {
+		setting.CapacityWaitMillis = 30000
+	}
+	if setting.CapacityLeaseSeconds <= 0 {
+		setting.CapacityLeaseSeconds = DefaultVirtualPoolCapacityLeaseSeconds
+	}
+	if setting.CapacityLeaseSeconds > 24*3600 {
+		setting.CapacityLeaseSeconds = 24 * 3600
+	}
+	return setting
+}
+
+// Allows reports whether the authenticated request scope may use sticky routing.
+func (setting VirtualPoolStickySetting) Allows(userID int, tokenID int, group string, modelName string) bool {
+	if !setting.Enabled {
+		return false
+	}
+	if !virtualPoolAllowlistContainsInt(setting.Users, userID) {
+		return false
+	}
+	if !virtualPoolAllowlistContainsInt(setting.Tokens, tokenID) {
+		return false
+	}
+	if !virtualPoolAllowlistContainsString(setting.Groups, group) {
+		return false
+	}
+	if !virtualPoolAllowlistContainsString(setting.Models, modelName) {
+		return false
+	}
+	return true
+}
+
+func virtualPoolAllowlistContainsInt(values []int, value int) bool {
+	if len(values) == 0 {
+		return true
+	}
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
+
+func virtualPoolAllowlistContainsString(values []string, value string) bool {
+	if len(values) == 0 {
+		return true
+	}
+	for _, candidate := range values {
+		if strings.EqualFold(strings.TrimSpace(candidate), strings.TrimSpace(value)) {
+			return true
+		}
+	}
+	return false
 }
 
 var modelRetryPolicySetting = ModelRetryPolicySetting{
@@ -162,8 +318,11 @@ func GetVirtualModelRoute(modelName string) VirtualModelRoute {
 				effortMap[effort] = mappedEffort
 			}
 			routed.Targets = append(routed.Targets, VirtualModelRouteTarget{
-				Model:              target.Model,
-				ReasoningEffortMap: effortMap,
+				Model:               target.Model,
+				ReasoningEffortMap:  effortMap,
+				Capacity:            target.Capacity,
+				Weight:              target.Weight,
+				SharedCapacityGroup: target.SharedCapacityGroup,
 			})
 		}
 		return routed
@@ -211,10 +370,16 @@ func ValidateVirtualModelRoutes(value string) error {
 			if source.ChannelId <= 0 {
 				return fmt.Errorf("virtual model %q source %d needs a positive channel_id", virtualModel, index)
 			}
+			if source.Capacity < 0 || source.Weight < 0 {
+				return fmt.Errorf("virtual model %q source %d has a negative capacity or weight", virtualModel, index)
+			}
 		}
 		for index, target := range route.Targets {
 			if strings.TrimSpace(target.Model) == "" {
 				return fmt.Errorf("virtual model %q route target %d has an empty model", virtualModel, index)
+			}
+			if target.Capacity < 0 || target.Weight < 0 {
+				return fmt.Errorf("virtual model %q target %d has a negative capacity or weight", virtualModel, index)
 			}
 			for effort, mappedEffort := range target.ReasoningEffortMap {
 				if strings.TrimSpace(effort) == "" || strings.TrimSpace(mappedEffort) == "" {

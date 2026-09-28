@@ -8,6 +8,7 @@ db_path="${2:-${DB_PATH:-}}"
 mode="${3:-${SMOKE_MODE:-full}}"
 release_id="${RELEASE_ID:-}"
 requested_model="${SMOKE_MODEL:-}"
+isolation_ack="${VIRTUAL_POOL_SMOKE_ISOLATED:-}"
 
 fail() {
   printf 'ERROR: %s\n' "$1" >&2
@@ -97,6 +98,10 @@ case "$mode" in
     fail "mode must be fast or full"
     ;;
 esac
+
+if [ "$mode" = "full" ] && [ "$isolation_ack" != "1" ]; then
+  fail "set VIRTUAL_POOL_SMOKE_ISOLATED=1 only for a mock-only, egress-isolated target"
+fi
 
 curl_fast=(curl --connect-timeout 3 --max-time 8 -fsS)
 curl_slow=(curl --connect-timeout 3 --max-time 30 -fsS)

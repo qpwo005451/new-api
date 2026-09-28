@@ -1,0 +1,69 @@
+{
+  "client": "prime-agent",
+  "installed_version": "0.9.6",
+  "capture_method": "installed Linux release binary against loopback capture server, isolated PRIME_AGENT_CODING_AGENT_DIR and --session-dir, fake key, synthetic prompt",
+  "provider": "custom models.json providers: capture-responses (openai-responses) and capture-completions (openai-completions)",
+  "endpoint": "http://127.0.0.1:18081/v1",
+  "notes": [
+    "Only field presence and salted digest relations are recorded; raw session IDs, prompts, and Authorization are never stored.",
+    "openai-completions sent no session header and no prompt_cache_key by default.",
+    "openai-responses sent session_id and x-client-request-id equal to the session, plus prompt_cache_key.",
+    "The installed release exposes only before_provider_request (payload rewrite); there is no header-injection hook, so no X-NewAPI-Session-ID was produced."
+  ],
+  "records": [
+    {
+      "scenario": "new-responses",
+      "path": "/v1/responses",
+      "stream": true,
+      "prompt_cache_key": "present:str",
+      "session_id_key": "session-a",
+      "x_client_request_key": "session-a"
+    },
+    {
+      "scenario": "resume-responses",
+      "path": "/v1/responses",
+      "stream": true,
+      "prompt_cache_key": "present:str",
+      "session_id_key": "session-a",
+      "x_client_request_key": "session-a"
+    },
+    {
+      "scenario": "new-completions",
+      "path": "/v1/chat/completions",
+      "stream": true,
+      "prompt_cache_key": "absent",
+      "session_id_key": "absent",
+      "x_client_request_key": "absent"
+    },
+    {
+      "scenario": "compact-main-request",
+      "path": "/v1/responses",
+      "stream": true,
+      "prompt_cache_key": "present:str",
+      "session_id_key": "session-b",
+      "x_client_request_key": "session-b"
+    },
+    {
+      "scenario": "post-compact",
+      "path": "/v1/responses",
+      "stream": true,
+      "prompt_cache_key": "present:str",
+      "session_id_key": "session-b",
+      "x_client_request_key": "session-b"
+    },
+    {
+      "scenario": "fork-after-compact",
+      "path": "/v1/responses",
+      "stream": true,
+      "prompt_cache_key": "present:str",
+      "session_id_key": "session-c",
+      "x_client_request_key": "session-c"
+    }
+  ],
+  "relations": {
+    "resume": "same session_id_key",
+    "fork": "new session_id_key",
+    "compact": "same session_id_key",
+    "completions": "no default session field and no header hook; a gateway affinity header would need client-side support"
+  }
+}

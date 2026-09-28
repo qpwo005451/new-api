@@ -15,6 +15,9 @@ type virtualRoutePoolEntry struct {
 	model           string
 	channelId       int
 	reasoningEffort string
+	capacity        int
+	weight          float64
+	capacityGroup   string
 }
 
 // virtualRoutePool expands a route into its pool. Static targets come first, so
@@ -23,7 +26,7 @@ type virtualRoutePoolEntry struct {
 func virtualRoutePool(route operation_setting.VirtualModelRoute, requestReasoningEffort string) []virtualRoutePoolEntry {
 	entries := make([]virtualRoutePoolEntry, 0, len(route.Targets))
 	seen := make(map[string]struct{})
-	add := func(modelName string, channelId int, reasoningEffort string) {
+	add := func(modelName string, channelId int, reasoningEffort string, capacity int, weight float64, capacityGroup string) {
 		key := strconv.Itoa(channelId) + "|" + strings.ToLower(modelName)
 		if _, exists := seen[key]; exists {
 			return
@@ -33,6 +36,9 @@ func virtualRoutePool(route operation_setting.VirtualModelRoute, requestReasonin
 			model:           modelName,
 			channelId:       channelId,
 			reasoningEffort: reasoningEffort,
+			capacity:        capacity,
+			weight:          weight,
+			capacityGroup:   capacityGroup,
 		})
 	}
 
@@ -41,7 +47,9 @@ func virtualRoutePool(route operation_setting.VirtualModelRoute, requestReasonin
 		if modelName == "" {
 			continue
 		}
-		add(modelName, 0, operation_setting.MapVirtualModelReasoningEffort(target, requestReasoningEffort))
+		add(modelName, 0,
+			operation_setting.MapVirtualModelReasoningEffort(target, requestReasoningEffort),
+			target.Capacity, target.Weight, target.SharedCapacityGroup)
 	}
 	for _, source := range route.Sources {
 		channel, err := model.CacheGetChannel(source.ChannelId)
@@ -53,7 +61,7 @@ func virtualRoutePool(route operation_setting.VirtualModelRoute, requestReasonin
 			if modelName == "" {
 				continue
 			}
-			add(modelName, source.ChannelId, "")
+			add(modelName, source.ChannelId, "", source.Capacity, source.Weight, source.SharedCapacityGroup)
 		}
 	}
 	return entries

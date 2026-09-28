@@ -1,0 +1,91 @@
+{
+  "client": "pi",
+  "installed_version": "0.87.1",
+  "capture_method": "installed npm CLI (Windows install reached from WSL) against loopback capture server, isolated PI_CODING_AGENT_DIR and --session-dir, fake key, synthetic prompt",
+  "provider": "custom models.json providers: capture-responses (openai-responses) and capture-completions (openai-completions)",
+  "endpoint": "http://127.0.0.1:18081/v1",
+  "notes": [
+    "Only field presence and salted digest relations are recorded; raw session IDs, prompts, and Authorization are never stored.",
+    "openai-completions sent no session header and no prompt_cache_key by default.",
+    "openai-responses sent session_id and x-client-request-id equal to the session, plus prompt_cache_key.",
+    "The bundled extension hook before_provider_headers injected X-NewAPI-Session-ID successfully (fixture scripts/capture-fixtures/pi-session-affinity.ts).",
+    "A one-off summarization/compaction request can carry only the injected X-NewAPI-Session-ID with no session_id and no prompt_cache_key."
+  ],
+  "records": [
+    {
+      "scenario": "new-responses",
+      "path": "/v1/responses",
+      "stream": true,
+      "prompt_cache_key": "present:str",
+      "session_id_key": "session-a",
+      "x_client_request_key": "session-a"
+    },
+    {
+      "scenario": "resume-responses",
+      "path": "/v1/responses",
+      "stream": true,
+      "prompt_cache_key": "present:str",
+      "session_id_key": "session-a",
+      "x_client_request_key": "session-a"
+    },
+    {
+      "scenario": "fork-responses",
+      "path": "/v1/responses",
+      "stream": true,
+      "prompt_cache_key": "present:str",
+      "session_id_key": "session-b",
+      "x_client_request_key": "session-b"
+    },
+    {
+      "scenario": "new-completions",
+      "path": "/v1/chat/completions",
+      "stream": true,
+      "prompt_cache_key": "absent",
+      "session_id_key": "absent",
+      "x_client_request_key": "absent"
+    },
+    {
+      "scenario": "compact-main-request",
+      "path": "/v1/responses",
+      "stream": true,
+      "prompt_cache_key": "present:str",
+      "session_id_key": "session-c",
+      "x_client_request_key": "session-c",
+      "newapi_session_header_key": "session-c"
+    },
+    {
+      "scenario": "compact-summarization-request",
+      "path": "/v1/responses",
+      "stream": true,
+      "prompt_cache_key": "absent",
+      "session_id_key": "absent",
+      "x_client_request_key": "absent",
+      "newapi_session_header_key": "session-c",
+      "gap": "The summarization call disables prompt caching and omits session_id, so only the injected X-NewAPI-Session-ID keeps it on the session."
+    },
+    {
+      "scenario": "post-compact",
+      "path": "/v1/responses",
+      "stream": true,
+      "prompt_cache_key": "present:str",
+      "session_id_key": "session-c",
+      "x_client_request_key": "session-c",
+      "newapi_session_header_key": "session-c"
+    },
+    {
+      "scenario": "fork-after-compact",
+      "path": "/v1/responses",
+      "stream": true,
+      "prompt_cache_key": "present:str",
+      "session_id_key": "session-d",
+      "x_client_request_key": "session-d",
+      "newapi_session_header_key": "session-d"
+    }
+  ],
+  "relations": {
+    "resume": "same session_id_key",
+    "fork": "new session_id_key",
+    "compact": "same session_id_key for the main request; summarization request keeps affinity only via the injected header",
+    "completions": "no default session field; must rely on an injected header"
+  }
+}

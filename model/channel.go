@@ -304,6 +304,24 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 	}
 }
 
+// GetEnabledKeyByIndex returns one enabled key by its stable index. It is used
+// by sticky routing to reuse the same account/key that claimed a session.
+func (channel *Channel) GetEnabledKeyByIndex(index int) (string, int, *types.NewAPIError) {
+	if !channel.ChannelInfo.IsMultiKey {
+		return channel.Key, 0, nil
+	}
+	keys := channel.GetKeys()
+	if index < 0 || index >= len(keys) {
+		return "", 0, types.NewError(errors.New("key index out of range"), types.ErrorCodeChannelNoAvailableKey)
+	}
+	if status := channel.ChannelInfo.MultiKeyStatusList; status != nil {
+		if keyStatus, ok := status[index]; ok && keyStatus != common.ChannelStatusUnknown && keyStatus != common.ChannelStatusEnabled {
+			return "", 0, types.NewError(errors.New("bound key is disabled"), types.ErrorCodeChannelNoAvailableKey)
+		}
+	}
+	return keys[index], index, nil
+}
+
 func (channel *Channel) SaveChannelInfo() error {
 	return DB.Model(channel).Update("channel_info", channel.ChannelInfo).Error
 }

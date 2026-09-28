@@ -131,6 +131,7 @@ assert_contains "$script_dir/stage_release_runtime.sh" "candidate_pid_owns_port"
 assert_contains "$script_dir/stage_release_runtime.sh" "candidate_pid_matches_binary"
 assert_contains "$script_dir/stage_release_runtime.sh" "unset PORT SQL_DSN LOG_SQL_DSN SQLITE_PATH"
 assert_contains "$script_dir/stage_release_runtime.sh" "refusing symlinked candidate binary"
+assert_contains "$script_dir/stage_release_runtime.sh" "VIRTUAL_POOL_STAGING_ISOLATED"
 
 assert_contains "$script_dir/smoke_release.sh" "/api/status"
 assert_contains "$script_dir/smoke_release.sh" "/v1/models"
@@ -142,6 +143,7 @@ assert_contains "$script_dir/smoke_release.sh" "realpath -m"
 assert_contains "$script_dir/smoke_release.sh" ".timeout 5000"
 assert_not_contains "$script_dir/smoke_release.sh" "printf '%s' \"\$models_json\" | python3"
 assert_not_contains "$script_dir/smoke_release.sh" "printf '%s' \"\$models_json\" | model_present"
+assert_contains "$script_dir/smoke_release.sh" "VIRTUAL_POOL_SMOKE_ISOLATED"
 
 assert_contains "$script_dir/cutover_release.sh" "cutover-backup.env"
 assert_contains "$script_dir/cutover_release.sh" "restart new-api"
@@ -321,7 +323,12 @@ EOF
 chmod +x "$fake_bin/curl"
 
 touch "$tmp_root/smoke.db"
-PATH="$fake_bin:$PATH" SMOKE_MODEL=gpt-smoke "$script_dir/smoke_release.sh" "http://fake.local" "$tmp_root/smoke.db" full >/dev/null
+assert_fails_with "set VIRTUAL_POOL_SMOKE_ISOLATED=1" \
+  env PATH="$fake_bin:$PATH" SMOKE_MODEL=gpt-smoke "$script_dir/smoke_release.sh" "http://fake.local" "$tmp_root/smoke.db" full
+PATH="$fake_bin:$PATH" \
+  SMOKE_MODEL=gpt-smoke \
+  VIRTUAL_POOL_SMOKE_ISOLATED=1 \
+  "$script_dir/smoke_release.sh" "http://fake.local" "$tmp_root/smoke.db" full >/dev/null
 
 stage_release_id="test-helper-stage-$$"
 stage_release_root="$repo_root/releases/$stage_release_id"
@@ -380,7 +387,15 @@ fi
 EOF
 chmod +x "$fake_bin/ss"
 
-PATH="$fake_bin:$PATH" APP_ROOT="$stage_app_root" SQL_DSN="postgres://inherited.example/live" LOG_SQL_DSN="mysql://inherited.example/log" STAGE_ENV_DUMP="$stage_env_dump" "$script_dir/stage_release_runtime.sh" "$stage_release_id" >/dev/null
+assert_fails_with "set VIRTUAL_POOL_STAGING_ISOLATED=1" \
+  env PATH="$fake_bin:$PATH" APP_ROOT="$stage_app_root" "$script_dir/stage_release_runtime.sh" "$stage_release_id"
+PATH="$fake_bin:$PATH" \
+  APP_ROOT="$stage_app_root" \
+  SQL_DSN="postgres://inherited.example/live" \
+  LOG_SQL_DSN="mysql://inherited.example/log" \
+  STAGE_ENV_DUMP="$stage_env_dump" \
+  VIRTUAL_POOL_STAGING_ISOLATED=1 \
+  "$script_dir/stage_release_runtime.sh" "$stage_release_id" >/dev/null
 
 candidate_env="$stage_runtime_root/candidate.env"
 expected_sqlite_path="$stage_runtime_root/new-api.db"

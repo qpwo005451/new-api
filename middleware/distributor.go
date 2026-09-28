@@ -34,6 +34,13 @@ type ModelRequest struct {
 func Distribute() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		var channel *model.Channel
+		var preparedVirtualCandidate *service.VirtualPoolCandidate
+		var preparedRetryParam *service.RetryParam
+		defer func() {
+			if preparedRetryParam != nil {
+				preparedRetryParam.CleanupPreparedVirtualPoolAttempt(c)
+			}
+		}()
 		channelId, ok := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId)
 		modelRequest, shouldSelectChannel, err := getModelRequest(c)
 		if err != nil {
@@ -147,17 +154,33 @@ func Distribute() func(c *gin.Context) {
 				}
 
 				if channel == nil {
-					channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
+					retryParam := &service.RetryParam{
 						Ctx:         c,
 						ModelName:   modelRequest.Model,
 						TokenGroup:  usingGroup,
 						RequestPath: c.Request.URL.Path,
 						Retry:       common.GetPointer(0),
-					})
+					}
+					preparedRetryParam = retryParam
+					if virtualRoute.HasPool() {
+						session, sessionErr := service.ResolveVirtualPoolSession(c, modelRequest.Model)
+						if sessionErr != nil {
+							service.AbortVirtualPoolSessionError(c, sessionErr)
+							return
+						}
+						retryParam.SetVirtualPoolSession(session)
+					}
+					channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(retryParam)
 					if err != nil {
 						showGroup := usingGroup
 						if usingGroup == "auto" {
 							showGroup = fmt.Sprintf("auto(%s)", selectGroup)
+						}
+						if errors.Is(err, service.ErrVirtualPoolCapacityExhausted) {
+							retryParam.ReleaseVirtualPoolAttempt(c, true)
+							c.Header("Retry-After", "1")
+							abortWithOpenAiMessage(c, http.StatusTooManyRequests, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": showGroup, "Model": modelRequest.Model}), types.ErrorCodeModelNotFound)
+							return
 						}
 						message := i18n.T(c, i18n.MsgDistributorGetChannelFailed, map[string]any{"Group": showGroup, "Model": modelRequest.Model, "Error": err.Error()})
 						// 如果错误，但是渠道不为空，说明是数据库一致性问题
@@ -166,17 +189,38 @@ func Distribute() func(c *gin.Context) {
 						//	message = "数据库一致性已被破坏，请联系管理员"
 						//}
 						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, message, types.ErrorCodeModelNotFound)
+						retryParam.ReleaseVirtualPoolAttempt(c, true)
 						return
 					}
 					if channel == nil {
+						retryParam.ReleaseVirtualPoolAttempt(c, true)
 						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": usingGroup, "Model": modelRequest.Model}), types.ErrorCodeModelNotFound)
 						return
+					}
+					// The candidate list is only initialized by the selection call above,
+					// so publish the prepared route after it has run. Reading it before
+					// selection leaves the controller to prepare the pool a second time.
+					if prepared := retryParam.PreparedVirtualPoolRoute(); prepared != nil {
+						common.SetContextKey(c, constant.ContextKeyVirtualPoolPrepared, prepared)
+					}
+					if candidate, ok := retryParam.PeekPreparedVirtualPoolCandidate(); ok {
+						preparedVirtualCandidate = &candidate
 					}
 				}
 			}
 		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
-		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		if preparedVirtualCandidate != nil {
+			if setupErr := SetupContextForPreparedVirtualCandidate(c, *preparedVirtualCandidate, modelRequest.Model); setupErr != nil {
+				if preparedRetryParam != nil {
+					preparedRetryParam.ReleaseVirtualPoolAttempt(c, true)
+				}
+				abortWithOpenAiMessage(c, setupErr.StatusCode, setupErr.Error(), setupErr.GetErrorCode())
+				return
+			}
+		} else {
+			SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		}
 		c.Next()
 		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
 			service.RecordChannelAffinity(c, channel.Id)
@@ -517,6 +561,71 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 		c.Set("api_version", channel.Other)
 	case constant.ChannelTypeCoze:
 		c.Set("bot_id", channel.Other)
+	}
+	return nil
+}
+
+// SetupContextForPreparedVirtualCandidate selects the bound key for a virtual
+// pool candidate without advancing the channel's key rotation.
+func SetupContextForPreparedVirtualCandidate(c *gin.Context, candidate service.VirtualPoolCandidate, modelName string) *types.NewAPIError {
+	if c == nil || candidate.Channel == nil {
+		return types.NewError(errors.New("virtual pool candidate is nil"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+	}
+	c.Set("original_model", modelName)
+	common.SetContextKey(c, constant.ContextKeyChannelId, candidate.Channel.Id)
+	common.SetContextKey(c, constant.ContextKeyChannelName, candidate.Channel.Name)
+	common.SetContextKey(c, constant.ContextKeyChannelType, candidate.Channel.Type)
+	common.SetContextKey(c, constant.ContextKeyChannelCreateTime, candidate.Channel.CreatedTime)
+	common.SetContextKey(c, constant.ContextKeyChannelSetting, candidate.Channel.GetSetting())
+	common.SetContextKey(c, constant.ContextKeyChannelOtherSetting, candidate.Channel.GetOtherSettings())
+	paramOverride := candidate.Channel.GetParamOverride()
+	if mergedParam, applied := service.ApplyChannelAffinityOverrideTemplate(c, paramOverride); applied {
+		paramOverride = mergedParam
+	}
+	common.SetContextKey(c, constant.ContextKeyChannelParamOverride, paramOverride)
+	common.SetContextKey(c, constant.ContextKeyChannelHeaderOverride, candidate.Channel.GetHeaderOverride())
+	if candidate.Channel.OpenAIOrganization != nil && *candidate.Channel.OpenAIOrganization != "" {
+		common.SetContextKey(c, constant.ContextKeyChannelOrganization, *candidate.Channel.OpenAIOrganization)
+	}
+	common.SetContextKey(c, constant.ContextKeyChannelAutoBan, candidate.Channel.GetAutoBan())
+	modelMapping := candidate.Channel.GetModelMapping()
+	if candidate.UpstreamModel != "" {
+		modelMapping = mergeVirtualModelMapping(modelMapping, modelName, candidate.UpstreamModel)
+	}
+	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, modelMapping)
+	common.SetContextKey(c, constant.ContextKeyChannelStatusCodeMapping, candidate.Channel.GetStatusCodeMapping())
+
+	key, index, newAPIError := candidate.Channel.GetEnabledKeyByIndex(candidate.KeyIndex)
+	if newAPIError != nil {
+		return newAPIError
+	}
+	if candidate.Channel.ChannelInfo.IsMultiKey {
+		common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, true)
+		common.SetContextKey(c, constant.ContextKeyChannelMultiKeyIndex, index)
+	} else {
+		common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, false)
+	}
+	common.SetContextKey(c, constant.ContextKeyChannelKey, key)
+	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, candidate.Channel.GetBaseURL())
+	common.SetContextKey(c, constant.ContextKeySystemPromptOverride, false)
+
+	switch candidate.Channel.Type {
+	case constant.ChannelTypeAzure:
+		c.Set("api_version", candidate.Channel.Other)
+	case constant.ChannelTypeVertexAi:
+		c.Set("region", candidate.Channel.Other)
+	case constant.ChannelTypeXunfei:
+		c.Set("api_version", candidate.Channel.Other)
+	case constant.ChannelTypeGemini:
+		c.Set("api_version", candidate.Channel.Other)
+	case constant.ChannelTypeAli:
+		c.Set("plugin", candidate.Channel.Other)
+	case constant.ChannelCloudflare:
+		c.Set("api_version", candidate.Channel.Other)
+	case constant.ChannelTypeMokaAI:
+		c.Set("api_version", candidate.Channel.Other)
+	case constant.ChannelTypeCoze:
+		c.Set("bot_id", candidate.Channel.Other)
 	}
 	return nil
 }

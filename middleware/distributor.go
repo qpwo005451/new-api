@@ -169,6 +169,34 @@ func Distribute() func(c *gin.Context) {
 							return
 						}
 						retryParam.SetVirtualPoolSession(session)
+						if owner, ownerErr := service.ResolveVirtualPoolResponseOwner(c, modelRequest.Model); ownerErr != nil {
+							switch {
+							case errors.Is(ownerErr, service.ErrVirtualPoolResponseOwnerUnknown):
+								abortWithOpenAiMessage(
+									c,
+									http.StatusConflict,
+									"previous_response_id does not belong to a known virtual pool candidate",
+									types.ErrorCodeInvalidRequest,
+								)
+							case errors.Is(ownerErr, service.ErrVirtualPoolResponseOwnerInvalid):
+								abortWithOpenAiMessage(
+									c,
+									http.StatusBadRequest,
+									"previous_response_id request body is invalid",
+									types.ErrorCodeInvalidRequest,
+								)
+							default:
+								abortWithOpenAiMessage(
+									c,
+									http.StatusServiceUnavailable,
+									"virtual pool response owner store is unavailable",
+									types.ErrorCodeGetChannelFailed,
+								)
+							}
+							return
+						} else if owner != nil {
+							retryParam.SetRequiredVirtualPoolCandidate(owner.CandidateKey)
+						}
 					}
 					channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(retryParam)
 					if err != nil {
@@ -180,6 +208,16 @@ func Distribute() func(c *gin.Context) {
 							retryParam.ReleaseVirtualPoolAttempt(c, true)
 							c.Header("Retry-After", "1")
 							abortWithOpenAiMessage(c, http.StatusTooManyRequests, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": showGroup, "Model": modelRequest.Model}), types.ErrorCodeModelNotFound)
+							return
+						}
+						if errors.Is(err, service.ErrVirtualPoolResponseOwnerUnknown) {
+							retryParam.ReleaseVirtualPoolAttempt(c, true)
+							abortWithOpenAiMessage(
+								c,
+								http.StatusConflict,
+								"previous_response_id belongs to a virtual pool candidate that is no longer available",
+								types.ErrorCodeInvalidRequest,
+							)
 							return
 						}
 						message := i18n.T(c, i18n.MsgDistributorGetChannelFailed, map[string]any{"Group": showGroup, "Model": modelRequest.Model, "Error": err.Error()})
@@ -594,6 +632,7 @@ func SetupContextForPreparedVirtualCandidate(c *gin.Context, candidate service.V
 	}
 	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, modelMapping)
 	common.SetContextKey(c, constant.ContextKeyChannelStatusCodeMapping, candidate.Channel.GetStatusCodeMapping())
+	common.SetContextKey(c, constant.ContextKeyVirtualCandidateKey, candidate.AttemptKey())
 
 	key, index, newAPIError := candidate.Channel.GetEnabledKeyByIndex(candidate.KeyIndex)
 	if newAPIError != nil {

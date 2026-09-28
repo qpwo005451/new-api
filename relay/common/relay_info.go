@@ -149,6 +149,9 @@ type RelayInfo struct {
 	RequestId string
 	// UpstreamRequestId is the request identifier returned by the selected upstream.
 	UpstreamRequestId string
+	// UpstreamResponseID is the Responses API response id returned by the
+	// selected upstream. It is separate from transport request ids.
+	UpstreamResponseID string
 	// SubscriptionAmountTotal / SubscriptionAmountUsedAfterPreConsume are used to compute remaining in logs.
 	SubscriptionAmountTotal               int64
 	SubscriptionAmountUsedAfterPreConsume int64

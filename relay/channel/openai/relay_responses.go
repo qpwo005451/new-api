@@ -31,6 +31,7 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
+	info.UpstreamResponseID = strings.TrimSpace(responsesResponse.ID)
 	if oaiError := responsesResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
@@ -111,6 +112,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			return
 		}
 		relaycommon.RecordResponsesStreamDiagnostic(c, info, streamResponse)
+		if streamResponse.Response != nil && strings.TrimSpace(streamResponse.Response.ID) != "" {
+			info.UpstreamResponseID = strings.TrimSpace(streamResponse.Response.ID)
+		}
 		if streamResponse.Type == "response.output_text.delta" && !firstOutputSeen {
 			if toolCalls, ok := parseTextToolCalls(streamResponse.Delta, info); ok {
 				for _, toolCall := range toolCalls {

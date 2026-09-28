@@ -263,6 +263,16 @@ func (fixture *virtualPoolE2EFixture) postPath(t *testing.T, path string, sessio
 		requestBody = `"input":"ping"`
 	}
 	body := fmt.Sprintf(`{"model":%q,%s%s}`, fixture.virtualModel, streamField, requestBody)
+	return fixture.postRaw(t, path, sessionID, body)
+}
+
+func (fixture *virtualPoolE2EFixture) postRaw(
+	t *testing.T,
+	path string,
+	sessionID string,
+	body string,
+) *httptest.ResponseRecorder {
+	t.Helper()
 	request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	if sessionID != "" {
@@ -326,4 +336,80 @@ func TestVirtualPoolE2ECommittedPartialStreamWithoutSessionIsNotReplayed(t *test
 	assert.Contains(t, recorder.Body.String(), "tail")
 	assert.Equal(t, int64(1), fixture.upstreamA.calls.Load(), "a request without a sticky session still runs on the first candidate exactly once")
 	assert.Equal(t, int64(0), fixture.upstreamB.calls.Load(), "the committed-stream retry guard must not depend on sticky-session eligibility")
+}
+
+func TestVirtualPoolE2EPreviousResponseIDPinsTheOriginalCandidate(t *testing.T) {
+	fixture := setupVirtualPoolE2EFixture(t, true, operation_setting.VirtualModelRouteRotationRoundRobin, false)
+
+	first := fixture.postPath(t, "/v1/responses", "", false)
+	require.Equal(t, http.StatusOK, first.Code)
+	require.Equal(t, int64(1), fixture.upstreamA.calls.Load())
+	require.Equal(t, int64(0), fixture.upstreamB.calls.Load())
+
+	continuationBody := fmt.Sprintf(
+		`{"model":%q,"input":"continue","previous_response_id":"chatcmpl-e2e"}`,
+		fixture.virtualModel,
+	)
+	continuation := fixture.postRaw(t, "/v1/responses", "", continuationBody)
+	require.Equal(t, http.StatusOK, continuation.Code)
+
+	assert.Equal(t, int64(2), fixture.upstreamA.calls.Load(), "the continuation must stay on the candidate that produced the response id")
+	assert.Equal(t, int64(0), fixture.upstreamB.calls.Load(), "round-robin must not move a private continuation to another candidate")
+}
+
+func TestVirtualPoolE2EUnknownPreviousResponseIDFailsWithoutCallingUpstream(t *testing.T) {
+	fixture := setupVirtualPoolE2EFixture(t, true, operation_setting.VirtualModelRouteRotationOrdered, false)
+
+	body := fmt.Sprintf(
+		`{"model":%q,"input":"continue","previous_response_id":"resp_unknown"}`,
+		fixture.virtualModel,
+	)
+	recorder := fixture.postRaw(t, "/v1/responses", "", body)
+
+	require.Equal(t, http.StatusConflict, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "previous_response_id")
+	assert.Equal(t, int64(0), fixture.upstreamA.calls.Load())
+	assert.Equal(t, int64(0), fixture.upstreamB.calls.Load())
+}
+
+func TestVirtualPoolE2ECommittedPartialStreamCannotBeContinued(t *testing.T) {
+	fixture := setupVirtualPoolE2EFixture(t, true, operation_setting.VirtualModelRouteRotationOrdered, true)
+
+	first := fixture.postPath(t, "/v1/responses", "", true)
+	require.Equal(t, http.StatusOK, first.Code)
+	require.Equal(t, int64(1), fixture.upstreamA.calls.Load())
+
+	body := fmt.Sprintf(
+		`{"model":%q,"input":"continue","previous_response_id":"resp_partial"}`,
+		fixture.virtualModel,
+	)
+	continuation := fixture.postRaw(t, "/v1/responses", "", body)
+
+	require.Equal(t, http.StatusConflict, continuation.Code)
+	assert.Equal(t, int64(1), fixture.upstreamA.calls.Load(), "an incomplete stream must not publish response ownership")
+	assert.Equal(t, int64(0), fixture.upstreamB.calls.Load(), "the continuation must not be replayed on another candidate")
+}
+
+func TestVirtualPoolE2EPreviousResponseIDFailsWhenOwnerCandidateIsUnavailable(t *testing.T) {
+	fixture := setupVirtualPoolE2EFixture(t, true, operation_setting.VirtualModelRouteRotationOrdered, false)
+
+	first := fixture.postPath(t, "/v1/responses", "", false)
+	require.Equal(t, http.StatusOK, first.Code)
+	require.Equal(t, int64(1), fixture.upstreamA.calls.Load())
+
+	require.NoError(t, model.DB.Model(&model.Channel{}).
+		Where("id = ?", 9401).
+		Update("status", common.ChannelStatusManuallyDisabled).Error)
+	model.InitChannelCache()
+
+	body := fmt.Sprintf(
+		`{"model":%q,"input":"continue","previous_response_id":"chatcmpl-e2e"}`,
+		fixture.virtualModel,
+	)
+	continuation := fixture.postRaw(t, "/v1/responses", "", body)
+
+	require.Equal(t, http.StatusConflict, continuation.Code)
+	assert.Contains(t, continuation.Body.String(), "no longer available")
+	assert.Equal(t, int64(1), fixture.upstreamA.calls.Load())
+	assert.Equal(t, int64(0), fixture.upstreamB.calls.Load(), "a private continuation must not fall back after its owner disappears")
 }

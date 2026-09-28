@@ -10,6 +10,7 @@ const (
 	ContextKeyOriginalModel          ContextKey = "original_model"
 	ContextKeyVirtualUpstreamModel   ContextKey = "virtual_upstream_model"
 	ContextKeyVirtualReasoningEffort ContextKey = "virtual_reasoning_effort"
+	ContextKeyVirtualCandidateKey    ContextKey = "virtual_candidate_key"
 	ContextKeyVirtualPoolPrepared    ContextKey = "virtual_pool_prepared_route"
 	ContextKeyRequestStartTime       ContextKey = "request_start_time"
 

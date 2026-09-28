@@ -109,6 +109,43 @@ func TestOaiResponsesHandlerDeclaredToolsWithoutOutputCountZero(t *testing.T) {
 	assert.Equal(t, 0, info.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolFileSearch].CallCount)
 }
 
+func TestOaiResponsesCompactionHandlerRecordsResponseIDAndMarksSuccess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body, err := common.Marshal(dto.OpenAIResponsesCompactionResponse{
+		ID: "resp_compact",
+		Usage: &dto.Usage{
+			InputTokens:  1,
+			OutputTokens: 1,
+			TotalTokens:  2,
+		},
+	})
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", nil)
+
+	info := &relaycommon.RelayInfo{}
+	info.AttemptOutcome = &relaycommon.AttemptRecorder{}
+	require.NoError(t, info.AttemptOutcome.Begin("attempt-compact", "candidate-compact"))
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(bytes.NewReader(body)),
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+	}
+
+	usage, apiErr := OaiResponsesCompactionHandler(c, info, resp)
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	assert.Equal(t, "resp_compact", info.UpstreamResponseID)
+	outcome, err := info.AttemptOutcome.Snapshot()
+	require.NoError(t, err)
+	assert.True(t, outcome.ProtocolCompleted)
+	assert.Equal(t, relaycommon.AttemptFailureNone, outcome.FailureCategory)
+	assert.Equal(t, relaycommon.AttemptUpstreamAccepted, outcome.UpstreamState)
+}
+
 func TestOaiResponsesHandlerCountsCompletedImageGenerationOutputs(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

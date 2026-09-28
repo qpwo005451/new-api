@@ -226,13 +226,14 @@ func (p *RetryParam) prepareVirtualRoute() error {
 		}
 	}
 	if route.Health.Enabled {
-		healthy, err := moveCoolingCandidatesLast(serviceContext(p.Ctx), p.virtualRoute, route.Health.DisableModel)
+		reordered, healthy, err := moveCoolingCandidatesLast(serviceContext(p.Ctx), p.virtualRoute, route.Health.DisableModel)
 		if err != nil {
 			p.virtualErr = err
 			return err
 		}
+		p.virtualRoute = reordered
 		p.virtualHealthy = healthy
-		if len(p.preparedRoute.Candidates) == len(p.virtualRoute) {
+		if len(p.preparedRoute.Candidates) > 0 {
 			reordered := make([]VirtualPoolCandidate, 0, len(p.virtualRoute))
 			for _, candidate := range p.virtualRoute {
 				for _, prepared := range p.preparedRoute.Candidates {
@@ -546,19 +547,19 @@ func moveCoolingCandidatesLast(
 	ctx context.Context,
 	candidates []virtualRouteCandidate,
 	disableModel bool,
-) (int, error) {
+) ([]virtualRouteCandidate, int, error) {
 	now := time.Now()
 	healthy := make([]virtualRouteCandidate, 0, len(candidates))
 	cooling := make([]virtualRouteCandidate, 0, len(candidates))
 	store, err := virtualRouteHealthStore()
 	if err != nil {
-		return 0, err
+		return nil, 0, err
 	}
 	for _, candidate := range candidates {
 		key := virtualRouteHealthKey(candidate.virtualModel, candidate.channel.Id, candidate.upstreamModel)
 		cooldown, err := store.IsCoolingDown(ctx, key, now)
 		if err != nil {
-			return 0, err
+			return nil, 0, err
 		}
 		if cooldown {
 			if disableModel {
@@ -570,11 +571,9 @@ func moveCoolingCandidatesLast(
 		healthy = append(healthy, candidate)
 	}
 	if disableModel {
-		copy(candidates, healthy)
-		return len(healthy), nil
+		return healthy, len(healthy), nil
 	}
-	copy(candidates, append(healthy, cooling...))
-	return len(healthy), nil
+	return append(healthy, cooling...), len(healthy), nil
 }
 
 // virtualRouteStartIndex picks the pool position the first attempt starts at.

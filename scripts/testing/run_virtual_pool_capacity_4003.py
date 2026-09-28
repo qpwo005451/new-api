@@ -246,6 +246,34 @@ class Harness:
                         {"model": "vpool-mock-model", "channel_id": 8802},
                     ],
                 },
+                "vpool-disable-model-lab": {
+                    "rotation": "ordered",
+                    "max_attempts": 2,
+                    "health": {
+                        "enabled": True,
+                        "disable_model": True,
+                        "failure_threshold": 2,
+                        "cooldown_seconds": 2,
+                    },
+                    "targets": [
+                        {"model": "vpool-mock-model", "channel_id": 8801},
+                        {"model": "vpool-mock-model", "channel_id": 8802},
+                    ],
+                },
+                "vpool-disable-recovery-lab": {
+                    "rotation": "ordered",
+                    "max_attempts": 2,
+                    "health": {
+                        "enabled": True,
+                        "disable_model": True,
+                        "failure_threshold": 2,
+                        "cooldown_seconds": 2,
+                    },
+                    "targets": [
+                        {"model": "vpool-mock-model", "channel_id": 8801},
+                        {"model": "vpool-mock-model", "channel_id": 8802},
+                    ],
+                },
                 "vpool-sticky-lab": {
                     "rotation": "round_robin",
                     "max_attempts": 2,
@@ -430,6 +458,55 @@ class Harness:
         self.require(second_stats["calls_by_channel"].get("8801") == 1, "the cooling member must not be retried on the next request")
         self.mock_config({"channels": {"8801": {"status": 0}}})
         return {"first": first.status, "second": second.status, "calls_by_channel": second_stats["calls_by_channel"]}
+
+    def case_disable_model_strict(self) -> dict[str, Any]:
+        self.mock_reset({"default_delay_ms": 50, "channels": {"8801": {"status": 503}}})
+        first = self.relay("vpool-disable-model-lab", timeout=10)
+        second = self.relay("vpool-disable-model-lab", timeout=10)
+        after_threshold = self.mock_stats()
+        self.require(first.status == 503, "the first disabled-model request should surface 503, got " + str(first.status))
+        self.require(second.status == 503, "the second request should reach the failure threshold, got " + str(second.status))
+        self.require(
+            after_threshold["calls_by_channel"].get("8801") == 2,
+            "two separate requests must reach the failing member before the disable threshold",
+        )
+
+        third = self.relay("vpool-disable-model-lab", timeout=10)
+        stats = self.mock_stats()
+        self.require(third.status == 200, "a disabled model must not be used as a last resort, got " + str(third.status))
+        self.require(stats["calls_by_channel"].get("8801") == 2, "the disabled member must be skipped after the threshold")
+        self.require(stats["calls_by_channel"].get("8802") == 1, "the healthy member must serve the post-threshold request")
+        return {
+            "first": first.status,
+            "second": second.status,
+            "third": third.status,
+            "calls_by_channel": stats["calls_by_channel"],
+        }
+
+    def case_disable_model_recovers(self) -> dict[str, Any]:
+        self.mock_reset({"default_delay_ms": 50, "channels": {"8801": {"status": 429}}})
+        first = self.relay("vpool-disable-recovery-lab", timeout=10)
+        second = self.relay("vpool-disable-recovery-lab", timeout=10)
+        before_recovery = self.mock_stats()
+        self.require(first.status == 429, "the first recovery request should surface 429, got " + str(first.status))
+        self.require(second.status == 200, "the second recovery request should retry to the healthy member, got " + str(second.status))
+        self.require(
+            before_recovery["calls_by_channel"].get("8801") == 2,
+            "the failing member must be disabled after the configured threshold",
+        )
+
+        self.mock_config({"channels": {"8801": {"status": 0}}})
+        time.sleep(2.3)
+        recovered = self.relay("vpool-disable-recovery-lab", timeout=10)
+        stats = self.mock_stats()
+        self.require(recovered.status == 200, "a model must be tried again after cooldown expiry, got " + str(recovered.status))
+        self.require(stats["calls_by_channel"].get("8801") == 3, "the recovered member must be selected after cooldown expiry")
+        return {
+            "first": first.status,
+            "second": second.status,
+            "recovered": recovered.status,
+            "calls_by_channel": stats["calls_by_channel"],
+        }
 
     def case_sticky_same_session(self) -> dict[str, Any]:
         self.mock_reset({"default_delay_ms": 50})
@@ -693,6 +770,8 @@ class Harness:
             ("F10-explicit-group-ceiling", self.case_explicit_group_ceiling),
             ("F11-rotation-modes", self.case_rotation_modes),
             ("F13-health-cooldown", self.case_health_cooldown),
+            ("F17-disable-model-strict", self.case_disable_model_strict),
+            ("F17b-disable-model-recovers", self.case_disable_model_recovers),
             ("F14-sticky-same-session", self.case_sticky_same_session),
             ("F14b-sticky-different-sessions", self.case_sticky_different_sessions),
             ("F15-capacity-without-sticky", self.case_capacity_without_sticky),

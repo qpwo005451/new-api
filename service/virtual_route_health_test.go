@@ -118,6 +118,38 @@ func TestVirtualRouteHealthDisableModelSkipsEntryUntilCooldownExpires(t *testing
 		"the disabled entry must be removed until the cooldown expires")
 }
 
+func TestVirtualRouteHealthDisableModelDropsCoolingTailCandidate(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	const modelName = "auto-free-health-disable-model-tail"
+	createChannelSelectAutoGroupsChannel(t, db, 2451, "default", "disable-tail-alpha")
+	createChannelSelectAutoGroupsChannel(t, db, 2452, "default", "disable-tail-beta")
+	model.InitChannelCache()
+	installVirtualRouteHealthRoute(t, modelName, operation_setting.VirtualModelRouteHealth{
+		Enabled:          true,
+		DisableModel:     true,
+		FailureThreshold: 1,
+		CooldownSeconds:  60,
+	}, "disable-tail-alpha", "disable-tail-beta")
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyVirtualUpstreamModel, "disable-tail-beta")
+
+	RecordVirtualRouteFailure(ctx, 2452, modelName, http.StatusServiceUnavailable)
+
+	param := newVirtualRouteHealthAttempt(ctx, modelName)
+	first, _, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.NotNil(t, first)
+	assert.Equal(t, 2451, first.Id, "the healthy entry is preferred")
+
+	param.IncreaseRetry()
+	_, _, err = CacheGetRandomSatisfiedChannel(param)
+	require.ErrorIs(t, err, model.ErrPriorityFallbackExhausted,
+		"a disabled tail entry must not remain reachable after the healthy prefix")
+}
+
 func TestVirtualRouteHealthDisableModelExpiresAcrossStores(t *testing.T) {
 	health := operation_setting.VirtualModelRouteHealth{
 		Enabled:          true,

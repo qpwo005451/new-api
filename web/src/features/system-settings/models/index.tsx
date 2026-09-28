@@ -86,6 +86,8 @@ const defaultModelSettings: ModelSettings = {
   'upstream_rate_limit_setting.enabled': false,
   'upstream_rate_limit_setting.rules': '[]',
   'model_retry_policy_setting.virtual_model_routes': '{}',
+  'model_health_policy_setting.enabled': false,
+  'model_health_policy_setting.rules': '[]',
   'model_deployment.ionet.api_key': '',
   'model_deployment.ionet.enabled': false,
 }

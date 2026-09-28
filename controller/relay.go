@@ -427,6 +427,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			if newAPIError == nil && outcome.IsCompleteSuccess() && !leaseLost {
 				relayInfo.LastError = nil
 				service.RecordVirtualRouteSuccess(c, channel.Id, relayInfo.OriginModelName)
+				service.RecordModelHealthSuccess(relayInfo.OriginModelName, service.ModelHealthGroup(c, relayInfo.UsingGroup), channel.Id)
 				retryParam.ConfirmVirtualPoolAttempt(c)
 				retryParam.ReleaseVirtualPoolAttempt(c, false)
 				service.ReportOpenCodeRouteFeedback(relayInfo, true)
@@ -468,6 +469,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				relayInfo.LastError = failure
 				service.ReportOpenCodeRouteFeedback(relayInfo, false)
 				service.RecordVirtualRouteFailure(c, channel.Id, relayInfo.OriginModelName, failure.StatusCode)
+				service.RecordModelHealthFailure(relayInfo.OriginModelName, service.ModelHealthGroup(c, relayInfo.UsingGroup), channel.Id, failure.StatusCode)
 				retryParam.ReleaseVirtualPoolAttempt(c, true)
 				if relayInfo.Billing != nil && !outcome.UsageSettled {
 					relayInfo.Billing.Refund(c)
@@ -496,6 +498,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		} else if newAPIError == nil {
 			relayInfo.LastError = nil
 			service.RecordVirtualRouteSuccess(c, channel.Id, relayInfo.OriginModelName)
+			service.RecordModelHealthSuccess(relayInfo.OriginModelName, service.ModelHealthGroup(c, relayInfo.UsingGroup), channel.Id)
 			service.ReportOpenCodeRouteFeedback(relayInfo, true)
 			return
 		}
@@ -552,6 +555,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			willRetry = false
 		}
 		service.RecordVirtualRouteFailure(c, channel.Id, relayInfo.OriginModelName, newAPIError.StatusCode)
+		service.RecordModelHealthFailure(relayInfo.OriginModelName, service.ModelHealthGroup(c, relayInfo.UsingGroup), channel.Id, newAPIError.StatusCode)
 		retryParam.ReleaseVirtualPoolAttempt(c, true)
 		processChannelError(
 			c,

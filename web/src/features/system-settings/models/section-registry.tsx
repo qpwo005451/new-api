@@ -24,6 +24,7 @@ import { ClaudeSettingsCard } from './claude-settings-card'
 import { GeminiSettingsCard } from './gemini-settings-card'
 import { GlobalSettingsCard } from './global-settings-card'
 import { GrokSettingsCard } from './grok-settings-card'
+import { ModelHealthPolicySection } from './model-health-policy-section'
 import { RoutingReliabilitySection } from './routing-reliability-section'
 import { UpstreamRateLimitSection } from './upstream-rate-limit-section'
 import { VirtualPoolRoutingSection } from './virtual-pool-routing-section'
@@ -197,6 +198,20 @@ const MODELS_SECTIONS = [
         defaultValues={{
           'model_retry_policy_setting.virtual_model_routes':
             settings['model_retry_policy_setting.virtual_model_routes'],
+        }}
+      />
+    ),
+  },
+  {
+    id: 'model-health-policy',
+    titleKey: 'Model Health Policy',
+    build: (settings: ModelSettings) => (
+      <ModelHealthPolicySection
+        defaultValues={{
+          'model_health_policy_setting.enabled':
+            settings['model_health_policy_setting.enabled'],
+          'model_health_policy_setting.rules':
+            settings['model_health_policy_setting.rules'],
         }}
       />
     ),

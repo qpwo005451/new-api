@@ -209,10 +209,15 @@ func IsVirtualRouteUnavailableStatus(statusCode int) bool {
 
 type VirtualPoolRedisHealthStore struct {
 	client *redis.Client
+	prefix string
 }
 
 func NewVirtualPoolRedisHealthStore(client *redis.Client) *VirtualPoolRedisHealthStore {
-	return &VirtualPoolRedisHealthStore{client: client}
+	return NewVirtualPoolRedisHealthStoreWithPrefix(client, virtualRouteHealthRedisPrefix)
+}
+
+func NewVirtualPoolRedisHealthStoreWithPrefix(client *redis.Client, prefix string) *VirtualPoolRedisHealthStore {
+	return &VirtualPoolRedisHealthStore{client: client, prefix: prefix}
 }
 
 func (store *VirtualPoolRedisHealthStore) IsCoolingDown(
@@ -260,7 +265,11 @@ func (store *VirtualPoolRedisHealthStore) RecordSuccess(ctx context.Context, key
 }
 
 func (store *VirtualPoolRedisHealthStore) key(key string) string {
-	return virtualRouteHealthRedisPrefix + strings.TrimSpace(key)
+	prefix := store.prefix
+	if prefix == "" {
+		prefix = virtualRouteHealthRedisPrefix
+	}
+	return prefix + strings.TrimSpace(key)
 }
 
 const virtualPoolHealthCooldownScript = `

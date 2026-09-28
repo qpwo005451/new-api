@@ -933,7 +933,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			logger.LogDebug(param.Ctx, "Auto selecting group: %s, priorityRetry: %d", autoGroup, priorityRetry)
 
 			var selectErr error
-			channel, selectErr = model.GetRandomSatisfiedChannel(autoGroup, param.ModelName, priorityRetry, param.RequestPath)
+			channel, selectErr = selectSatisfiedChannelWithModelHealth(param, autoGroup, priorityRetry)
 			if selectErr != nil {
 				return nil, autoGroup, selectErr
 			}
@@ -974,10 +974,28 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			break
 		}
 	} else {
-		channel, err = model.GetRandomSatisfiedChannel(param.TokenGroup, param.ModelName, param.GetRetry(), param.RequestPath)
+		channel, err = selectSatisfiedChannelWithModelHealth(param, param.TokenGroup, param.GetRetry())
 		if err != nil {
 			return nil, param.TokenGroup, err
 		}
 	}
 	return channel, selectGroup, nil
+}
+
+func selectSatisfiedChannelWithModelHealth(param *RetryParam, group string, retry int) (*model.Channel, error) {
+	if param == nil {
+		return nil, nil
+	}
+	if _, enabled := operation_setting.MatchModelHealthPolicy(param.ModelName, group); !enabled {
+		return model.GetRandomSatisfiedChannel(group, param.ModelName, retry, param.RequestPath)
+	}
+	channels, err := model.GetSatisfiedChannelsInPriorityOrder(group, param.ModelName, param.RequestPath)
+	if err != nil {
+		return nil, err
+	}
+	channels, err = FilterModelHealthCandidates(channels, param.ModelName, group)
+	if err != nil {
+		return nil, err
+	}
+	return model.SelectSatisfiedChannelFromCandidates(channels, retry)
 }

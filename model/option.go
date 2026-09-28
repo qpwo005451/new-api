@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -224,6 +225,14 @@ func validateOptionValue(key string, value string) error {
 	}
 	if key == "model_retry_policy_setting.virtual_model_routes" {
 		return operation_setting.ValidateVirtualModelRoutes(value)
+	}
+	if key == "model_health_policy_setting.rules" {
+		return operation_setting.ValidateModelHealthPolicy(value)
+	}
+	if key == "model_health_policy_setting.enabled" {
+		if value != "true" && value != "false" {
+			return fmt.Errorf("model health policy enabled must be true or false")
+		}
 	}
 	if key == "rankings_channel_group_setting.groups" {
 		return operation_setting.ValidateRankingsChannelGroups(value)

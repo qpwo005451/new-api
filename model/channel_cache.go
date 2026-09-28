@@ -257,6 +257,68 @@ func GetOrderedSatisfiedChannels(group string, model string, requestPath string)
 	return channels, nil
 }
 
+// GetSatisfiedChannelsInPriorityOrder returns every selectable channel for the
+// model in the same order used by normal selection.
+func GetSatisfiedChannelsInPriorityOrder(group string, model string, requestPath string) ([]*Channel, error) {
+	return GetOrderedSatisfiedChannels(group, model, requestPath)
+}
+
+// SelectSatisfiedChannelFromCandidates applies priority/weight selection to a
+// pre-filtered candidate list.
+func SelectSatisfiedChannelFromCandidates(channels []*Channel, retry int) (*Channel, error) {
+	if len(channels) == 0 {
+		return nil, nil
+	}
+	priorities := make(map[int]struct{})
+	for _, channel := range channels {
+		if channel != nil {
+			priorities[int(channel.GetPriority())] = struct{}{}
+		}
+	}
+	sorted := make([]int, 0, len(priorities))
+	for priority := range priorities {
+		sorted = append(sorted, priority)
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(sorted)))
+	if len(sorted) == 0 {
+		return nil, nil
+	}
+	if retry < 0 {
+		retry = 0
+	}
+	if retry >= len(sorted) {
+		retry = len(sorted) - 1
+	}
+	targetPriority := int64(sorted[retry])
+	var targetChannels []*Channel
+	sumWeight := 0
+	for _, channel := range channels {
+		if channel != nil && channel.GetPriority() == targetPriority {
+			targetChannels = append(targetChannels, channel)
+			sumWeight += channel.GetWeight()
+		}
+	}
+	if len(targetChannels) == 0 {
+		return nil, nil
+	}
+	smoothingFactor := 1
+	smoothingAdjustment := 0
+	if sumWeight == 0 {
+		sumWeight = len(targetChannels) * 100
+		smoothingAdjustment = 100
+	} else if sumWeight/len(targetChannels) < 10 {
+		smoothingFactor = 100
+	}
+	randomWeight := rand.Intn(sumWeight * smoothingFactor)
+	for _, channel := range targetChannels {
+		randomWeight -= channel.GetWeight()*smoothingFactor + smoothingAdjustment
+		if randomWeight < 0 {
+			return channel, nil
+		}
+	}
+	return targetChannels[len(targetChannels)-1], nil
+}
+
 // filterChannelsByRequestPathAndModel restricts candidates by request path and
 // model. Only Advanced Custom (type 58) channels are path-checked: they are kept
 // only when one of their configured routes matches requestPath and model. All

@@ -252,6 +252,8 @@ export type ModelSettings = {
   'upstream_rate_limit_setting.enabled': boolean
   'upstream_rate_limit_setting.rules': string
   'model_retry_policy_setting.virtual_model_routes': string
+  'model_health_policy_setting.enabled': boolean
+  'model_health_policy_setting.rules': string
   'model_deployment.ionet.api_key': string
   'model_deployment.ionet.enabled': boolean
 }

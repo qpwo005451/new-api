@@ -10,6 +10,15 @@ type testConfigWithMap struct {
 	Name  string            `json:"name"`
 }
 
+type testConfigWithStruct struct {
+	Settings testNestedSettings `json:"settings"`
+}
+
+type testNestedSettings struct {
+	Enabled bool   `json:"enabled"`
+	Mode    string `json:"mode,omitempty"`
+}
+
 func TestUpdateConfigFromMap_MapReplacement(t *testing.T) {
 	cfg := &testConfigWithMap{
 		Modes: map[string]string{
@@ -92,5 +101,28 @@ func TestUpdateConfigFromMap_ScalarFieldsUnchanged(t *testing.T) {
 	// modes was not in configMap, should remain unchanged
 	if cfg.Modes["m"] != "v" {
 		t.Errorf("Modes should be unchanged, got %v", cfg.Modes)
+	}
+}
+
+func TestUpdateConfigFromMap_StructReplacementClearsOmittedFields(t *testing.T) {
+	cfg := &testConfigWithStruct{
+		Settings: testNestedSettings{
+			Enabled: true,
+			Mode:    "redis",
+		},
+	}
+
+	err := UpdateConfigFromMap(cfg, map[string]string{
+		"settings": `{"mode":"memory"}`,
+	})
+	if err != nil {
+		t.Fatalf("UpdateConfigFromMap failed: %v", err)
+	}
+
+	if cfg.Settings.Enabled {
+		t.Errorf("Settings.Enabled should be reset when omitted, got %v", cfg.Settings)
+	}
+	if cfg.Settings.Mode != "memory" {
+		t.Errorf("Settings.Mode = %q, want memory", cfg.Settings.Mode)
 	}
 }

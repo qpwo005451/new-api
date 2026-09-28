@@ -347,6 +347,7 @@ export function ModelMutateDrawer({
       'channel_affinity_setting.rules': '[]',
       'upstream_rate_limit_setting.enabled': false,
       'upstream_rate_limit_setting.rules': '[]',
+      'model_retry_policy_setting.virtual_model_routes': '{}',
       'model_deployment.ionet.api_key': '',
       'model_deployment.ionet.enabled': false,
     }

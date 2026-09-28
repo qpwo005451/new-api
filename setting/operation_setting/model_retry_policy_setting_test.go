@@ -1,6 +1,7 @@
 package operation_setting
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -133,6 +134,8 @@ func TestValidateVirtualModelRoutesCapacityBounds(t *testing.T) {
 	assert.NoError(t, ValidateVirtualModelRoutes(`{"auto-free":{"targets":[{"model":"m","capacity":2,"weight":0.5,"shared_capacity_group":"ollama"}]}}`))
 	assert.Error(t, ValidateVirtualModelRoutes(`{"auto-free":{"targets":[{"model":"m","capacity":-1}]}}`))
 	assert.Error(t, ValidateVirtualModelRoutes(`{"auto-free":{"sources":[{"channel_id":1,"weight":-1}]}}`))
+	assert.Error(t, ValidateVirtualModelRoutes(`{"auto-free":{"targets":[{"model":"m","weight":1e999}]}}`))
+	assert.Error(t, ValidateVirtualModelRoutes(`{"auto-free":{"targets":[{"model":"m","shared_capacity_group":"`+strings.Repeat("x", 129)+`"}]}}`))
 }
 
 func TestVirtualPoolStickySettingAllowsUsesAllowlists(t *testing.T) {

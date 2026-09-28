@@ -796,6 +796,9 @@ func (scheduler *VirtualPoolScheduler) renewScheduled(ctx context.Context, sched
 			return
 		}
 	}
+	if scheduled.SessionKey == "" || scheduled.Binding.Generation <= 0 {
+		return
+	}
 	if !scheduler.bindings.Renew(
 		ctx,
 		scheduled.SessionKey,

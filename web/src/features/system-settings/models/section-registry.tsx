@@ -26,6 +26,7 @@ import { GlobalSettingsCard } from './global-settings-card'
 import { GrokSettingsCard } from './grok-settings-card'
 import { RoutingReliabilitySection } from './routing-reliability-section'
 import { UpstreamRateLimitSection } from './upstream-rate-limit-section'
+import { VirtualPoolRoutingSection } from './virtual-pool-routing-section'
 
 function formatJsonForEditor(value: string, fallback: string) {
   const raw = (value ?? '').toString().trim()
@@ -184,6 +185,18 @@ const MODELS_SECTIONS = [
             settings['upstream_rate_limit_setting.enabled'],
           'upstream_rate_limit_setting.rules':
             settings['upstream_rate_limit_setting.rules'],
+        }}
+      />
+    ),
+  },
+  {
+    id: 'virtual-pool-routing',
+    titleKey: 'Virtual Pool Routing',
+    build: (settings: ModelSettings) => (
+      <VirtualPoolRoutingSection
+        defaultValues={{
+          'model_retry_policy_setting.virtual_model_routes':
+            settings['model_retry_policy_setting.virtual_model_routes'],
         }}
       />
     ),

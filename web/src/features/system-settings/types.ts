@@ -251,6 +251,7 @@ export type ModelSettings = {
   'channel_affinity_setting.rules': string
   'upstream_rate_limit_setting.enabled': boolean
   'upstream_rate_limit_setting.rules': string
+  'model_retry_policy_setting.virtual_model_routes': string
   'model_deployment.ionet.api_key': string
   'model_deployment.ionet.enabled': boolean
 }

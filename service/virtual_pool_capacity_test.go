@@ -235,6 +235,38 @@ func TestVirtualPoolSchedulerRenewsCapacityLeaseForLongRunningAttempt(t *testing
 	require.NoError(t, scheduler.Abort(context.Background(), scheduled, now.Add(12*time.Second)))
 }
 
+func TestVirtualPoolSchedulerRenewsCapacityLeaseWithoutSessionBinding(t *testing.T) {
+	now := time.Date(2026, time.September, 28, 14, 50, 0, 0, time.UTC)
+	store := NewVirtualPoolMemoryBindingStore()
+	capacity := NewVirtualPoolMemoryCapacityStore()
+	scheduler := NewVirtualPoolScheduler(store, capacity)
+	candidates := []VirtualPoolCandidate{{
+		AccountIdentity:  "account-a",
+		FinalMappedModel: "model",
+		Capacity:         1,
+	}}
+
+	scheduled, err := scheduler.SelectCapacityWithOptions(
+		context.Background(),
+		"owner",
+		candidates,
+		now,
+		VirtualPoolSchedulerOptions{CapacityLease: time.Second},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, scheduled)
+	require.Empty(t, scheduled.SessionKey)
+	require.Zero(t, scheduled.Binding.Generation)
+
+	attemptCtx, cancelAttempt := context.WithCancelCause(context.Background())
+	scheduled.setCancelAttempt(cancelAttempt)
+	scheduler.renewScheduled(context.Background(), scheduled, now.Add(500*time.Millisecond))
+
+	assert.NoError(t, context.Cause(attemptCtx), "capacity-only attempts must not require a session binding")
+	assert.False(t, scheduled.LeaseLost())
+	require.NoError(t, scheduler.Release(context.Background(), scheduled))
+}
+
 func TestVirtualPoolSchedulerCancelsAttemptWhenLeaseRenewalFails(t *testing.T) {
 	now := time.Date(2026, time.September, 28, 14, 50, 0, 0, time.UTC)
 	store := NewVirtualPoolMemoryBindingStore()

@@ -2,6 +2,7 @@ package operation_setting
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 
@@ -370,16 +371,28 @@ func ValidateVirtualModelRoutes(value string) error {
 			if source.ChannelId <= 0 {
 				return fmt.Errorf("virtual model %q source %d needs a positive channel_id", virtualModel, index)
 			}
-			if source.Capacity < 0 || source.Weight < 0 {
-				return fmt.Errorf("virtual model %q source %d has a negative capacity or weight", virtualModel, index)
+			if source.Capacity < 0 {
+				return fmt.Errorf("virtual model %q source %d has a negative capacity", virtualModel, index)
+			}
+			if math.IsNaN(source.Weight) || math.IsInf(source.Weight, 0) || source.Weight < 0 {
+				return fmt.Errorf("virtual model %q source %d has an invalid weight", virtualModel, index)
+			}
+			if len(strings.TrimSpace(source.SharedCapacityGroup)) > 128 {
+				return fmt.Errorf("virtual model %q source %d has a shared capacity group longer than 128 characters", virtualModel, index)
 			}
 		}
 		for index, target := range route.Targets {
 			if strings.TrimSpace(target.Model) == "" {
 				return fmt.Errorf("virtual model %q route target %d has an empty model", virtualModel, index)
 			}
-			if target.Capacity < 0 || target.Weight < 0 {
-				return fmt.Errorf("virtual model %q target %d has a negative capacity or weight", virtualModel, index)
+			if target.Capacity < 0 {
+				return fmt.Errorf("virtual model %q target %d has a negative capacity", virtualModel, index)
+			}
+			if math.IsNaN(target.Weight) || math.IsInf(target.Weight, 0) || target.Weight < 0 {
+				return fmt.Errorf("virtual model %q target %d has an invalid weight", virtualModel, index)
+			}
+			if len(strings.TrimSpace(target.SharedCapacityGroup)) > 128 {
+				return fmt.Errorf("virtual model %q target %d has a shared capacity group longer than 128 characters", virtualModel, index)
 			}
 			for effort, mappedEffort := range target.ReasoningEffortMap {
 				if strings.TrimSpace(effort) == "" || strings.TrimSpace(mappedEffort) == "" {

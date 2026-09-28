@@ -118,3 +118,57 @@ func TestResolveVirtualPoolSessionIgnoresNonStringBodyFields(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, session)
 }
+
+func TestResolveVirtualPoolSessionCodexThreadModeSeparatesSubagents(t *testing.T) {
+	installVirtualPoolStickyForTest(t, operation_setting.VirtualPoolStickySetting{
+		Enabled:     true,
+		SessionMode: operation_setting.VirtualPoolSessionModeThread,
+	})
+
+	root := newVirtualPoolSessionContext(t, map[string][]string{
+		"thread-id":  {"thread-child-a"},
+		"session-id": {"root-session"},
+	})
+	childA, err := ResolveVirtualPoolSession(root, "deepseek v4.1 flash")
+	require.NoError(t, err)
+	require.NotNil(t, childA)
+	assert.Equal(t, "thread-id", childA.Source)
+
+	childB := newVirtualPoolSessionContext(t, map[string][]string{
+		"thread-id":  {"thread-child-b"},
+		"session-id": {"root-session"},
+	})
+	childBSession, err := ResolveVirtualPoolSession(childB, "deepseek v4.1 flash")
+	require.NoError(t, err)
+	require.NotNil(t, childBSession)
+	assert.Equal(t, "thread-id", childBSession.Source)
+	assert.NotEqual(t, childA.CacheKey, childBSession.CacheKey,
+		"Codex subagents share a root session but must bind by their own thread")
+}
+
+func TestResolveVirtualPoolSessionCodexRootModeMergesSubagents(t *testing.T) {
+	installVirtualPoolStickyForTest(t, operation_setting.VirtualPoolStickySetting{
+		Enabled:     true,
+		SessionMode: operation_setting.VirtualPoolSessionModeRoot,
+	})
+
+	root := newVirtualPoolSessionContext(t, map[string][]string{
+		"thread-id":  {"thread-child-a"},
+		"session-id": {"root-session"},
+	})
+	childA, err := ResolveVirtualPoolSession(root, "deepseek v4.1 flash")
+	require.NoError(t, err)
+	require.NotNil(t, childA)
+	assert.Equal(t, "session-id", childA.Source)
+
+	childB := newVirtualPoolSessionContext(t, map[string][]string{
+		"thread-id":  {"thread-child-b"},
+		"session-id": {"root-session"},
+	})
+	childBSession, err := ResolveVirtualPoolSession(childB, "deepseek v4.1 flash")
+	require.NoError(t, err)
+	require.NotNil(t, childBSession)
+	assert.Equal(t, "session-id", childBSession.Source)
+	assert.Equal(t, childA.CacheKey, childBSession.CacheKey,
+		"root mode intentionally merges Codex subagent threads onto the root session")
+}

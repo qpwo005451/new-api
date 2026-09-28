@@ -1,15 +1,19 @@
 package service
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -144,6 +148,45 @@ func TestVirtualRouteHealthIgnoresClientErrorsAndDisabledRoutes(t *testing.T) {
 	assert.Equal(t, 2421, first.Id)
 }
 
+func TestVirtualRouteHealthRedisFailureFailsClosedWhenRequired(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	const modelName = "auto-free-health-redis-required"
+	createChannelSelectAutoGroupsChannel(t, db, 2431, "default", "redis-health-alpha")
+	createChannelSelectAutoGroupsChannel(t, db, 2432, "default", "redis-health-beta")
+	model.InitChannelCache()
+	installVirtualRouteHealthRoute(t, modelName, operation_setting.VirtualModelRouteHealth{
+		Enabled:          true,
+		FailureThreshold: 1,
+		CooldownSeconds:  60,
+	}, "redis-health-alpha", "redis-health-beta")
+
+	previousRedisEnabled := common.RedisEnabled
+	previousRDB := common.RDB
+	previousSticky := operation_setting.GetModelRetryPolicySetting().VirtualPoolSticky
+	common.RedisEnabled = false
+	common.RDB = nil
+	operation_setting.GetModelRetryPolicySetting().VirtualPoolSticky = operation_setting.VirtualPoolStickySetting{
+		Enabled:               true,
+		BindingMode:           operation_setting.VirtualPoolBindingModeRedis,
+		RedisRequiredForReady: true,
+	}
+	t.Cleanup(func() {
+		common.RedisEnabled = previousRedisEnabled
+		common.RDB = previousRDB
+		operation_setting.GetModelRetryPolicySetting().VirtualPoolSticky = previousSticky
+	})
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyVirtualUpstreamModel, "redis-health-alpha")
+
+	param := newVirtualRouteHealthAttempt(ctx, modelName)
+	channel, _, err := CacheGetRandomSatisfiedChannel(param)
+	require.ErrorIs(t, err, ErrVirtualPoolStoreUnavailable)
+	assert.Nil(t, channel, "a required Redis health store must not silently fall back to process-local state")
+}
+
 func TestVirtualRouteHealthEntryCooldownDoublesUpToTheMaximum(t *testing.T) {
 	health := operation_setting.VirtualModelRouteHealth{
 		Enabled:            true,
@@ -153,19 +196,118 @@ func TestVirtualRouteHealthEntryCooldownDoublesUpToTheMaximum(t *testing.T) {
 	}.Normalize()
 
 	entry := &virtualRouteHealthEntry{}
-	entry.recordFailure(health)
+	now := time.Date(2026, time.September, 28, 18, 0, 0, 0, time.UTC)
+	entry.recordFailure(health, now)
 	assert.True(t, entry.cooldownUntil.IsZero(), "the first failure stays below the threshold")
 
-	entry.recordFailure(health)
+	entry.recordFailure(health, now)
 	assert.False(t, entry.cooldownUntil.IsZero())
 
 	entry.recordSuccess()
 	assert.True(t, entry.cooldownUntil.IsZero(), "a success clears the cooldown")
 
 	for i := 0; i < 8; i++ {
-		entry.recordFailure(health)
+		entry.recordFailure(health, now)
 	}
 	assert.False(t, entry.cooldownUntil.IsZero())
+}
+
+func TestVirtualPoolRedisHealthSharesCooldownAcrossClients(t *testing.T) {
+	server := miniredis.RunT(t)
+	server.SetTime(time.Date(2026, time.September, 28, 18, 30, 0, 0, time.UTC))
+	clientA := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	clientB := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() {
+		_ = clientA.Close()
+		_ = clientB.Close()
+	})
+	storeA := NewVirtualPoolRedisHealthStore(clientA)
+	storeB := NewVirtualPoolRedisHealthStore(clientB)
+	ctx := context.Background()
+	now := time.Date(2026, time.September, 28, 18, 30, 0, 0, time.UTC)
+	health := operation_setting.VirtualModelRouteHealth{
+		Enabled:            true,
+		FailureThreshold:   1,
+		CooldownSeconds:    60,
+		MaxCooldownSeconds: 120,
+	}
+
+	require.NoError(t, storeA.RecordFailure(ctx, "entry", health, now))
+	cooling, err := storeB.IsCoolingDown(ctx, "entry", now.Add(time.Second))
+	require.NoError(t, err)
+	assert.True(t, cooling, "a second instance must observe the shared cooldown")
+
+	server.SetTime(now.Add(2 * time.Minute))
+	cooling, err = storeB.IsCoolingDown(ctx, "entry", now.Add(2*time.Minute))
+	require.NoError(t, err)
+	assert.False(t, cooling, "the cooldown expires without another process-local reset")
+
+	require.NoError(t, storeB.RecordSuccess(ctx, "entry"))
+	cooling, err = storeA.IsCoolingDown(ctx, "entry", now.Add(time.Second))
+	require.NoError(t, err)
+	assert.False(t, cooling)
+}
+
+func TestVirtualRouteHealthCooldownDoublesAcrossStoreImplementations(t *testing.T) {
+	health := operation_setting.VirtualModelRouteHealth{
+		Enabled:            true,
+		FailureThreshold:   2,
+		CooldownSeconds:    60,
+		MaxCooldownSeconds: 120,
+	}.Normalize()
+	now := time.Date(2026, time.September, 28, 19, 0, 0, 0, time.UTC)
+
+	memory := NewVirtualRouteMemoryHealthStore()
+	require.NoError(t, memory.RecordFailure(context.Background(), "entry", health, now))
+	cooling, err := memory.IsCoolingDown(context.Background(), "entry", now)
+	require.NoError(t, err)
+	assert.False(t, cooling)
+	require.NoError(t, memory.RecordFailure(context.Background(), "entry", health, now))
+	cooling, err = memory.IsCoolingDown(context.Background(), "entry", now.Add(time.Second))
+	require.NoError(t, err)
+	assert.True(t, cooling)
+
+	server := miniredis.RunT(t)
+	server.SetTime(now)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	redisStore := NewVirtualPoolRedisHealthStore(client)
+	require.NoError(t, redisStore.RecordFailure(context.Background(), "entry", health, now))
+	cooling, err = redisStore.IsCoolingDown(context.Background(), "entry", now)
+	require.NoError(t, err)
+	assert.False(t, cooling)
+	require.NoError(t, redisStore.RecordFailure(context.Background(), "entry", health, now))
+	cooling, err = redisStore.IsCoolingDown(context.Background(), "entry", now.Add(time.Second))
+	require.NoError(t, err)
+	assert.True(t, cooling)
+}
+
+func TestVirtualPoolRedisHealthUsesServerTimeForCooldown(t *testing.T) {
+	serverTime := time.Date(2026, time.September, 28, 19, 30, 0, 0, time.UTC)
+	server := miniredis.RunT(t)
+	server.SetTime(serverTime)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	store := NewVirtualPoolRedisHealthStore(client)
+	health := operation_setting.VirtualModelRouteHealth{
+		Enabled:            true,
+		FailureThreshold:   1,
+		CooldownSeconds:    60,
+		MaxCooldownSeconds: 60,
+	}
+	// The caller clock is intentionally far ahead. Redis must still own the
+	// cooldown clock so instances with skewed clocks agree on expiry.
+	callerTime := serverTime.Add(24 * time.Hour)
+
+	require.NoError(t, store.RecordFailure(context.Background(), "entry", health, callerTime))
+	cooling, err := store.IsCoolingDown(context.Background(), "entry", callerTime)
+	require.NoError(t, err)
+	assert.True(t, cooling)
+
+	server.SetTime(serverTime.Add(time.Minute))
+	cooling, err = store.IsCoolingDown(context.Background(), "entry", callerTime)
+	require.NoError(t, err)
+	assert.False(t, cooling)
 }
 
 func TestIsVirtualRouteUnavailableStatus(t *testing.T) {

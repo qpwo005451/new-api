@@ -60,6 +60,10 @@ func OaiChatToResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		return nil, types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
 	}
 
+	if info != nil {
+		info.UpstreamResponseID = strings.TrimSpace(responsesResp.ID)
+	}
+	service.CommitVirtualPoolResponseOwner(c, responsesResp.ID)
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 	if info.AttemptOutcome != nil && info.AttemptOutcome.IsActive() {
 		_ = info.AttemptOutcome.MarkSuccess()

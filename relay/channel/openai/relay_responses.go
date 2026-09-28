@@ -43,6 +43,7 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 
 	// 写入新的 response body（先剥离上游 encrypted_content，第三方客户端无法解密）
 	responseBody = relaycommon.StripResponsesEncryptedContent(responseBody)
+	service.CommitVirtualPoolResponseOwner(c, info.UpstreamResponseID)
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 
 	// compute usage
@@ -179,6 +180,14 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		if normalized {
 			logger.LogWarn(c, "normalized integral decimal in Grok 4.5 shell_command timeout_ms")
 		}
+		if streamResponse.Type == "response.completed" ||
+			streamResponse.Type == "response.done" ||
+			streamResponse.Type == "response.incomplete" {
+			terminalEventSeen = true
+			if streamResponse.Response != nil {
+				service.CommitVirtualPoolResponseOwner(c, streamResponse.Response.ID)
+			}
+		}
 		for _, streamEvent := range streamEvents {
 			sendResponsesStreamData(c, streamEvent.response, streamEvent.data)
 		}
@@ -222,7 +231,6 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			sr.Stop(streamErr)
 			return
 		case "response.completed", "response.done", "response.incomplete":
-			terminalEventSeen = true
 			if streamResponse.Response != nil {
 				if streamResponse.Response.Usage != nil {
 					if streamResponse.Response.Usage.InputTokens != 0 {

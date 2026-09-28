@@ -347,6 +347,7 @@ func TestVirtualPoolE2EPreviousResponseIDPinsTheOriginalCandidate(t *testing.T) 
 
 	first := fixture.postPath(t, "/v1/responses", "", false)
 	require.Equal(t, http.StatusOK, first.Code)
+	assert.Contains(t, first.Body.String(), `"id":"resp-e2e"`)
 	require.Equal(t, int64(1), fixture.upstreamA.calls.Load())
 	require.Equal(t, int64(0), fixture.upstreamB.calls.Load())
 

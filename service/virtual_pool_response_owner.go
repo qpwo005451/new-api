@@ -90,6 +90,20 @@ func RecordVirtualPoolResponseOwner(c *gin.Context, responseID, candidateKey str
 	}
 }
 
+// CommitVirtualPoolResponseOwner publishes the response id after the protocol
+// handler has completed the upstream exchange but before the id becomes
+// visible downstream.
+func CommitVirtualPoolResponseOwner(c *gin.Context, responseID string) {
+	if c == nil || strings.TrimSpace(responseID) == "" {
+		return
+	}
+	candidateKey := common.GetContextKeyString(c, constant.ContextKeyVirtualCandidateKey)
+	if strings.TrimSpace(candidateKey) == "" {
+		return
+	}
+	RecordVirtualPoolResponseOwner(c, responseID, candidateKey)
+}
+
 // ResolveVirtualPoolResponseOwner looks up the candidate that produced a
 // previous Responses API id. The lookup is scoped to the authenticated
 // user/token/group/model so one caller cannot pin another caller's state.

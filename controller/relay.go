@@ -427,9 +427,6 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			if newAPIError == nil && outcome.IsCompleteSuccess() && !leaseLost {
 				relayInfo.LastError = nil
 				service.RecordVirtualRouteSuccess(c, channel.Id, relayInfo.OriginModelName)
-				if responseID := strings.TrimSpace(relayInfo.UpstreamResponseID); responseID != "" {
-					service.RecordVirtualPoolResponseOwner(c, responseID, outcome.CandidateKey)
-				}
 				retryParam.ConfirmVirtualPoolAttempt(c)
 				retryParam.ReleaseVirtualPoolAttempt(c, false)
 				service.ReportOpenCodeRouteFeedback(relayInfo, true)

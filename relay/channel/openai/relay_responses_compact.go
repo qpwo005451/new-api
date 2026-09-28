@@ -33,6 +33,7 @@ func OaiResponsesCompactionHandler(c *gin.Context, info *relaycommon.RelayInfo, 
 		info.UpstreamResponseID = strings.TrimSpace(compactResp.ID)
 	}
 
+	service.CommitVirtualPoolResponseOwner(c, compactResp.ID)
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 
 	usage := dto.Usage{}

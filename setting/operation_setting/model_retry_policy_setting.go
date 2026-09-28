@@ -189,9 +189,6 @@ const (
 
 // Normalize fills defaults and clamps values to safe operating ranges.
 func (setting VirtualPoolStickySetting) Normalize() VirtualPoolStickySetting {
-	if !setting.Enabled {
-		return setting
-	}
 	if setting.SessionMode != VirtualPoolSessionModeRoot {
 		setting.SessionMode = VirtualPoolSessionModeThread
 	}

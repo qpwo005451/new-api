@@ -727,6 +727,7 @@ func usesVirtualPoolOutcome(retryParam *service.RetryParam) bool {
 		return false
 	}
 	return prepared.Session != nil ||
+		prepared.CapacityEnabled ||
 		operation_setting.GetModelRetryPolicySetting().VirtualPoolSticky.Normalize().Enabled
 }
 

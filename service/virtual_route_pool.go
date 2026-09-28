@@ -98,3 +98,25 @@ func virtualRoutePool(route operation_setting.VirtualModelRoute, requestReasonin
 	}
 	return entries
 }
+
+// VirtualRouteCapacityEnabled reports whether an operator explicitly gave this
+// pool a concurrency limit. Legacy pools without capacity remain ordinary
+// failover routes and must not acquire a default single-slot lease.
+func VirtualRouteCapacityEnabled(route operation_setting.VirtualModelRoute) bool {
+	for _, group := range route.CapacityGroups {
+		if group.Capacity > 0 {
+			return true
+		}
+	}
+	for _, target := range route.Targets {
+		if target.Capacity > 0 {
+			return true
+		}
+	}
+	for _, source := range route.Sources {
+		if source.Capacity > 0 {
+			return true
+		}
+	}
+	return false
+}

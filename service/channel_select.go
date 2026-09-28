@@ -68,6 +68,7 @@ type VirtualPoolPreparedRoute struct {
 	ModelName            string
 	RequestPath          string
 	TokenGroup           string
+	CapacityEnabled      bool
 	Candidates           []VirtualPoolCandidate
 	Limit                int
 	Offset               int
@@ -260,6 +261,7 @@ func (p *RetryParam) prepareVirtualRoute() error {
 	}
 	p.virtualOffset = virtualRouteStartIndex(p.ModelName, route.RotationMode(), startScope)
 	p.preparedRoute.Offset = p.virtualOffset
+	p.preparedRoute.CapacityEnabled = VirtualRouteCapacityEnabled(route)
 	if err := p.prepareVirtualPoolScheduling(); err != nil {
 		return err
 	}
@@ -294,7 +296,7 @@ func (p *RetryParam) prepareVirtualPoolScheduling() error {
 		return nil
 	}
 	setting := operation_setting.GetModelRetryPolicySetting().VirtualPoolSticky.Normalize()
-	if !setting.Enabled {
+	if !setting.Enabled && !p.preparedRoute.CapacityEnabled {
 		return nil
 	}
 	if err := p.PrepareVirtualPoolAttempt(p.Ctx); err != nil {
@@ -356,7 +358,7 @@ func (p *RetryParam) PrepareVirtualPoolAttempt(c *gin.Context) error {
 		ClearVirtualPoolAttemptContext(c)
 	}
 	setting := operation_setting.GetModelRetryPolicySetting().VirtualPoolSticky.Normalize()
-	if !setting.Enabled {
+	if !setting.Enabled && !p.preparedRoute.CapacityEnabled {
 		return nil
 	}
 	bindings, capacity, err := virtualPoolStores(setting)
@@ -634,6 +636,13 @@ func (p *RetryParam) PeekPreparedVirtualPoolCandidate() (VirtualPoolCandidate, b
 		index %= len(p.preparedRoute.Candidates)
 	}
 	return p.preparedRoute.Candidates[index], true
+}
+
+func (p *RetryParam) PeekPreparedVirtualPoolScheduled() (*VirtualPoolScheduledCandidate, bool) {
+	if p == nil || p.preparedRoute == nil || p.preparedRoute.Scheduled == nil {
+		return nil, false
+	}
+	return p.preparedRoute.Scheduled, true
 }
 
 // NextPreparedVirtualPoolCandidate advances through the prepared route using

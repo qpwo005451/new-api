@@ -3,15 +3,18 @@ package service
 import (
 	"context"
 	"fmt"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/alicebob/miniredis/v2"
+	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -593,4 +596,73 @@ func TestVirtualPoolCapacityGroupLimitCanBeChangedAtRuntime(t *testing.T) {
 	for _, scheduled := range leases {
 		require.NoError(t, scheduler.Release(context.Background(), scheduled))
 	}
+}
+
+func TestVirtualRoutePoolCapacityAppliesWhenStickyIsDisabled(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	const modelName = "auto-free-sticky-disabled-capacity"
+	createMultiModelSelectChannel(t, db, 2811, "default", "sticky-disabled-model")
+	model.InitChannelCache()
+	installVirtualRouteForTest(t, modelName, operation_setting.VirtualModelRoute{
+		CapacityGroups: map[string]operation_setting.VirtualModelRouteCapacityGroup{
+			"input-lab": {Capacity: 1},
+		},
+		Targets: []operation_setting.VirtualModelRouteTarget{{
+			Model:               "sticky-disabled-model",
+			SharedCapacityGroup: "input-lab",
+		}},
+	})
+	installVirtualPoolStickyForTest(t, operation_setting.VirtualPoolStickySetting{})
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	param := newVirtualRouteSourceGroup(ctx, modelName)
+
+	_, _, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	prepared := param.PreparedVirtualPoolRoute()
+	require.NotNil(t, prepared)
+	require.Len(t, prepared.Candidates, 1)
+	require.True(t, prepared.CapacityEnabled,
+		"a route with an explicit capacity group must schedule capacity even without sticky")
+
+	scheduled, ok := param.PeekPreparedVirtualPoolScheduled()
+	require.True(t, ok)
+	require.NotNil(t, scheduled)
+	require.NotZero(t, scheduled.CapacityLease.Generation)
+
+	next := newVirtualRouteSourceGroup(ctx, modelName)
+	_, _, err = CacheGetRandomSatisfiedChannel(next)
+	require.ErrorIs(t, err, ErrVirtualPoolCapacityExhausted,
+		"the configured group ceiling must survive a sticky restart or configuration change")
+	next.ReleaseVirtualPoolAttempt(ctx, true)
+	param.ReleaseVirtualPoolAttempt(ctx, false)
+}
+
+func TestVirtualRoutePoolWithoutExplicitCapacityDoesNotScheduleLeases(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	const modelName = "auto-free-without-capacity"
+	createMultiModelSelectChannel(t, db, 2812, "default", "without-capacity-model")
+	model.InitChannelCache()
+	installVirtualRouteForTest(t, modelName, operation_setting.VirtualModelRoute{
+		Targets: []operation_setting.VirtualModelRouteTarget{{
+			Model: "without-capacity-model",
+		}},
+	})
+	installVirtualPoolStickyForTest(t, operation_setting.VirtualPoolStickySetting{})
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	param := newVirtualRouteSourceGroup(ctx, modelName)
+
+	_, _, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	prepared := param.PreparedVirtualPoolRoute()
+	require.NotNil(t, prepared)
+	require.False(t, prepared.CapacityEnabled,
+		"a legacy route without explicit capacity must retain its original no-lease behavior")
+	_, ok := param.PeekPreparedVirtualPoolScheduled()
+	require.False(t, ok)
 }

@@ -85,6 +85,81 @@ func TestVirtualRouteHealthMovesCoolingEntryBehindHealthyOnes(t *testing.T) {
 	require.ErrorIs(t, err, model.ErrPriorityFallbackExhausted)
 }
 
+func TestVirtualRouteHealthDisableModelSkipsEntryUntilCooldownExpires(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	const modelName = "auto-free-health-disable-model"
+	createChannelSelectAutoGroupsChannel(t, db, 2441, "default", "disable-alpha")
+	createChannelSelectAutoGroupsChannel(t, db, 2442, "default", "disable-beta")
+	model.InitChannelCache()
+	installVirtualRouteHealthRoute(t, modelName, operation_setting.VirtualModelRouteHealth{
+		Enabled:          true,
+		DisableModel:     true,
+		FailureThreshold: 2,
+		CooldownSeconds:  60,
+	}, "disable-alpha", "disable-beta")
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyVirtualUpstreamModel, "disable-alpha")
+
+	RecordVirtualRouteFailure(ctx, 2441, modelName, http.StatusBadGateway)
+	RecordVirtualRouteFailure(ctx, 2441, modelName, http.StatusServiceUnavailable)
+
+	param := newVirtualRouteHealthAttempt(ctx, modelName)
+	first, _, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.NotNil(t, first)
+	assert.Equal(t, 2442, first.Id, "a disabled model entry must not be used as a last resort")
+
+	param.IncreaseRetry()
+	_, _, err = CacheGetRandomSatisfiedChannel(param)
+	require.ErrorIs(t, err, model.ErrPriorityFallbackExhausted,
+		"the disabled entry must be removed until the cooldown expires")
+}
+
+func TestVirtualRouteHealthDisableModelExpiresAcrossStores(t *testing.T) {
+	health := operation_setting.VirtualModelRouteHealth{
+		Enabled:          true,
+		DisableModel:     true,
+		FailureThreshold: 2,
+		CooldownSeconds:  300,
+	}.Normalize()
+	now := time.Date(2026, time.September, 28, 20, 0, 0, 0, time.UTC)
+
+	memory := NewVirtualRouteMemoryHealthStore()
+	require.NoError(t, memory.RecordFailure(context.Background(), "memory-entry", health, now))
+	cooling, err := memory.IsCoolingDown(context.Background(), "memory-entry", now)
+	require.NoError(t, err)
+	assert.False(t, cooling)
+	require.NoError(t, memory.RecordFailure(context.Background(), "memory-entry", health, now))
+	cooling, err = memory.IsCoolingDown(context.Background(), "memory-entry", now.Add(time.Second))
+	require.NoError(t, err)
+	assert.True(t, cooling)
+	cooling, err = memory.IsCoolingDown(context.Background(), "memory-entry", now.Add(5*time.Minute))
+	require.NoError(t, err)
+	assert.False(t, cooling, "the model-level disable must expire automatically")
+
+	server := miniredis.RunT(t)
+	server.SetTime(now)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	redisStore := NewVirtualPoolRedisHealthStore(client)
+	require.NoError(t, redisStore.RecordFailure(context.Background(), "redis-entry", health, now))
+	cooling, err = redisStore.IsCoolingDown(context.Background(), "redis-entry", now)
+	require.NoError(t, err)
+	assert.False(t, cooling)
+	require.NoError(t, redisStore.RecordFailure(context.Background(), "redis-entry", health, now))
+	cooling, err = redisStore.IsCoolingDown(context.Background(), "redis-entry", now.Add(time.Second))
+	require.NoError(t, err)
+	assert.True(t, cooling)
+
+	server.SetTime(now.Add(5 * time.Minute))
+	cooling, err = redisStore.IsCoolingDown(context.Background(), "redis-entry", now.Add(5*time.Minute))
+	require.NoError(t, err)
+	assert.False(t, cooling, "Redis mode must release the model-level disable after five minutes")
+}
+
 func TestVirtualRouteHealthSuccessClearsCooldown(t *testing.T) {
 	db := setupChannelSelectAutoGroupsTest(t)
 	const modelName = "auto-free-health-recovery"

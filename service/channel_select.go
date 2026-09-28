@@ -226,7 +226,7 @@ func (p *RetryParam) prepareVirtualRoute() error {
 		}
 	}
 	if route.Health.Enabled {
-		healthy, err := moveCoolingCandidatesLast(serviceContext(p.Ctx), p.virtualRoute)
+		healthy, err := moveCoolingCandidatesLast(serviceContext(p.Ctx), p.virtualRoute, route.Health.DisableModel)
 		if err != nil {
 			p.virtualErr = err
 			return err
@@ -539,9 +539,14 @@ func virtualPoolSessionKeyIndex(session *VirtualPoolSession, channel *model.Chan
 }
 
 // moveCoolingCandidatesLast keeps the pool order but moves entries that are
-// cooling down behind the healthy ones. It returns how many entries stayed in
-// the healthy part.
-func moveCoolingCandidatesLast(ctx context.Context, candidates []virtualRouteCandidate) (int, error) {
+// cooling down behind the healthy ones. Strict disable mode removes disabled
+// entries for the whole request instead of using them as a last resort. It
+// returns how many entries stayed in the healthy part.
+func moveCoolingCandidatesLast(
+	ctx context.Context,
+	candidates []virtualRouteCandidate,
+	disableModel bool,
+) (int, error) {
 	now := time.Now()
 	healthy := make([]virtualRouteCandidate, 0, len(candidates))
 	cooling := make([]virtualRouteCandidate, 0, len(candidates))
@@ -556,10 +561,17 @@ func moveCoolingCandidatesLast(ctx context.Context, candidates []virtualRouteCan
 			return 0, err
 		}
 		if cooldown {
+			if disableModel {
+				continue
+			}
 			cooling = append(cooling, candidate)
 			continue
 		}
 		healthy = append(healthy, candidate)
+	}
+	if disableModel {
+		copy(candidates, healthy)
+		return len(healthy), nil
 	}
 	copy(candidates, append(healthy, cooling...))
 	return len(healthy), nil

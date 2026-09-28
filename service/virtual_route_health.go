@@ -45,14 +45,6 @@ type virtualRouteHealthEntry struct {
 	cooldownUntil     time.Time
 }
 
-// IsVirtualRouteUnavailableStatus reports whether an upstream status means the
-// pool entry stopped serving, as opposed to a client-side request problem.
-func IsVirtualRouteUnavailableStatus(statusCode int) bool {
-	return statusCode == http.StatusTooManyRequests ||
-		statusCode == http.StatusNotFound ||
-		statusCode >= http.StatusInternalServerError
-}
-
 func virtualRouteHealthKey(virtualModel string, channelID int, upstreamModel string) string {
 	return strings.ToLower(strings.TrimSpace(virtualModel)) + "|" +
 		strconv.Itoa(channelID) + "|" +
@@ -205,6 +197,14 @@ func virtualRouteHealthCooldown(consecutiveErrors int, health operation_setting.
 		cooldown = maxCooldown
 	}
 	return cooldown
+}
+
+// IsVirtualRouteUnavailableStatus reports whether an upstream status means the
+// pool entry stopped serving, as opposed to a client-side request problem.
+func IsVirtualRouteUnavailableStatus(statusCode int) bool {
+	return statusCode == http.StatusTooManyRequests ||
+		statusCode == http.StatusNotFound ||
+		statusCode >= http.StatusInternalServerError
 }
 
 type VirtualPoolRedisHealthStore struct {

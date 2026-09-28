@@ -46,6 +46,7 @@ const (
 // The signal comes from relayed traffic; no probe or extra request is issued.
 type VirtualModelRouteHealth struct {
 	Enabled            bool `json:"enabled"`
+	DisableModel       bool `json:"disable_model,omitempty"`
 	FailureThreshold   int  `json:"failure_threshold,omitempty"`
 	CooldownSeconds    int  `json:"cooldown_seconds,omitempty"`
 	MaxCooldownSeconds int  `json:"max_cooldown_seconds,omitempty"`
@@ -66,6 +67,9 @@ func (health VirtualModelRouteHealth) Normalize() VirtualModelRouteHealth {
 		health.MaxCooldownSeconds = DefaultVirtualModelRouteMaxCooldownSecs
 	}
 	if health.MaxCooldownSeconds < health.CooldownSeconds {
+		health.MaxCooldownSeconds = health.CooldownSeconds
+	}
+	if health.DisableModel {
 		health.MaxCooldownSeconds = health.CooldownSeconds
 	}
 	return health

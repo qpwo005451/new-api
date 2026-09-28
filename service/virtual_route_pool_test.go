@@ -173,6 +173,62 @@ func TestVirtualRoutePoolKeepsStaticTargetsAheadOfSourceChannels(t *testing.T) {
 	}, pool)
 }
 
+func TestVirtualRoutePoolCapacityGroupOverridesMemberCapacity(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	const modelName = "auto-free-capacity-group"
+	createMultiModelSelectChannel(t, db, 2515, "default", "grouped-model")
+	model.InitChannelCache()
+	installVirtualRouteForTest(t, modelName, operation_setting.VirtualModelRoute{
+		CapacityGroups: map[string]operation_setting.VirtualModelRouteCapacityGroup{
+			"ollama": {Capacity: 3},
+		},
+		Targets: []operation_setting.VirtualModelRouteTarget{{
+			Model:               "grouped-model",
+			Capacity:            99,
+			SharedCapacityGroup: "ollama",
+		}},
+	})
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	param := newVirtualRouteSourceGroup(ctx, modelName)
+
+	channel, _, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	candidates := param.PreparedVirtualPoolRoute().Candidates
+	require.Len(t, candidates, 1)
+	assert.Equal(t, 3, candidates[0].Capacity, "the group ceiling must override each member's local capacity")
+}
+
+func TestVirtualRoutePoolTargetBindsSpecificChannel(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	const modelName = "auto-free-target-channel"
+	createMultiModelSelectChannel(t, db, 2516, "default", "target-channel-model")
+	createMultiModelSelectChannel(t, db, 2517, "default", "target-channel-model")
+	model.InitChannelCache()
+	installVirtualRouteForTest(t, modelName, operation_setting.VirtualModelRoute{
+		Targets: []operation_setting.VirtualModelRouteTarget{{
+			Model:     "target-channel-model",
+			ChannelId: 2517,
+		}},
+	})
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	param := newVirtualRouteSourceGroup(ctx, modelName)
+
+	channel, _, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, 2517, channel.Id, "a target with channel_id must bind to that channel only")
+	candidates := param.PreparedVirtualPoolRoute().Candidates
+	require.Len(t, candidates, 1)
+	assert.Equal(t, 2517, candidates[0].Channel.Id)
+}
+
 func TestVirtualRoutePoolReportsExhaustionWhenTheSourceChannelHasNoModels(t *testing.T) {
 	db := setupChannelSelectAutoGroupsTest(t)
 	const modelName = "auto-free-empty-source"

@@ -50,6 +50,14 @@ const capacityFieldsSchema = z.object({
 const virtualModelRouteSchema = z.object({
   rotation: z.enum(['ordered', 'random', 'round_robin']).optional(),
   max_attempts: z.number().int().min(0).max(100).optional(),
+  capacity_groups: z
+    .record(
+      z.string().trim().min(1).max(128),
+      z.object({
+        capacity: z.number().int().min(1).max(100000),
+      })
+    )
+    .optional(),
   health: z
     .object({
       enabled: z.boolean(),
@@ -59,7 +67,12 @@ const virtualModelRouteSchema = z.object({
     })
     .optional(),
   targets: z
-    .array(capacityFieldsSchema.extend({ model: z.string().trim().min(1) }))
+    .array(
+      capacityFieldsSchema.extend({
+        model: z.string().trim().min(1),
+        channel_id: z.number().int().positive().optional(),
+      })
+    )
     .optional(),
   sources: z
     .array(capacityFieldsSchema.extend({ channel_id: z.number().int().positive() }))
@@ -100,16 +113,18 @@ const virtualPoolRoutesExample = JSON.stringify(
     'deepseek-v4.1-flash': {
       rotation: 'round_robin',
       max_attempts: 3,
+      capacity_groups: {
+        'input-subscriptions': { capacity: 15 },
+        ollama: { capacity: 3 },
+      },
       targets: [
         {
           model: 'deepseek-v4.1-flash',
-          capacity: 15,
           weight: 1,
           shared_capacity_group: 'input-subscriptions',
         },
         {
           model: 'deepseek-v4.1-flash',
-          capacity: 3,
           weight: 1,
           shared_capacity_group: 'ollama',
         },

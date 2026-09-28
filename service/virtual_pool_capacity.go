@@ -433,6 +433,7 @@ type VirtualPoolSchedulerOptions struct {
 	CapacityWait      time.Duration
 	PendingRenewEvery time.Duration
 	BusyEscape        bool
+	CandidateOffset   int
 }
 
 func NewVirtualPoolScheduler(bindings VirtualPoolBindingStore, capacity VirtualPoolCapacityStore) *VirtualPoolScheduler {
@@ -502,6 +503,7 @@ func (scheduler *VirtualPoolScheduler) SelectCapacityWithOptions(
 	if options.CapacityLease <= 0 {
 		options.CapacityLease = time.Hour
 	}
+	candidates = rotateVirtualPoolCandidates(candidates, options.CandidateOffset)
 	deadline := now
 	if options.CapacityWait > 0 {
 		deadline = now.Add(options.CapacityWait)
@@ -572,6 +574,7 @@ func (scheduler *VirtualPoolScheduler) selectOnce(
 	if options.CapacityLease <= 0 {
 		options.CapacityLease = time.Hour
 	}
+	candidates = rotateVirtualPoolCandidates(candidates, options.CandidateOffset)
 	ordered, err := scheduler.candidatesByLoad(ctx, candidates, now)
 	if err != nil {
 		return nil, err
@@ -835,6 +838,23 @@ func virtualPoolCandidateCapacity(candidate VirtualPoolCandidate) int {
 		return 1
 	}
 	return candidate.Capacity
+}
+
+func rotateVirtualPoolCandidates(candidates []VirtualPoolCandidate, offset int) []VirtualPoolCandidate {
+	if len(candidates) <= 1 || offset == 0 {
+		return candidates
+	}
+	offset %= len(candidates)
+	if offset < 0 {
+		offset += len(candidates)
+	}
+	if offset == 0 {
+		return candidates
+	}
+	rotated := make([]VirtualPoolCandidate, 0, len(candidates))
+	rotated = append(rotated, candidates[offset:]...)
+	rotated = append(rotated, candidates[:offset]...)
+	return rotated
 }
 
 func virtualPoolCapacityKey(candidate VirtualPoolCandidate) string {

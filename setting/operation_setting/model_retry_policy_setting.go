@@ -21,10 +21,17 @@ const (
 
 type VirtualModelRouteTarget struct {
 	Model               string            `json:"model"`
+	ChannelId           int               `json:"channel_id,omitempty"`
 	ReasoningEffortMap  map[string]string `json:"reasoning_effort_map,omitempty"`
 	Capacity            int               `json:"capacity,omitempty"`
 	Weight              float64           `json:"weight,omitempty"`
 	SharedCapacityGroup string            `json:"shared_capacity_group,omitempty"`
+}
+
+// VirtualModelRouteCapacityGroup sets the shared concurrency ceiling once for
+// every source or target that names the same shared_capacity_group.
+type VirtualModelRouteCapacityGroup struct {
+	Capacity int `json:"capacity"`
 }
 
 // Health policy defaults for routes that enable availability based selection.
@@ -80,11 +87,12 @@ type VirtualModelRouteSource struct {
 // back of the pool. A bare target array is still accepted, which is the ordered
 // form without an attempt limit.
 type VirtualModelRoute struct {
-	Rotation    string                    `json:"rotation,omitempty"`
-	MaxAttempts int                       `json:"max_attempts,omitempty"`
-	Health      VirtualModelRouteHealth   `json:"health,omitempty"`
-	Sources     []VirtualModelRouteSource `json:"sources,omitempty"`
-	Targets     []VirtualModelRouteTarget `json:"targets,omitempty"`
+	Rotation       string                                    `json:"rotation,omitempty"`
+	MaxAttempts    int                                       `json:"max_attempts,omitempty"`
+	Health         VirtualModelRouteHealth                   `json:"health,omitempty"`
+	CapacityGroups map[string]VirtualModelRouteCapacityGroup `json:"capacity_groups,omitempty"`
+	Sources        []VirtualModelRouteSource                 `json:"sources,omitempty"`
+	Targets        []VirtualModelRouteTarget                 `json:"targets,omitempty"`
 }
 
 // HasPool reports whether the route has anything to route to.
@@ -306,9 +314,13 @@ func GetVirtualModelRoute(modelName string) VirtualModelRoute {
 		}
 		// Return a copy so routing never mutates the registered configuration.
 		routed := VirtualModelRoute{
-			Rotation:    route.Rotation,
-			MaxAttempts: route.MaxAttempts,
-			Health:      route.Health.Normalize(),
+			Rotation:       route.Rotation,
+			MaxAttempts:    route.MaxAttempts,
+			Health:         route.Health.Normalize(),
+			CapacityGroups: make(map[string]VirtualModelRouteCapacityGroup, len(route.CapacityGroups)),
+		}
+		for name, group := range route.CapacityGroups {
+			routed.CapacityGroups[name] = group
 		}
 		routed.Sources = make([]VirtualModelRouteSource, len(route.Sources))
 		copy(routed.Sources, route.Sources)
@@ -320,6 +332,7 @@ func GetVirtualModelRoute(modelName string) VirtualModelRoute {
 			}
 			routed.Targets = append(routed.Targets, VirtualModelRouteTarget{
 				Model:               target.Model,
+				ChannelId:           target.ChannelId,
 				ReasoningEffortMap:  effortMap,
 				Capacity:            target.Capacity,
 				Weight:              target.Weight,
@@ -385,6 +398,9 @@ func ValidateVirtualModelRoutes(value string) error {
 			if strings.TrimSpace(target.Model) == "" {
 				return fmt.Errorf("virtual model %q route target %d has an empty model", virtualModel, index)
 			}
+			if target.ChannelId < 0 {
+				return fmt.Errorf("virtual model %q target %d has a negative channel_id", virtualModel, index)
+			}
 			if target.Capacity < 0 {
 				return fmt.Errorf("virtual model %q target %d has a negative capacity", virtualModel, index)
 			}
@@ -398,6 +414,17 @@ func ValidateVirtualModelRoutes(value string) error {
 				if strings.TrimSpace(effort) == "" || strings.TrimSpace(mappedEffort) == "" {
 					return fmt.Errorf("virtual model %q route target %d has an empty reasoning effort mapping", virtualModel, index)
 				}
+			}
+		}
+		for name, group := range route.CapacityGroups {
+			if strings.TrimSpace(name) == "" {
+				return fmt.Errorf("virtual model %q has an empty capacity group name", virtualModel)
+			}
+			if len(strings.TrimSpace(name)) > 128 {
+				return fmt.Errorf("virtual model %q has a capacity group name longer than 128 characters", virtualModel)
+			}
+			if group.Capacity < 0 {
+				return fmt.Errorf("virtual model %q capacity group %q has a negative capacity", virtualModel, name)
 			}
 		}
 	}

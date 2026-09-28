@@ -132,10 +132,14 @@ func TestVirtualPoolStickySettingNormalizeDefaultsAndBounds(t *testing.T) {
 
 func TestValidateVirtualModelRoutesCapacityBounds(t *testing.T) {
 	assert.NoError(t, ValidateVirtualModelRoutes(`{"auto-free":{"targets":[{"model":"m","capacity":2,"weight":0.5,"shared_capacity_group":"ollama"}]}}`))
+	assert.NoError(t, ValidateVirtualModelRoutes(`{"auto-free":{"capacity_groups":{"ollama":{"capacity":3}},"targets":[{"model":"m","shared_capacity_group":"ollama"}]}}`))
+	assert.NoError(t, ValidateVirtualModelRoutes(`{"auto-free":{"targets":[{"model":"m","channel_id":9}]}}`))
 	assert.Error(t, ValidateVirtualModelRoutes(`{"auto-free":{"targets":[{"model":"m","capacity":-1}]}}`))
 	assert.Error(t, ValidateVirtualModelRoutes(`{"auto-free":{"sources":[{"channel_id":1,"weight":-1}]}}`))
 	assert.Error(t, ValidateVirtualModelRoutes(`{"auto-free":{"targets":[{"model":"m","weight":1e999}]}}`))
 	assert.Error(t, ValidateVirtualModelRoutes(`{"auto-free":{"targets":[{"model":"m","shared_capacity_group":"`+strings.Repeat("x", 129)+`"}]}}`))
+	assert.Error(t, ValidateVirtualModelRoutes(`{"auto-free":{"targets":[{"model":"m","channel_id":-1}]}}`))
+	assert.Error(t, ValidateVirtualModelRoutes(`{"auto-free":{"capacity_groups":{"ollama":{"capacity":-1}},"targets":[{"model":"m","shared_capacity_group":"ollama"}]}}`))
 }
 
 func TestVirtualPoolStickySettingAllowsUsesAllowlists(t *testing.T) {

@@ -485,3 +485,112 @@ func TestVirtualPoolCapacityWithoutSessionUsesSharedAccountLimit(t *testing.T) {
 		require.NoError(t, scheduler.Release(context.Background(), scheduled))
 	}
 }
+
+func TestVirtualPoolSchedulerRotatesWithinSharedCapacityGroup(t *testing.T) {
+	now := time.Date(2026, time.September, 28, 16, 30, 0, 0, time.UTC)
+	bindings := NewVirtualPoolMemoryBindingStore()
+	capacity := NewVirtualPoolMemoryCapacityStore()
+	scheduler := NewVirtualPoolScheduler(bindings, capacity)
+	candidates := []VirtualPoolCandidate{
+		{
+			AccountIdentity:  "input-subscription-a",
+			FinalMappedModel: "deepseek-v4.1-flash",
+			Capacity:         15,
+			CapacityGroup:    "input-15",
+		},
+		{
+			AccountIdentity:  "input-subscription-b",
+			FinalMappedModel: "deepseek-v4.1-flash",
+			Capacity:         15,
+			CapacityGroup:    "input-15",
+		},
+		{
+			AccountIdentity:  "input-subscription-c",
+			FinalMappedModel: "deepseek-v4.1-flash",
+			Capacity:         15,
+			CapacityGroup:    "input-15",
+		},
+	}
+
+	observed := make(map[string]int)
+	for offset := 0; offset < 6; offset++ {
+		scheduled, err := scheduler.SelectCapacityWithOptions(
+			context.Background(),
+			fmt.Sprintf("owner-%d", offset),
+			candidates,
+			now,
+			VirtualPoolSchedulerOptions{
+				CapacityLease:   time.Minute,
+				CandidateOffset: offset,
+			},
+		)
+		require.NoError(t, err)
+		require.NotNil(t, scheduled)
+		observed[scheduled.Candidate.AccountIdentity]++
+		require.NoError(t, scheduler.Release(context.Background(), scheduled))
+	}
+
+	assert.Len(t, observed, 3, "a shared group must spread requests across its members")
+	assert.Equal(t, 2, observed["input-subscription-a"])
+	assert.Equal(t, 2, observed["input-subscription-b"])
+	assert.Equal(t, 2, observed["input-subscription-c"])
+}
+
+func TestVirtualPoolCapacityGroupLimitCanBeChangedAtRuntime(t *testing.T) {
+	now := time.Date(2026, time.September, 28, 17, 0, 0, 0, time.UTC)
+	bindings := NewVirtualPoolMemoryBindingStore()
+	capacity := NewVirtualPoolMemoryCapacityStore()
+	scheduler := NewVirtualPoolScheduler(bindings, capacity)
+	candidates := []VirtualPoolCandidate{
+		{
+			AccountIdentity:  "input-subscription-a",
+			FinalMappedModel: "deepseek-v4.1-flash",
+			Capacity:         15,
+			CapacityGroup:    "input-subscriptions",
+		},
+		{
+			AccountIdentity:  "input-subscription-b",
+			FinalMappedModel: "deepseek-v4.1-flash",
+			Capacity:         15,
+			CapacityGroup:    "input-subscriptions",
+		},
+		{
+			AccountIdentity:  "input-subscription-c",
+			FinalMappedModel: "deepseek-v4.1-flash",
+			Capacity:         15,
+			CapacityGroup:    "input-subscriptions",
+		},
+	}
+
+	leases := make([]*VirtualPoolScheduledCandidate, 0, 15)
+	for index := 0; index < 15; index++ {
+		scheduled, err := scheduler.SelectCapacityWithOptions(
+			context.Background(),
+			fmt.Sprintf("owner-%d", index),
+			candidates,
+			now,
+			VirtualPoolSchedulerOptions{CapacityLease: time.Minute},
+		)
+		require.NoError(t, err)
+		require.NotNil(t, scheduled)
+		leases = append(leases, scheduled)
+	}
+
+	candidates[0].Capacity = 16
+	candidates[1].Capacity = 16
+	candidates[2].Capacity = 16
+	next, err := scheduler.SelectCapacityWithOptions(
+		context.Background(),
+		"owner-16",
+		candidates,
+		now,
+		VirtualPoolSchedulerOptions{CapacityLease: time.Minute},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, next, "the next request must see the raised group capacity without a restart")
+	leases = append(leases, next)
+
+	for _, scheduled := range leases {
+		require.NoError(t, scheduler.Release(context.Background(), scheduled))
+	}
+}

@@ -389,6 +389,7 @@ func (p *RetryParam) PrepareVirtualPoolAttempt(c *gin.Context) error {
 			CapacityWait:      remaining,
 			PendingRenewEvery: time.Duration(setting.PendingRenewSeconds) * time.Second,
 			BusyEscape:        setting.BusyEscape,
+			CandidateOffset:   p.preparedRoute.Offset,
 		}
 		var scheduled *VirtualPoolScheduledCandidate
 		var selectErr error

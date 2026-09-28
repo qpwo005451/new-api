@@ -26,6 +26,21 @@ type virtualRoutePoolEntry struct {
 func virtualRoutePool(route operation_setting.VirtualModelRoute, requestReasoningEffort string) []virtualRoutePoolEntry {
 	entries := make([]virtualRoutePoolEntry, 0, len(route.Targets))
 	seen := make(map[string]struct{})
+	capacityForGroup := func(group string, fallback int) int {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			return fallback
+		}
+		for name, configured := range route.CapacityGroups {
+			if strings.EqualFold(strings.TrimSpace(name), group) {
+				if configured.Capacity > 0 {
+					return configured.Capacity
+				}
+				return fallback
+			}
+		}
+		return fallback
+	}
 	add := func(modelName string, channelId int, reasoningEffort string, capacity int, weight float64, capacityGroup string) {
 		key := strconv.Itoa(channelId) + "|" + strings.ToLower(modelName)
 		if _, exists := seen[key]; exists {
@@ -36,7 +51,7 @@ func virtualRoutePool(route operation_setting.VirtualModelRoute, requestReasonin
 			model:           modelName,
 			channelId:       channelId,
 			reasoningEffort: reasoningEffort,
-			capacity:        capacity,
+			capacity:        capacityForGroup(capacityGroup, capacity),
 			weight:          weight,
 			capacityGroup:   capacityGroup,
 		})
@@ -47,7 +62,7 @@ func virtualRoutePool(route operation_setting.VirtualModelRoute, requestReasonin
 		if modelName == "" {
 			continue
 		}
-		add(modelName, 0,
+		add(modelName, target.ChannelId,
 			operation_setting.MapVirtualModelReasoningEffort(target, requestReasoningEffort),
 			target.Capacity, target.Weight, target.SharedCapacityGroup)
 	}

@@ -51,6 +51,22 @@ func TestUpdateChannelStatusPersistsMultiKeyState(t *testing.T) {
 	assert.Equal(t, 1, stored.ChannelInfo.MultiKeyPollingIndex)
 }
 
+func TestGetEnabledKeyByIndexAcceptsMissingStatusAsEnabled(t *testing.T) {
+	channel := &Channel{
+		Id:  9911,
+		Key: "key-a\nkey-b",
+		ChannelInfo: ChannelInfo{
+			IsMultiKey:         true,
+			MultiKeyStatusList: map[int]int{0: common.ChannelStatusEnabled},
+		},
+	}
+
+	key, index, apiErr := channel.GetEnabledKeyByIndex(1)
+	require.Nil(t, apiErr)
+	assert.Equal(t, "key-b", key)
+	assert.Equal(t, 1, index)
+}
+
 func TestSaveStatusStateFromSingleKeySnapshotPreservesUnownedColumns(t *testing.T) {
 	setupChannelStatusTest(t)
 

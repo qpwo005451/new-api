@@ -1,12 +1,18 @@
 package claude
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
+	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -55,6 +61,41 @@ func TestResponseOpenAI2ClaudeToolUseInputIsObject(t *testing.T) {
 			assert.Equal(t, tt.want, resp.Content[0].Input)
 		})
 	}
+}
+
+func TestClaudeStreamHandlerOnlyCompletesOnMessageStop(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	oldStreamingTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 300
+	t.Cleanup(func() { constant.StreamingTimeout = oldStreamingTimeout })
+
+	info := &relaycommon.RelayInfo{
+		RelayFormat: types.RelayFormatClaude,
+		IsStream:    true,
+		DisablePing: true,
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "claude-test"},
+	}
+	info.AttemptOutcome = &relaycommon.AttemptRecorder{}
+	require.NoError(t, info.AttemptOutcome.Begin("attempt-claude-partial", "candidate-claude"))
+	body := strings.Join([]string{
+		`data: {"type":"message_start","message":{"id":"msg_partial","model":"claude-test","usage":{"input_tokens":2,"output_tokens":1}}}`,
+		``,
+	}, "\n")
+
+	_, apiErr := ClaudeStreamHandler(c, &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}, info)
+	require.Nil(t, apiErr)
+
+	outcome, err := info.AttemptOutcome.Snapshot()
+	require.NoError(t, err)
+	assert.False(t, outcome.ProtocolCompleted, "EOF without message_stop must not complete Claude streaming")
 }
 
 func TestFormatClaudeResponseInfo_MessageStart(t *testing.T) {

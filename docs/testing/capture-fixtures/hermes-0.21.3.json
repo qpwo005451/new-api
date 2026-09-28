@@ -1,0 +1,51 @@
+{
+  "client": "hermes",
+  "installed_version": "0.21.3",
+  "release_label": "2026.9.14",
+  "capture_method": "local install (hermes 0.21.3) and the deployed 10.0.0.3 image hermes-agent:supersearch-lane-v26-20260928-r1, each run against a loopback capture server inside an isolated throwaway container/profile, fake key, synthetic prompt",
+  "provider": "custom provider, api_mode chat_completions and codex_responses",
+  "endpoint": "http://127.0.0.1:18081/v1",
+  "notes": [
+    "Only field presence and salted digest relations are recorded; raw session IDs, prompts, and Authorization are never stored.",
+    "chat_completions sent no session header and no prompt_cache_key.",
+    "codex_responses sent prompt_cache_key but no session header; Hermes' outbound Responses path does not emit an inbound session-affinity header.",
+    "Inbound X-Hermes-Session-Id is not echoed outbound.",
+    "The remote run used a disposable container with --network host and no production volumes; it never touched the live gateway state."
+  ],
+  "records": [
+    {
+      "scenario": "local-new-chat-completions",
+      "path": "/v1/chat/completions",
+      "stream": true,
+      "prompt_cache_key": "absent",
+      "session_header": "absent"
+    },
+    {
+      "scenario": "local-new-codex-responses",
+      "path": "/v1/responses",
+      "stream": true,
+      "prompt_cache_key": "present:str",
+      "session_header": "absent"
+    },
+    {
+      "scenario": "remote-new-chat-completions",
+      "path": "/v1/chat/completions",
+      "stream": true,
+      "prompt_cache_key": "absent",
+      "session_header": "absent"
+    },
+    {
+      "scenario": "remote-new-codex-responses",
+      "path": "/v1/responses",
+      "stream": true,
+      "prompt_cache_key": "present:str",
+      "session_header": "absent"
+    }
+  ],
+  "relations": {
+    "resume": "not captured for Hermes; session continuity is local and no outbound session-affinity field was observed to key it",
+    "fork": "not applicable to the captured surface",
+    "compact": "not captured; Hermes in-place compression keeps a logical scope but does not emit it as an HTTP affinity header",
+    "gap": "Hermes installed builds emit no session-affinity header, so gateway stickiness for Hermes requires either a client-side header feature or a body field such as prompt_cache_key with its weaker guarantees."
+  }
+}

@@ -1,0 +1,94 @@
+{
+  "client": "codex",
+  "installed_version": "0.157.1",
+  "capture_method": "installed CLI against loopback capture server, isolated CODEX_HOME and workdir, fake key, synthetic prompt",
+  "provider": "custom OpenAI-compatible provider, wire_api=responses, requires_openai_auth=false",
+  "endpoint": "http://127.0.0.1:18081/v1",
+  "notes": [
+    "Only field presence and salted digest relations are recorded; raw session IDs, prompts, and Authorization are never stored.",
+    "session-id, thread-id, and x-client-request-id were present and equal on every request.",
+    "X-NewAPI-Session-ID was absent on every request.",
+    "A '/compact' prompt sent through `codex exec` was treated as an ordinary prompt; only the app-server thread/compact/start method produced a real compaction."
+  ],
+  "records": [
+    {
+      "scenario": "new",
+      "path": "/v1/responses",
+      "stream": true,
+      "prompt_cache_key": "present:str",
+      "session_key": "session-a",
+      "thread_key": "session-a",
+      "x_client_request_key": "session-a"
+    },
+    {
+      "scenario": "resume-explicit",
+      "path": "/v1/responses",
+      "stream": true,
+      "prompt_cache_key": "present:str",
+      "session_key": "session-a",
+      "thread_key": "session-a",
+      "x_client_request_key": "session-a"
+    },
+    {
+      "scenario": "fork",
+      "path": "/v1/responses",
+      "stream": true,
+      "prompt_cache_key": "present:str",
+      "session_key": "session-b",
+      "thread_key": "session-b",
+      "x_client_request_key": "session-b"
+    },
+    {
+      "scenario": "resume-continue",
+      "path": "/v1/responses",
+      "stream": true,
+      "prompt_cache_key": "present:str",
+      "session_key": "session-a",
+      "thread_key": "session-a",
+      "x_client_request_key": "session-a"
+    },
+    {
+      "scenario": "new-separate",
+      "path": "/v1/responses",
+      "stream": true,
+      "prompt_cache_key": "present:str",
+      "session_key": "session-c",
+      "thread_key": "session-c",
+      "x_client_request_key": "session-c"
+    },
+    {
+      "scenario": "app-server-new",
+      "path": "/v1/responses",
+      "stream": true,
+      "prompt_cache_key": "present:str",
+      "session_key": "session-d",
+      "thread_key": "session-d",
+      "x_client_request_key": "session-d"
+    },
+    {
+      "scenario": "app-server-compact",
+      "path": "/v1/responses",
+      "stream": true,
+      "prompt_cache_key": "present:str",
+      "session_key": "session-d",
+      "thread_key": "session-d",
+      "x_client_request_key": "session-d"
+    },
+    {
+      "scenario": "subagent-attempt",
+      "path": "/v1/responses",
+      "stream": true,
+      "prompt_cache_key": "present:str",
+      "session_key": "session-e",
+      "thread_key": "session-e",
+      "x_client_request_key": "session-e",
+      "gap": "The mock returned fixed text and never emitted a subagent/tool call, so a real subagent thread was not proven; this row is a normal request, not subagent evidence."
+    }
+  ],
+  "relations": {
+    "resume": "same session_key as the originating session",
+    "fork": "new session_key",
+    "compact": "same session_key (app-server thread/compact/start)",
+    "subagent": "unproven; treated as a gap"
+  }
+}

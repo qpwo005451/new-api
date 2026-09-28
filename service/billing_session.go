@@ -48,6 +48,7 @@ func (s *BillingSession) Settle(actualQuota int) error {
 	delta := actualQuota - s.preConsumedQuota
 	if delta == 0 {
 		s.settled = true
+		s.markAttemptUsageSettled()
 		return nil
 	}
 	// 1) 调整资金来源（仅在尚未提交时执行，防止重复调用）
@@ -76,7 +77,15 @@ func (s *BillingSession) Settle(actualQuota int) error {
 		s.relayInfo.SubscriptionPostDelta += int64(delta)
 	}
 	s.settled = true
+	s.markAttemptUsageSettled()
 	return tokenErr
+}
+
+func (s *BillingSession) markAttemptUsageSettled() {
+	if s == nil || s.relayInfo == nil || s.relayInfo.AttemptOutcome == nil {
+		return
+	}
+	_ = s.relayInfo.AttemptOutcome.MarkUsageSettled()
 }
 
 // Refund 退还所有预扣费，幂等安全，异步执行。

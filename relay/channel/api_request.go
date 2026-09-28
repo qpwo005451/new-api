@@ -567,6 +567,30 @@ func newUpstreamTransportError(req *http.Request, err error) *types.NewAPIError 
 	return types.NewErrorWithStatusCode(err, types.ErrorCodeDoRequestFailed, statusCode, options...)
 }
 
+func markUpstreamTransportFailure(recorder *common.AttemptRecorder, upstreamError *types.NewAPIError) {
+	if recorder == nil || !recorder.IsActive() {
+		return
+	}
+
+	category := common.AttemptFailureTransport
+	state := common.AttemptUpstreamUnknown
+	replaySafe := false
+	if upstreamError != nil {
+		if errorInfo := upstreamError.GetUpstreamErrorInfo(); errorInfo != nil {
+			switch errorInfo.Kind {
+			case "dns", "tls", "connection_refused":
+				// These failures occur before an HTTP request can be accepted by
+				// the upstream, so replaying the request cannot duplicate work.
+				state = common.AttemptUpstreamNotRun
+				replaySafe = true
+			case "client_canceled":
+				category = common.AttemptFailureClientCancelled
+			}
+		}
+	}
+	_ = recorder.MarkFailure(category, replaySafe, state)
+}
+
 // keepUpstreamRedirectResponse stops net/http from following redirects while
 // returning the upstream 3xx response to the relay without an extra error.
 func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
@@ -625,10 +649,29 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 			upstreamError.StatusCode,
 			upstreamError.Error(),
 		))
+		if info != nil {
+			markUpstreamTransportFailure(info.AttemptOutcome, upstreamError)
+		}
 		return nil, upstreamError
 	}
 	if resp == nil {
 		return nil, errors.New("resp is nil")
+	}
+	if info != nil && info.AttemptOutcome != nil && info.AttemptOutcome.IsActive() {
+		failureCategory := common.AttemptFailureUpstreamStatus
+		upstreamState := common.AttemptUpstreamAccepted
+		replaySafe := false
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			failureCategory = common.AttemptFailureNone
+		} else if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			upstreamState = common.AttemptUpstreamNotRun
+			replaySafe = true
+		}
+		_ = info.AttemptOutcome.MarkFailure(
+			failureCategory,
+			replaySafe,
+			upstreamState,
+		)
 	}
 	if common2.DebugEnabled {
 		policy := service.NormalizeHTTPTransportPolicy(info.ChannelSetting)

@@ -171,6 +171,14 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	}
 
 	if !receivedFinishReason {
+		if info.AttemptOutcome != nil && info.AttemptOutcome.IsActive() {
+			_ = info.AttemptOutcome.MarkDownstreamCommitted()
+			_ = info.AttemptOutcome.MarkFailure(
+				relaycommon.AttemptFailureProtocol,
+				false,
+				relaycommon.AttemptUpstreamAccepted,
+			)
+		}
 		sendOpenAIStreamError(c, info)
 		if !containStreamUsage {
 			usage = service.ResponseText2Usage(c, responseTextBuilder.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())
@@ -205,6 +213,9 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	}
 
 	HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
+	if info.AttemptOutcome != nil && info.AttemptOutcome.IsActive() {
+		_ = info.AttemptOutcome.MarkSuccess()
+	}
 
 	return usage, nil
 }
@@ -383,6 +394,9 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	}
 
 	service.IOCopyBytesGracefully(c, resp, responseBody)
+	if info.AttemptOutcome != nil && info.AttemptOutcome.IsActive() {
+		_ = info.AttemptOutcome.MarkSuccess()
+	}
 
 	return &simpleResponse.Usage, nil
 }

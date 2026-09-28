@@ -212,9 +212,13 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 	finishReason := constant.FinishReasonStop
 	toolCallIndexByChoice := make(map[int]map[string]int)
 	nextToolCallIndexByChoice := make(map[int]int)
+	finishReasonSeen := false
 
 	usage, err := geminiStreamHandler(c, info, resp, func(data string, geminiResponse *dto.GeminiChatResponse) bool {
 		response, isStop := streamResponseGeminiChat2OpenAI(geminiResponse)
+		if isStop {
+			finishReasonSeen = true
+		}
 
 		response.Id = id
 		response.Created = createAt
@@ -306,6 +310,9 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 	handleErr := handleFinalStream(c, info, response)
 	if handleErr != nil {
 		common.SysLog("send final response failed: " + handleErr.Error())
+	}
+	if finishReasonSeen && info.AttemptOutcome != nil && info.AttemptOutcome.IsActive() {
+		_ = info.AttemptOutcome.MarkSuccess()
 	}
 	return usage, nil
 }

@@ -68,6 +68,9 @@ func ollamaResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 		return nil, types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
 	}
 	service.IOCopyBytesGracefully(c, resp, out)
+	if info.AttemptOutcome != nil && info.AttemptOutcome.IsActive() {
+		_ = info.AttemptOutcome.MarkSuccess()
+	}
 	return usage, nil
 }
 
@@ -129,6 +132,7 @@ func ollamaResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 	seenToolCalls := make(map[string]struct{})
 	finishReason := constant.FinishReasonStop
 	truncated := false
+	doneFrameSeen := false
 
 	for scanner.Scan() && streamErr == nil {
 		line := strings.TrimSpace(scanner.Text())
@@ -171,6 +175,7 @@ func ollamaResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 		usage.PromptTokens = chunk.PromptEvalCount
 		usage.CompletionTokens = chunk.EvalCount
 		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+		doneFrameSeen = true
 		if truncated {
 			break
 		}
@@ -210,6 +215,9 @@ func ollamaResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 		if !sendEvent(event) {
 			return nil, streamErr
 		}
+	}
+	if doneFrameSeen && info.AttemptOutcome != nil && info.AttemptOutcome.IsActive() {
+		_ = info.AttemptOutcome.MarkSuccess()
 	}
 	return usage, nil
 }

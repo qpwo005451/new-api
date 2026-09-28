@@ -75,8 +75,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	//originalModel := common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
 
 	var (
-		newAPIError *types.NewAPIError
-		ws          *websocket.Conn
+		newAPIError    *types.NewAPIError
+		ws             *websocket.Conn
+		attemptOutcome *relaycommon.AttemptOutcome
 	)
 
 	if relayFormat == types.RelayFormatOpenAIRealtime {
@@ -215,7 +216,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if newAPIError != nil {
 			newAPIError = service.NormalizeViolationFeeError(newAPIError)
 			if relayInfo.Billing != nil {
-				relayInfo.Billing.Refund(c)
+				if attemptOutcome == nil || !attemptOutcome.UsageSettled {
+					relayInfo.Billing.Refund(c)
+				}
 			}
 			service.ChargeViolationFeeIfNeeded(c, relayInfo, newAPIError)
 		}
@@ -228,10 +231,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		RequestPath: c.Request.URL.Path,
 		Retry:       common.GetPointer(0),
 	}
+	if prepared, ok := common.GetContextKeyType[*service.VirtualPoolPreparedRoute](c, constant.ContextKeyVirtualPoolPrepared); ok && prepared != nil {
+		retryParam.AdoptPreparedVirtualPoolRoute(prepared)
+	}
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
 
 	for ; retryParam.GetRetry() <= retryParam.RetryLimit(common.RetryTimes); retryParam.IncreaseRetry() {
+		attemptOutcome = nil
 		if service.IsInFlightRequestCancelled(c) {
 			newAPIError = service.NewInFlightRequestCancelledError()
 			relayInfo.LastError = newAPIError
@@ -250,9 +257,24 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			)
 			break
 		}
+		if outcomeErr := retryParam.PrepareVirtualPoolAttempt(c); outcomeErr != nil {
+			if errors.Is(outcomeErr, service.ErrVirtualPoolCapacityExhausted) {
+				newAPIError = types.NewErrorWithStatusCode(
+					outcomeErr,
+					types.ErrorCodeGetChannelFailed,
+					http.StatusTooManyRequests,
+					types.ErrOptionWithSkipRetry(),
+				)
+				c.Header("Retry-After", "1")
+			} else {
+				newAPIError = types.NewError(outcomeErr, types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+			}
+			break
+		}
 		relayInfo.RetryIndex = retryParam.GetRetry()
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
 		if channelErr != nil {
+			retryParam.ReleaseVirtualPoolAttempt(c, true)
 			if errors.Is(channelErr.Err, model.ErrPriorityFallbackExhausted) && relayInfo.LastError != nil {
 				newAPIError = relayInfo.LastError
 				break
@@ -266,6 +288,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if inputTransientRetryTarget {
 			waited, waitErr := inputTransientRetryGateFor(channel.Id).wait(service.RelayRequestContext(c))
 			if waitErr != nil {
+				retryParam.ReleaseVirtualPoolAttempt(c, true)
 				if service.IsInFlightRequestCancelled(c) {
 					newAPIError = service.NewInFlightRequestCancelledError()
 				} else {
@@ -296,6 +319,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				upstreamRateLimitTarget.rule.RPM,
 			)
 			if waitErr != nil {
+				retryParam.ReleaseVirtualPoolAttempt(c, true)
 				if service.IsInFlightRequestCancelled(c) {
 					newAPIError = service.NewInFlightRequestCancelledError()
 				} else {
@@ -325,6 +349,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		model.TouchPendingLogChannel(c, channel.Id)
 		if billingErr := service.PrepareTieredBillingForSelectedGroup(c, relayInfo); billingErr != nil {
 			newAPIError = billingErr
+			retryParam.ReleaseVirtualPoolAttempt(c, true)
 			break
 		}
 		bodyStorage, bodyErr := common.GetBodyStorage(c)
@@ -335,11 +360,32 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			} else {
 				newAPIError = types.NewErrorWithStatusCode(bodyErr, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 			}
+			retryParam.ReleaseVirtualPoolAttempt(c, true)
 			break
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
 
 		relayInfo.InitChannelMeta(c)
+		if usesVirtualPoolOutcome(retryParam) {
+			relayInfo.AttemptOutcome = &relaycommon.AttemptRecorder{}
+			attemptKey := fmt.Sprintf("%d:%s:%s", channel.Id, relayInfo.UpstreamModelName, relayInfo.ReasoningEffort)
+			if common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey) {
+				attemptKey = fmt.Sprintf("%d:%d:%s:%s",
+					channel.Id,
+					common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex),
+					relayInfo.UpstreamModelName,
+					relayInfo.ReasoningEffort,
+				)
+			}
+			if outcomeErr := relayInfo.AttemptOutcome.Begin(
+				fmt.Sprintf("%s:%d", relayInfo.RequestId, retryParam.GetRetry()),
+				attemptKey,
+			); outcomeErr != nil {
+				newAPIError = types.NewError(outcomeErr, types.ErrorCodeDoRequestFailed, types.ErrOptionWithSkipRetry())
+				retryParam.ReleaseVirtualPoolAttempt(c, true)
+				break
+			}
+		}
 		if service.ShouldUseOpenCodeRouteFeedback(relayInfo) {
 			lease, leaseErr := service.AcquireOpenCodeRouteLease(service.RelayRequestContext(c), relayInfo.RequestId)
 			if leaseErr != nil {
@@ -359,11 +405,92 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		default:
 			newAPIError = relayHandler(c, relayInfo)
 		}
-
-		if service.IsInFlightRequestCancelled(c) {
-			newAPIError = service.NewInFlightRequestCancelledError()
-		}
-		if newAPIError == nil {
+		if relayInfo.AttemptOutcome != nil {
+			if relayInfo.AttemptOutcome.IsActive() && c.Writer.Written() {
+				_ = relayInfo.AttemptOutcome.MarkDownstreamCommitted()
+			}
+			outcome, outcomeErr := relayInfo.AttemptOutcome.Commit()
+			if outcomeErr != nil {
+				outcome = relaycommon.AttemptOutcome{
+					AttemptID:     fmt.Sprintf("%s:%d", relayInfo.RequestId, retryParam.GetRetry()),
+					UpstreamState: relaycommon.AttemptUpstreamUnknown,
+				}
+			}
+			attemptOutcome = &outcome
+			if service.IsInFlightRequestCancelled(c) {
+				newAPIError = service.NewInFlightRequestCancelledError()
+			}
+			leaseLost := retryParam.VirtualPoolLeaseLost()
+			if newAPIError == nil && outcome.IsCompleteSuccess() && !leaseLost {
+				relayInfo.LastError = nil
+				service.RecordVirtualRouteSuccess(c, channel.Id, relayInfo.OriginModelName)
+				retryParam.ConfirmVirtualPoolAttempt(c)
+				retryParam.ReleaseVirtualPoolAttempt(c, false)
+				service.ReportOpenCodeRouteFeedback(relayInfo, true)
+				return
+			}
+			if leaseLost && outcome.IsCompleteSuccess() {
+				// The upstream response reached the client, but ownership moved before
+				// confirmation. Do not learn health or extend the stale generation.
+				retryParam.ReleaseVirtualPoolAttempt(c, false)
+				service.ReportOpenCodeRouteFeedback(relayInfo, true)
+				return
+			}
+			if leaseLost && !outcome.DownstreamCommitted {
+				outcome.UpstreamState = relaycommon.AttemptUpstreamUnknown
+				outcome.ReplaySafe = false
+				attemptOutcome = &outcome
+				newAPIError = types.NewErrorWithStatusCode(
+					service.ErrVirtualPoolLeaseLost,
+					types.ErrorCodeDoRequestFailed,
+					http.StatusBadGateway,
+					types.ErrOptionWithSkipRetry(),
+				)
+				relayInfo.LastError = newAPIError
+			}
+			if outcome.DownstreamCommitted && !outcome.IsCompleteSuccess() &&
+				!service.IsInFlightRequestCancelled(c) {
+				// The protocol handler already wrote the partial response. Preserve
+				// any settled usage, suppress a second error response, and never send
+				// this partial result to another upstream.
+				failure := newAPIError
+				if failure == nil {
+					failure = types.NewErrorWithStatusCode(
+						fmt.Errorf("upstream protocol did not complete"),
+						types.ErrorCodeBadResponse,
+						http.StatusBadGateway,
+						types.ErrOptionWithSkipRetry(),
+					)
+				}
+				relayInfo.LastError = failure
+				service.ReportOpenCodeRouteFeedback(relayInfo, false)
+				service.RecordVirtualRouteFailure(c, channel.Id, relayInfo.OriginModelName, failure.StatusCode)
+				retryParam.ReleaseVirtualPoolAttempt(c, true)
+				if relayInfo.Billing != nil && !outcome.UsageSettled {
+					relayInfo.Billing.Refund(c)
+				}
+				processChannelError(
+					c,
+					*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
+					failure,
+					false,
+				)
+				gopool.Go(func() {
+					perfmetrics.RecordRelaySample(relayInfo, false, 0)
+				})
+				newAPIError = nil
+				return
+			}
+			if newAPIError == nil {
+				newAPIError = types.NewErrorWithStatusCode(
+					fmt.Errorf("upstream protocol did not complete"),
+					types.ErrorCodeBadResponse,
+					http.StatusBadGateway,
+					types.ErrOptionWithSkipRetry(),
+				)
+				relayInfo.LastError = newAPIError
+			}
+		} else if newAPIError == nil {
 			relayInfo.LastError = nil
 			service.RecordVirtualRouteSuccess(c, channel.Id, relayInfo.OriginModelName)
 			service.ReportOpenCodeRouteFeedback(relayInfo, true)
@@ -399,6 +526,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 
 		willRetry := shouldRetry(c, newAPIError, retryParam.RetryLimit(common.RetryTimes)-retryParam.GetRetry())
+		if attemptOutcome != nil {
+			willRetry = shouldRetryVirtualPoolAttempt(
+				c,
+				newAPIError,
+				*attemptOutcome,
+				retryParam.RetryLimit(common.RetryTimes)-retryParam.GetRetry(),
+			)
+		}
 		if willRetry {
 			if inputTransientCooldown == 0 && upstreamRateLimitCooldown == 0 {
 				willRetry = waitTransientRetryBackoff(c, newAPIError.StatusCode, retryParam.GetRetry())
@@ -414,6 +549,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			willRetry = false
 		}
 		service.RecordVirtualRouteFailure(c, channel.Id, relayInfo.OriginModelName, newAPIError.StatusCode)
+		retryParam.ReleaseVirtualPoolAttempt(c, true)
 		processChannelError(
 			c,
 			*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
@@ -497,8 +633,32 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 			AutoBan: &autoBanInt,
 		}, nil
 	}
+	if prepared := retryParam.PreparedVirtualPoolRoute(); prepared != nil {
+		candidate, ok := retryParam.NextPreparedVirtualPoolCandidate()
+		if !ok {
+			return nil, types.NewError(fmt.Errorf("虚拟池模型 %s 的候选已用尽", info.OriginModelName), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+		}
+		common.SetContextKey(c, constant.ContextKeyVirtualUpstreamModel, candidate.UpstreamModel)
+		common.SetContextKey(c, constant.ContextKeyVirtualReasoningEffort, candidate.ReasoningEffort)
+		if candidate.Group != "" {
+			common.SetContextKey(c, constant.ContextKeyAutoGroup, candidate.Group)
+		}
+		info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
+		if newAPIError := middleware.SetupContextForPreparedVirtualCandidate(c, candidate, info.OriginModelName); newAPIError != nil {
+			return nil, newAPIError
+		}
+		return candidate.Channel, nil
+	}
 	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(retryParam)
 	if err != nil {
+		if errors.Is(err, service.ErrVirtualPoolCapacityExhausted) {
+			return nil, types.NewErrorWithStatusCode(
+				err,
+				types.ErrorCodeGetChannelFailed,
+				http.StatusTooManyRequests,
+				types.ErrOptionWithSkipRetry(),
+			)
+		}
 		return nil, types.NewError(fmt.Errorf("获取分组 %s 下模型 %s 的可用渠道失败（retry）: %w", selectGroup, info.OriginModelName, err), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}
 	if channel == nil {
@@ -547,6 +707,20 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 		return false
 	}
 	return operation_setting.ShouldRetryByStatusCode(code)
+}
+
+func shouldRetryVirtualPoolAttempt(
+	c *gin.Context,
+	openaiErr *types.NewAPIError,
+	outcome relaycommon.AttemptOutcome,
+	retryTimes int,
+) bool {
+	return outcome.CanRetry() && shouldRetry(c, openaiErr, retryTimes)
+}
+
+func usesVirtualPoolOutcome(retryParam *service.RetryParam) bool {
+	prepared := retryParam.PreparedVirtualPoolRoute()
+	return prepared != nil && prepared.Session != nil
 }
 
 func transientRetryBackoff(statusCode int, retryIndex int) time.Duration {

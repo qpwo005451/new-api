@@ -3,10 +3,12 @@ package channel
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"syscall"
 	"testing"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -303,6 +305,104 @@ func TestNewUpstreamTransportErrorClassifiesRoundTripperFailures(t *testing.T) {
 			require.NotNil(t, errorInfo)
 			require.Equal(t, test.wantKind, errorInfo.Kind)
 			require.Empty(t, errorInfo.Status)
+		})
+	}
+}
+
+func TestMarkUpstreamTransportFailureUsesConservativeReplayState(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		transportError error
+		wantCategory   relaycommon.AttemptFailureCategory
+		wantState      relaycommon.AttemptUpstreamState
+		wantReplaySafe bool
+		wantCanRetry   bool
+	}{
+		{
+			name:           "DNS failure never reaches upstream",
+			transportError: &net.DNSError{Err: "no such host", Name: "upstream.invalid", IsNotFound: true},
+			wantCategory:   relaycommon.AttemptFailureTransport,
+			wantState:      relaycommon.AttemptUpstreamNotRun,
+			wantReplaySafe: true,
+			wantCanRetry:   true,
+		},
+		{
+			name:           "TLS handshake failure never reaches upstream",
+			transportError: tls.RecordHeaderError{Msg: "invalid TLS record header"},
+			wantCategory:   relaycommon.AttemptFailureTransport,
+			wantState:      relaycommon.AttemptUpstreamNotRun,
+			wantReplaySafe: true,
+			wantCanRetry:   true,
+		},
+		{
+			name:           "connection refused never reaches upstream",
+			transportError: syscall.ECONNREFUSED,
+			wantCategory:   relaycommon.AttemptFailureTransport,
+			wantState:      relaycommon.AttemptUpstreamNotRun,
+			wantReplaySafe: true,
+			wantCanRetry:   true,
+		},
+		{
+			name:           "reset after send is unknown",
+			transportError: errors.New("read tcp: connection reset by peer"),
+			wantCategory:   relaycommon.AttemptFailureTransport,
+			wantState:      relaycommon.AttemptUpstreamUnknown,
+			wantReplaySafe: false,
+			wantCanRetry:   false,
+		},
+		{
+			name:           "unexpected EOF is unknown",
+			transportError: io.ErrUnexpectedEOF,
+			wantCategory:   relaycommon.AttemptFailureTransport,
+			wantState:      relaycommon.AttemptUpstreamUnknown,
+			wantReplaySafe: false,
+			wantCanRetry:   false,
+		},
+		{
+			name:           "timeout is unknown",
+			transportError: context.DeadlineExceeded,
+			wantCategory:   relaycommon.AttemptFailureTransport,
+			wantState:      relaycommon.AttemptUpstreamUnknown,
+			wantReplaySafe: false,
+			wantCanRetry:   false,
+		},
+		{
+			name:           "client cancellation is not a transport failure",
+			transportError: context.Canceled,
+			wantCategory:   relaycommon.AttemptFailureClientCancelled,
+			wantState:      relaycommon.AttemptUpstreamUnknown,
+			wantReplaySafe: false,
+			wantCanRetry:   false,
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := &http.Client{
+				Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+					return nil, test.transportError
+				}),
+			}
+			req, err := http.NewRequest(http.MethodPost, "https://upstream.invalid/v1/test", nil)
+			require.NoError(t, err)
+			_, transportErr := client.Do(req)
+			require.Error(t, transportErr)
+
+			recorder := &relaycommon.AttemptRecorder{}
+			require.NoError(t, recorder.Begin("attempt-1", "candidate"))
+			markUpstreamTransportFailure(recorder, newUpstreamTransportError(req, transportErr))
+
+			outcome, err := recorder.Snapshot()
+			require.NoError(t, err)
+			require.Equal(t, test.wantCategory, outcome.FailureCategory)
+			require.Equal(t, test.wantState, outcome.UpstreamState)
+			require.Equal(t, test.wantReplaySafe, outcome.ReplaySafe)
+			require.Equal(t, test.wantCanRetry, outcome.CanRetry())
 		})
 	}
 }

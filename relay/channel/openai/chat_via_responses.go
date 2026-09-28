@@ -74,6 +74,9 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	}
 
 	service.IOCopyBytesGracefully(c, resp, responseBody)
+	if info.AttemptOutcome != nil && info.AttemptOutcome.IsActive() {
+		_ = info.AttemptOutcome.MarkSuccess()
+	}
 	return usage, nil
 }
 
@@ -182,6 +185,9 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 	}
 
 	service.IOCopyBytesGracefully(c, resp, responseBody)
+	if info.AttemptOutcome != nil && info.AttemptOutcome.IsActive() {
+		_ = info.AttemptOutcome.MarkSuccess()
+	}
 	return usage, nil
 }
 
@@ -203,6 +209,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 	}
 	streamErr := (*types.NewAPIError)(nil)
+	terminalEventSeen := false
 
 	if info.RelayFormat == types.RelayFormatClaude && info.ClaudeConvertInfo == nil {
 		info.ClaudeConvertInfo = &relaycommon.ClaudeConvertInfo{LastMessagesType: relaycommon.LastMessageTypeNone}
@@ -292,6 +299,10 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			sr.Stop(streamErr)
 			return
 		}
+		switch streamResp.Type {
+		case "response.completed", "response.done", "response.incomplete":
+			terminalEventSeen = true
+		}
 
 		results, err := relayconvert.ConvertStreamResponseChunk(c, info, state, &streamResp)
 		if err != nil {
@@ -337,6 +348,9 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 
 	if info.RelayFormat == types.RelayFormatOpenAI {
 		helper.Done(c)
+	}
+	if terminalEventSeen && info.AttemptOutcome != nil && info.AttemptOutcome.IsActive() {
+		_ = info.AttemptOutcome.MarkSuccess()
 	}
 	return usage, nil
 }

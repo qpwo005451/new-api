@@ -61,6 +61,9 @@ func OaiChatToResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	}
 
 	service.IOCopyBytesGracefully(c, resp, responseBody)
+	if info.AttemptOutcome != nil && info.AttemptOutcome.IsActive() {
+		_ = info.AttemptOutcome.MarkSuccess()
+	}
 	return usage, nil
 }
 
@@ -80,6 +83,7 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	}
 	streamErr := (*types.NewAPIError)(nil)
 	committed := false
+	receivedFinishReason := false
 	pendingEvents := make([]relayconvert.ChatToResponsesStreamEvent, 0, 4)
 	info.DisablePing = true
 
@@ -126,6 +130,9 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			logger.LogError(c, "failed to unmarshal chat stream response: "+err.Error())
 			sr.Error(err)
 			return
+		}
+		if chunk.IsFinished() {
+			receivedFinishReason = true
 		}
 
 		results, err := relayconvert.ConvertStreamResponseChunk(c, info, state, &chunk)
@@ -190,12 +197,19 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		if !commitEvents(pendingEvents) {
 			return nil, streamErr
 		}
+		if receivedFinishReason && info.AttemptOutcome != nil && info.AttemptOutcome.IsActive() {
+			_ = info.AttemptOutcome.MarkSuccess()
+		}
 		return usage, nil
 	}
 	for _, event := range finalEvents {
 		if !writeEvent(event) {
 			return nil, streamErr
 		}
+	}
+
+	if receivedFinishReason && info.AttemptOutcome != nil && info.AttemptOutcome.IsActive() {
+		_ = info.AttemptOutcome.MarkSuccess()
 	}
 
 	return usage, nil

@@ -67,6 +67,40 @@ func TestGeminiResponsesHandlerReturnsOpenAIResponsesJSON(t *testing.T) {
 	assert.NotContains(t, got, `"candidates"`)
 }
 
+func TestGeminiResponsesStreamHandlerOnlyCompletesOnFinishReason(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	oldStreamingTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 300
+	t.Cleanup(func() { constant.StreamingTimeout = oldStreamingTimeout })
+
+	info := newGeminiResponsesRelayInfo(true)
+	info.AttemptOutcome = &relaycommon.AttemptRecorder{}
+	require.NoError(t, info.AttemptOutcome.Begin("attempt-gemini-partial", "candidate-gemini"))
+	partial := dto.GeminiChatResponse{
+		Candidates: []dto.GeminiChatCandidate{{
+			Content: dto.GeminiChatContent{
+				Role:  "model",
+				Parts: []dto.GeminiPart{{Text: "partial"}},
+			},
+		}},
+	}
+	partialData, err := common.Marshal(partial)
+	require.NoError(t, err)
+
+	_, apiErr := GeminiResponsesStreamHandler(c, info, &http.Response{
+		Body: io.NopCloser(strings.NewReader("data: " + string(partialData) + "\n\n")),
+	})
+	require.Nil(t, apiErr)
+
+	outcome, err := info.AttemptOutcome.Snapshot()
+	require.NoError(t, err)
+	assert.False(t, outcome.ProtocolCompleted, "EOF without a Gemini finishReason must not complete the protocol")
+}
+
 func TestGeminiResponsesHandlerClosesBodyOnReadError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()

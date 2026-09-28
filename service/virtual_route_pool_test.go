@@ -173,7 +173,7 @@ func TestVirtualRoutePoolKeepsStaticTargetsAheadOfSourceChannels(t *testing.T) {
 	}, pool)
 }
 
-func TestVirtualRoutePoolStopsWhenTheSourceChannelHasNoModels(t *testing.T) {
+func TestVirtualRoutePoolReportsExhaustionWhenTheSourceChannelHasNoModels(t *testing.T) {
 	db := setupChannelSelectAutoGroupsTest(t)
 	const modelName = "auto-free-empty-source"
 	createMultiModelSelectChannel(t, db, 2521, "default", "unused-model")
@@ -187,7 +187,7 @@ func TestVirtualRoutePoolStopsWhenTheSourceChannelHasNoModels(t *testing.T) {
 	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
 
 	param := newVirtualRouteSourceGroup(ctx, modelName)
-	assert.False(t, param.UsesVirtualRoute(), "a route without resolvable members falls back to the normal path")
+	assert.True(t, param.UsesVirtualRoute(), "a configured pool stays a pool even when no member is currently routable")
 
 	_, _, err := CacheGetRandomSatisfiedChannel(param)
 	require.ErrorIs(t, err, model.ErrPriorityFallbackExhausted)

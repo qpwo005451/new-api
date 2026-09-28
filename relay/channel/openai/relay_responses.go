@@ -75,6 +75,9 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		}
 	}
 	imageCounter.Commit(info)
+	if info.AttemptOutcome != nil && info.AttemptOutcome.IsActive() {
+		_ = info.AttemptOutcome.MarkSuccess()
+	}
 
 	return &usage, nil
 }
@@ -285,7 +288,33 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		}
 	})
 
+	if usage.CompletionTokens == 0 {
+		// Preserve partial-stream usage for settlement when the upstream ended
+		// without a terminal event or usage payload.
+		if outputText := responseTextBuilder.String(); outputText != "" {
+			usage.CompletionTokens = service.CountTextToken(outputText, info.UpstreamModelName)
+		}
+	}
+	if usage.PromptTokens == 0 && usage.CompletionTokens != 0 {
+		usage.PromptTokens = info.GetEstimatePromptTokens()
+	}
+	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+
 	if streamErr != nil {
+		committed := c != nil && c.Writer != nil && c.Writer.Written()
+		if info.AttemptOutcome != nil && info.AttemptOutcome.IsActive() {
+			if committed {
+				_ = info.AttemptOutcome.MarkDownstreamCommitted()
+			}
+			_ = info.AttemptOutcome.MarkFailure(
+				relaycommon.AttemptFailureProtocol,
+				false,
+				relaycommon.AttemptUpstreamAccepted,
+			)
+		}
+		if committed && info.AttemptOutcome != nil && info.AttemptOutcome.IsActive() {
+			return usage, nil
+		}
 		return usage, streamErr
 	}
 	if !terminalEventSeen {
@@ -298,24 +327,26 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		if info.StreamStatus != nil {
 			info.StreamStatus.RecordError(streamErr.Error())
 		}
+		committed := c != nil && c.Writer != nil && c.Writer.Written()
+		if info.AttemptOutcome != nil && info.AttemptOutcome.IsActive() {
+			if committed {
+				_ = info.AttemptOutcome.MarkDownstreamCommitted()
+			}
+			_ = info.AttemptOutcome.MarkFailure(
+				relaycommon.AttemptFailureProtocol,
+				false,
+				relaycommon.AttemptUpstreamAccepted,
+			)
+		}
+		if committed && info.AttemptOutcome != nil && info.AttemptOutcome.IsActive() {
+			return usage, nil
+		}
 		return usage, streamErr
 	}
 
-	if usage.CompletionTokens == 0 {
-		// 计算输出文本的 token 数量
-		tempStr := responseTextBuilder.String()
-		if len(tempStr) > 0 {
-			// 非正常结束，使用输出文本的 token 数量
-			completionTokens := service.CountTextToken(tempStr, info.UpstreamModelName)
-			usage.CompletionTokens = completionTokens
-		}
+	if info.AttemptOutcome != nil && info.AttemptOutcome.IsActive() {
+		_ = info.AttemptOutcome.MarkSuccess()
 	}
-
-	if usage.PromptTokens == 0 && usage.CompletionTokens != 0 {
-		usage.PromptTokens = info.GetEstimatePromptTokens()
-	}
-
-	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 
 	return usage, nil
 }

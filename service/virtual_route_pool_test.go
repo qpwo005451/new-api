@@ -202,6 +202,34 @@ func TestVirtualRoutePoolCapacityGroupOverridesMemberCapacity(t *testing.T) {
 	assert.Equal(t, 3, candidates[0].Capacity, "the group ceiling must override each member's local capacity")
 }
 
+func TestVirtualRoutePoolSharedGroupUsesHighestMemberCapacity(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	const modelName = "auto-free-capacity-group-max"
+	createMultiModelSelectChannel(t, db, 2518, "default", "grouped-max-a")
+	createMultiModelSelectChannel(t, db, 2519, "default", "grouped-max-b")
+	model.InitChannelCache()
+	installVirtualRouteForTest(t, modelName, operation_setting.VirtualModelRoute{
+		Targets: []operation_setting.VirtualModelRouteTarget{
+			{Model: "grouped-max-a", Capacity: 15, SharedCapacityGroup: "input-subscriptions"},
+			{Model: "grouped-max-b", SharedCapacityGroup: "input-subscriptions"},
+		},
+	})
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	param := newVirtualRouteSourceGroup(ctx, modelName)
+
+	channel, _, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	candidates := param.PreparedVirtualPoolRoute().Candidates
+	require.Len(t, candidates, 2)
+	assert.Equal(t, 15, candidates[0].Capacity)
+	assert.Equal(t, 15, candidates[1].Capacity,
+		"members sharing a group must use the same ceiling instead of collapsing an unset member to one")
+}
+
 func TestVirtualRoutePoolTargetBindsSpecificChannel(t *testing.T) {
 	db := setupChannelSelectAutoGroupsTest(t)
 	const modelName = "auto-free-target-channel"

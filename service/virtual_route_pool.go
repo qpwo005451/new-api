@@ -26,6 +26,20 @@ type virtualRoutePoolEntry struct {
 func virtualRoutePool(route operation_setting.VirtualModelRoute, requestReasoningEffort string) []virtualRoutePoolEntry {
 	entries := make([]virtualRoutePoolEntry, 0, len(route.Targets))
 	seen := make(map[string]struct{})
+	groupCapacity := make(map[string]int)
+	recordGroupCapacity := func(group string, capacity int) {
+		group = strings.ToLower(strings.TrimSpace(group))
+		if group == "" || capacity <= groupCapacity[group] {
+			return
+		}
+		groupCapacity[group] = capacity
+	}
+	for _, target := range route.Targets {
+		recordGroupCapacity(target.SharedCapacityGroup, target.Capacity)
+	}
+	for _, source := range route.Sources {
+		recordGroupCapacity(source.SharedCapacityGroup, source.Capacity)
+	}
 	capacityForGroup := func(group string, fallback int) int {
 		group = strings.TrimSpace(group)
 		if group == "" {
@@ -38,6 +52,9 @@ func virtualRoutePool(route operation_setting.VirtualModelRoute, requestReasonin
 				}
 				return fallback
 			}
+		}
+		if capacity := groupCapacity[strings.ToLower(group)]; capacity > 0 {
+			return capacity
 		}
 		return fallback
 	}

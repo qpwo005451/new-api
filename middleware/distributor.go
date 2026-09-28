@@ -169,6 +169,7 @@ func Distribute() func(c *gin.Context) {
 							return
 						}
 						retryParam.SetVirtualPoolSession(session)
+						common.SetContextKey(c, constant.ContextKeyVirtualModel, modelRequest.Model)
 						if owner, ownerErr := service.ResolveVirtualPoolResponseOwner(c, modelRequest.Model); ownerErr != nil {
 							switch {
 							case errors.Is(ownerErr, service.ErrVirtualPoolResponseOwnerUnknown):

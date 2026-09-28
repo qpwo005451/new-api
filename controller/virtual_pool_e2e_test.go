@@ -67,6 +67,10 @@ func newVirtualPoolE2EUpstream(t *testing.T, partialStream bool) *virtualPoolE2E
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/responses" {
+			_, _ = fmt.Fprint(w, `{"id":"resp-e2e","object":"response","created":1,"model":"upstream","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`)
+			return
+		}
 		_, _ = fmt.Fprint(w, `{"id":"chatcmpl-e2e","object":"chat.completion","created":1,"model":"upstream","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`)
 	}))
 	t.Cleanup(upstream.server.Close)
@@ -347,7 +351,7 @@ func TestVirtualPoolE2EPreviousResponseIDPinsTheOriginalCandidate(t *testing.T) 
 	require.Equal(t, int64(0), fixture.upstreamB.calls.Load())
 
 	continuationBody := fmt.Sprintf(
-		`{"model":%q,"input":"continue","previous_response_id":"chatcmpl-e2e"}`,
+		`{"model":%q,"input":"continue","previous_response_id":"resp-e2e"}`,
 		fixture.virtualModel,
 	)
 	continuation := fixture.postRaw(t, "/v1/responses", "", continuationBody)
@@ -403,7 +407,7 @@ func TestVirtualPoolE2EPreviousResponseIDFailsWhenOwnerCandidateIsUnavailable(t 
 	model.InitChannelCache()
 
 	body := fmt.Sprintf(
-		`{"model":%q,"input":"continue","previous_response_id":"chatcmpl-e2e"}`,
+		`{"model":%q,"input":"continue","previous_response_id":"resp-e2e"}`,
 		fixture.virtualModel,
 	)
 	continuation := fixture.postRaw(t, "/v1/responses", "", body)

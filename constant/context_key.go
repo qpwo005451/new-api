@@ -8,6 +8,7 @@ const (
 	ContextKeyEstimatedTokens ContextKey = "estimated_tokens"
 
 	ContextKeyOriginalModel          ContextKey = "original_model"
+	ContextKeyVirtualModel           ContextKey = "virtual_model"
 	ContextKeyVirtualUpstreamModel   ContextKey = "virtual_upstream_model"
 	ContextKeyVirtualReasoningEffort ContextKey = "virtual_reasoning_effort"
 	ContextKeyVirtualCandidateKey    ContextKey = "virtual_candidate_key"

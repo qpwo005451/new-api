@@ -72,7 +72,11 @@ func RecordVirtualPoolResponseOwner(c *gin.Context, responseID, candidateKey str
 	if !setting.Enabled {
 		return
 	}
-	scope := virtualPoolResponseOwnerScope(c, common.GetContextKeyString(c, constant.ContextKeyOriginalModel))
+	modelName := common.GetContextKeyString(c, constant.ContextKeyVirtualModel)
+	if strings.TrimSpace(modelName) == "" {
+		modelName = common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
+	}
+	scope := virtualPoolResponseOwnerScope(c, modelName)
 	if scope == "" {
 		return
 	}

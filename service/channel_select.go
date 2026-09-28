@@ -231,6 +231,20 @@ func (p *RetryParam) prepareVirtualRoute() error {
 			return err
 		}
 		p.virtualHealthy = healthy
+		if len(p.preparedRoute.Candidates) == len(p.virtualRoute) {
+			reordered := make([]VirtualPoolCandidate, 0, len(p.virtualRoute))
+			for _, candidate := range p.virtualRoute {
+				for _, prepared := range p.preparedRoute.Candidates {
+					if prepared.AttemptKey() == candidate.attemptKey() {
+						reordered = append(reordered, prepared)
+						break
+					}
+				}
+			}
+			if len(reordered) == len(p.virtualRoute) {
+				p.preparedRoute.Candidates = reordered
+			}
+		}
 	} else {
 		p.virtualHealthy = 0
 	}

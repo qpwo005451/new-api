@@ -112,6 +112,93 @@ func TestVirtualRouteHealthSuccessClearsCooldown(t *testing.T) {
 	assert.Equal(t, 2411, first.Id, "a recovered entry returns to the front of the pool")
 }
 
+func TestVirtualRouteHealthRecordsFailureFromSelectedVirtualCandidate(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	const modelName = "auto-free-health-selected-candidate"
+	createChannelSelectAutoGroupsChannel(t, db, 2415, "default", "selected-health-alpha")
+	createChannelSelectAutoGroupsChannel(t, db, 2416, "default", "selected-health-beta")
+	model.InitChannelCache()
+	installVirtualRouteHealthRoute(t, modelName, operation_setting.VirtualModelRouteHealth{
+		Enabled:          true,
+		FailureThreshold: 1,
+		CooldownSeconds:  60,
+	}, "selected-health-alpha", "selected-health-beta")
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	retry := 0
+	param := &RetryParam{
+		Ctx:         ctx,
+		TokenGroup:  "default",
+		ModelName:   modelName,
+		RequestPath: "/v1/chat/completions",
+		Retry:       &retry,
+	}
+	first, _, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.NotNil(t, first)
+	require.Equal(t, 2415, first.Id)
+
+	RecordVirtualRouteFailure(ctx, first.Id, modelName, http.StatusInternalServerError)
+
+	secondParam := newVirtualRouteHealthAttempt(ctx, modelName)
+	second, _, err := CacheGetRandomSatisfiedChannel(secondParam)
+	require.NoError(t, err)
+	require.NotNil(t, second)
+	assert.Equal(t, 2416, second.Id, "a failed selected candidate must cool down for the next request")
+}
+
+func TestVirtualRouteHealthCoolingCandidateIsUsedByScheduler(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	const modelName = "auto-free-health-scheduled-candidate"
+	createChannelSelectAutoGroupsChannel(t, db, 2417, "default", "scheduled-health-alpha")
+	createChannelSelectAutoGroupsChannel(t, db, 2418, "default", "scheduled-health-beta")
+	model.InitChannelCache()
+	installVirtualRouteHealthRoute(t, modelName, operation_setting.VirtualModelRouteHealth{
+		Enabled:          true,
+		FailureThreshold: 1,
+		CooldownSeconds:  60,
+	}, "scheduled-health-alpha", "scheduled-health-beta")
+
+	retrySetting := operation_setting.GetModelRetryPolicySetting()
+	originalSticky := retrySetting.VirtualPoolSticky
+	retrySetting.VirtualPoolSticky = operation_setting.VirtualPoolStickySetting{
+		Enabled:        true,
+		BindingMode:    operation_setting.VirtualPoolBindingModeMemory,
+		SessionMode:    operation_setting.VirtualPoolSessionModeThread,
+		MultiKeyPolicy: operation_setting.VirtualPoolMultiKeyPolicyBindIndex,
+	}
+	t.Cleanup(func() {
+		retrySetting.VirtualPoolSticky = originalSticky
+	})
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	retry := 0
+	firstParam := &RetryParam{
+		Ctx:         ctx,
+		TokenGroup:  "default",
+		ModelName:   modelName,
+		RequestPath: "/v1/chat/completions",
+		Retry:       &retry,
+	}
+	first, _, err := CacheGetRandomSatisfiedChannel(firstParam)
+	require.NoError(t, err)
+	require.NotNil(t, first)
+	require.Equal(t, 2417, first.Id)
+
+	RecordVirtualRouteFailure(ctx, first.Id, modelName, http.StatusInternalServerError)
+	firstParam.ReleaseVirtualPoolAttempt(ctx, true)
+
+	secondParam := newVirtualRouteHealthAttempt(ctx, modelName)
+	second, _, err := CacheGetRandomSatisfiedChannel(secondParam)
+	require.NoError(t, err)
+	require.NotNil(t, second)
+	assert.Equal(t, 2418, second.Id, "sticky scheduling must follow the health-adjusted candidate order")
+}
+
 func TestVirtualRouteHealthIgnoresClientErrorsAndDisabledRoutes(t *testing.T) {
 	db := setupChannelSelectAutoGroupsTest(t)
 	const modelName = "auto-free-health-client-error"

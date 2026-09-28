@@ -430,6 +430,7 @@ type VirtualPoolSchedulerOptions struct {
 	ConfirmedTTL      time.Duration
 	CapacityLease     time.Duration
 	ClaimWait         time.Duration
+	CapacityWait      time.Duration
 	PendingRenewEvery time.Duration
 	BusyEscape        bool
 }
@@ -471,6 +472,75 @@ func (scheduler *VirtualPoolScheduler) SelectWithOptions(
 		scheduled, err := scheduler.selectOnce(ctx, sessionKey, owner, candidates, now, options)
 		if err != nil || scheduled != nil || options.ClaimWait <= 0 || !now.Before(deadline) {
 			return scheduled, err
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return nil, ctx.Err()
+		}
+		now = time.Now()
+	}
+}
+
+// SelectCapacityWithOptions acquires only a capacity lease for callers that do
+// not have a sticky session identity. The candidate order still follows current
+// load, so shared account capacity remains the hard limit.
+func (scheduler *VirtualPoolScheduler) SelectCapacityWithOptions(
+	ctx context.Context,
+	owner string,
+	candidates []VirtualPoolCandidate,
+	now time.Time,
+	options VirtualPoolSchedulerOptions,
+) (*VirtualPoolScheduledCandidate, error) {
+	if scheduler == nil || scheduler.capacity == nil || len(candidates) == 0 {
+		return nil, nil
+	}
+	if options.CapacityLease <= 0 {
+		options.CapacityLease = time.Hour
+	}
+	deadline := now
+	if options.CapacityWait > 0 {
+		deadline = now.Add(options.CapacityWait)
+	}
+	for {
+		ordered, err := scheduler.candidatesByLoad(ctx, candidates, now)
+		if err != nil {
+			return nil, err
+		}
+		for _, ranked := range ordered {
+			candidate := ranked.candidate
+			capacityKey := virtualPoolCapacityKey(candidate)
+			lease, acquired, acquireErr := scheduler.capacity.Acquire(
+				ctx,
+				capacityKey,
+				owner,
+				virtualPoolCandidateCapacity(candidate),
+				now,
+				options.CapacityLease,
+			)
+			if acquireErr != nil {
+				return nil, acquireErr
+			}
+			if !acquired {
+				continue
+			}
+			scheduled := &VirtualPoolScheduledCandidate{
+				Candidate:         candidate,
+				CapacityLease:     lease,
+				CapacityKey:       capacityKey,
+				CapacityAcquired:  true,
+				CapacityLeaseTTL:  options.CapacityLease,
+				PendingRenewEvery: options.PendingRenewEvery,
+			}
+			scheduler.startRenewal(ctx, scheduled)
+			return scheduled, nil
+		}
+		if options.CapacityWait <= 0 || !now.Before(deadline) {
+			return nil, nil
 		}
 		timer := time.NewTimer(10 * time.Millisecond)
 		select {

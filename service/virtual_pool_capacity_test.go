@@ -400,3 +400,56 @@ func TestRetryParamPreparesEachAttemptWithAFreshCapacityLease(t *testing.T) {
 	assert.NotEqual(t, firstGeneration, param.scheduled.CapacityLease.Generation,
 		"the retry lease must carry a new fencing generation")
 }
+
+func TestVirtualPoolCapacityWithoutSessionUsesSharedAccountLimit(t *testing.T) {
+	now := time.Date(2026, time.September, 28, 16, 0, 0, 0, time.UTC)
+	bindings := NewVirtualPoolMemoryBindingStore()
+	capacity := NewVirtualPoolMemoryCapacityStore()
+	scheduler := NewVirtualPoolScheduler(bindings, capacity)
+	candidates := []VirtualPoolCandidate{
+		{
+			AccountIdentity:  "input-subscription-a",
+			FinalMappedModel: "deepseek-v4.1-flash",
+			Capacity:         15,
+			CapacityGroup:    "input-15",
+		},
+		{
+			AccountIdentity:  "input-subscription-b",
+			FinalMappedModel: "deepseek-v4.1-flash",
+			Capacity:         15,
+			CapacityGroup:    "input-15",
+		},
+		{
+			AccountIdentity:  "input-subscription-c",
+			FinalMappedModel: "deepseek-v4.1-flash",
+			Capacity:         15,
+			CapacityGroup:    "input-15",
+		},
+	}
+
+	leases := make([]*VirtualPoolScheduledCandidate, 0, 15)
+	for index := 0; index < 15; index++ {
+		scheduled, err := scheduler.SelectCapacityWithOptions(
+			context.Background(),
+			fmt.Sprintf("owner-%d", index),
+			candidates,
+			now,
+			VirtualPoolSchedulerOptions{CapacityLease: time.Minute},
+		)
+		require.NoError(t, err)
+		require.NotNil(t, scheduled, "slot %d of the shared limit must be available", index+1)
+		leases = append(leases, scheduled)
+	}
+	exhausted, err := scheduler.SelectCapacityWithOptions(
+		context.Background(),
+		"owner-16",
+		candidates,
+		now,
+		VirtualPoolSchedulerOptions{CapacityLease: time.Minute},
+	)
+	require.NoError(t, err)
+	assert.Nil(t, exhausted, "the three subscriptions must share one 15-slot account limit")
+	for _, scheduled := range leases {
+		require.NoError(t, scheduler.Release(context.Background(), scheduled))
+	}
+}

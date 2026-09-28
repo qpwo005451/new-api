@@ -268,7 +268,7 @@ func resolveVirtualModelMapping(modelName string, modelMapping string) string {
 }
 
 func (p *RetryParam) prepareVirtualPoolScheduling() error {
-	if p == nil || p.preparedRoute == nil || p.virtualSession == nil || len(p.preparedRoute.Candidates) == 0 {
+	if p == nil || p.preparedRoute == nil || len(p.preparedRoute.Candidates) == 0 {
 		return nil
 	}
 	setting := operation_setting.GetModelRetryPolicySetting().VirtualPoolSticky.Normalize()
@@ -322,7 +322,7 @@ func (p *RetryParam) ReleaseVirtualPoolAttempt(c *gin.Context, failed bool) {
 // next attempt. The initial attempt may already have been prepared by the
 // middleware; later retries call this again after releasing the failed one.
 func (p *RetryParam) PrepareVirtualPoolAttempt(c *gin.Context) error {
-	if p == nil || p.preparedRoute == nil || p.virtualSession == nil || len(p.preparedRoute.Candidates) == 0 {
+	if p == nil || p.preparedRoute == nil || len(p.preparedRoute.Candidates) == 0 {
 		return nil
 	}
 	if p.scheduled != nil && !p.scheduledTaken {
@@ -343,7 +343,10 @@ func (p *RetryParam) PrepareVirtualPoolAttempt(c *gin.Context) error {
 	}
 	scheduler := NewVirtualPoolScheduler(bindings, capacity)
 	scheduler.confirmedTTL = time.Duration(setting.ConfirmedTTLSeconds) * time.Second
-	owner := fmt.Sprintf("%s:%d:%d", p.virtualSession.SessionDigest, p.GetRetry(), time.Now().UnixNano())
+	owner := fmt.Sprintf("attempt:%d:%d", p.GetRetry(), time.Now().UnixNano())
+	if p.virtualSession != nil {
+		owner = fmt.Sprintf("%s:%d:%d", p.virtualSession.SessionDigest, p.GetRetry(), time.Now().UnixNano())
+	}
 	available := make([]VirtualPoolCandidate, 0, len(p.preparedRoute.Candidates))
 	for _, candidate := range p.preparedRoute.Candidates {
 		if _, attempted := p.attempted[candidate.AttemptKey()]; attempted {
@@ -364,21 +367,35 @@ func (p *RetryParam) PrepareVirtualPoolAttempt(c *gin.Context) error {
 		if claimWait > remaining {
 			claimWait = remaining
 		}
-		scheduled, selectErr := scheduler.SelectWithOptions(
-			serviceContext(c),
-			p.virtualSession.CacheKey,
-			owner,
-			available,
-			time.Now(),
-			VirtualPoolSchedulerOptions{
-				PendingTTL:        time.Duration(setting.PendingLeaseSeconds) * time.Second,
-				ConfirmedTTL:      time.Duration(setting.ConfirmedTTLSeconds) * time.Second,
-				CapacityLease:     time.Duration(setting.CapacityLeaseSeconds) * time.Second,
-				ClaimWait:         claimWait,
-				PendingRenewEvery: time.Duration(setting.PendingRenewSeconds) * time.Second,
-				BusyEscape:        setting.BusyEscape,
-			},
-		)
+		options := VirtualPoolSchedulerOptions{
+			PendingTTL:        time.Duration(setting.PendingLeaseSeconds) * time.Second,
+			ConfirmedTTL:      time.Duration(setting.ConfirmedTTLSeconds) * time.Second,
+			CapacityLease:     time.Duration(setting.CapacityLeaseSeconds) * time.Second,
+			ClaimWait:         claimWait,
+			CapacityWait:      remaining,
+			PendingRenewEvery: time.Duration(setting.PendingRenewSeconds) * time.Second,
+			BusyEscape:        setting.BusyEscape,
+		}
+		var scheduled *VirtualPoolScheduledCandidate
+		var selectErr error
+		if p.virtualSession == nil {
+			scheduled, selectErr = scheduler.SelectCapacityWithOptions(
+				serviceContext(c),
+				owner,
+				available,
+				time.Now(),
+				options,
+			)
+		} else {
+			scheduled, selectErr = scheduler.SelectWithOptions(
+				serviceContext(c),
+				p.virtualSession.CacheKey,
+				owner,
+				available,
+				time.Now(),
+				options,
+			)
+		}
 		if selectErr != nil {
 			return selectErr
 		}

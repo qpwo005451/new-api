@@ -42,17 +42,25 @@ type virtualPoolE2EUpstream struct {
 func newVirtualPoolE2EUpstream(t *testing.T, partialStream bool) *virtualPoolE2EUpstream {
 	t.Helper()
 	upstream := &virtualPoolE2EUpstream{}
-	upstream.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	upstream.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstream.calls.Add(1)
 		if partialStream {
 			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprint(w, "data: {\"id\":\"chunk-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"upstream\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n")
+			if r.URL.Path == "/v1/responses" {
+				_, _ = fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n")
+			} else {
+				_, _ = fmt.Fprint(w, "data: {\"id\":\"chunk-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"upstream\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n")
+			}
 			if flusher, ok := w.(http.Flusher); ok {
 				flusher.Flush()
 			}
 			// The stream handler holds back the most recent event until the next
 			// one arrives, so emit a second chunk to force the first one out.
-			_, _ = fmt.Fprint(w, "data: {\"id\":\"chunk-2\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"upstream\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"tail\"},\"finish_reason\":null}]}\n\n")
+			if r.URL.Path == "/v1/responses" {
+				_, _ = fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"tail\"}\n\n")
+			} else {
+				_, _ = fmt.Fprint(w, "data: {\"id\":\"chunk-2\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"upstream\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"tail\"},\"finish_reason\":null}]}\n\n")
+			}
 			if flusher, ok := w.(http.Flusher); ok {
 				flusher.Flush()
 			}
@@ -227,6 +235,9 @@ func setupVirtualPoolE2EFixture(
 	router.POST("/v1/chat/completions", func(c *gin.Context) {
 		Relay(c, types.RelayFormatOpenAI)
 	})
+	router.POST("/v1/responses", func(c *gin.Context) {
+		Relay(c, types.RelayFormatOpenAIResponses)
+	})
 
 	return &virtualPoolE2EFixture{
 		router:       router,
@@ -238,16 +249,21 @@ func setupVirtualPoolE2EFixture(
 
 func (fixture *virtualPoolE2EFixture) post(t *testing.T, sessionID string, stream bool) *httptest.ResponseRecorder {
 	t.Helper()
+	return fixture.postPath(t, "/v1/chat/completions", sessionID, stream)
+}
+
+func (fixture *virtualPoolE2EFixture) postPath(t *testing.T, path string, sessionID string, stream bool) *httptest.ResponseRecorder {
+	t.Helper()
 	streamField := ""
 	if stream {
 		streamField = `"stream":true,`
 	}
-	body := fmt.Sprintf(
-		`{"model":%q,%s"messages":[{"role":"user","content":"ping"}]}`,
-		fixture.virtualModel,
-		streamField,
-	)
-	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	requestBody := `"messages":[{"role":"user","content":"ping"}]`
+	if path == "/v1/responses" {
+		requestBody = `"input":"ping"`
+	}
+	body := fmt.Sprintf(`{"model":%q,%s%s}`, fixture.virtualModel, streamField, requestBody)
+	request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	if sessionID != "" {
 		request.Header.Set("X-NewAPI-Session-ID", sessionID)
@@ -298,4 +314,16 @@ func TestVirtualPoolE2ECommittedPartialStreamIsNotReplayed(t *testing.T) {
 	assert.Contains(t, recorder.Body.String(), "upstream_stream_terminated")
 	assert.Equal(t, int64(1), fixture.upstreamA.calls.Load(), "the committed attempt ran on the first candidate exactly once")
 	assert.Equal(t, int64(0), fixture.upstreamB.calls.Load(), "a committed partial stream must never be replayed on another upstream")
+}
+
+func TestVirtualPoolE2ECommittedPartialStreamWithoutSessionIsNotReplayed(t *testing.T) {
+	fixture := setupVirtualPoolE2EFixture(t, true, operation_setting.VirtualModelRouteRotationOrdered, true)
+
+	recorder := fixture.postPath(t, "/v1/responses", "", true)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "partial")
+	assert.Contains(t, recorder.Body.String(), "tail")
+	assert.Equal(t, int64(1), fixture.upstreamA.calls.Load(), "a request without a sticky session still runs on the first candidate exactly once")
+	assert.Equal(t, int64(0), fixture.upstreamB.calls.Load(), "the committed-stream retry guard must not depend on sticky-session eligibility")
 }

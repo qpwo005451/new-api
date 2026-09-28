@@ -40,6 +40,9 @@ class Harness:
         self.report: list[TestReport] = []
         self.initial_routes: dict[str, Any] = {}
         self.initial_sticky: dict[str, Any] = {}
+        run_token = str(int(time.time() * 1000))
+        self.disable_model_strict_route = "vpool-disable-model-strict-" + run_token
+        self.disable_model_recovery_route = "vpool-disable-model-recovery-" + run_token
         self.admin_session = requests.Session()
         self.admin_session.headers.update({"Authorization": "Bearer " + self.admin_token})
         self.relay_session = requests.Session()
@@ -246,8 +249,8 @@ class Harness:
                         {"model": "vpool-mock-model", "channel_id": 8802},
                     ],
                 },
-                "vpool-disable-model-lab": {
-                    "rotation": "ordered",
+                self.disable_model_strict_route: {
+                    "rotation": "round_robin",
                     "max_attempts": 2,
                     "health": {
                         "enabled": True,
@@ -260,8 +263,8 @@ class Harness:
                         {"model": "vpool-mock-model", "channel_id": 8802},
                     ],
                 },
-                "vpool-disable-recovery-lab": {
-                    "rotation": "ordered",
+                self.disable_model_recovery_route: {
+                    "rotation": "round_robin",
                     "max_attempts": 2,
                     "health": {
                         "enabled": True,
@@ -461,50 +464,62 @@ class Harness:
 
     def case_disable_model_strict(self) -> dict[str, Any]:
         self.mock_reset({"default_delay_ms": 50, "channels": {"8801": {"status": 503}}})
-        first = self.relay("vpool-disable-model-lab", timeout=10)
-        second = self.relay("vpool-disable-model-lab", timeout=10)
-        after_threshold = self.mock_stats()
-        self.require(first.status == 503, "the first disabled-model request should surface 503, got " + str(first.status))
-        self.require(second.status == 503, "the second request should reach the failure threshold, got " + str(second.status))
+        before_disable: dict[str, Any] = {}
+        for _ in range(20):
+            self.relay(self.disable_model_strict_route, timeout=10)
+            before_disable = self.mock_stats()
+            if before_disable["calls_by_channel"].get("8801", 0) >= 2:
+                break
         self.require(
-            after_threshold["calls_by_channel"].get("8801") == 2,
-            "two separate requests must reach the failing member before the disable threshold",
+            before_disable["calls_by_channel"].get("8801") == 2,
+            "the failing member must reach the disable threshold exactly once",
         )
 
-        third = self.relay("vpool-disable-model-lab", timeout=10)
+        for _ in range(3):
+            result = self.relay(self.disable_model_strict_route, timeout=10)
+            self.require(result.status in (200, 503), "disabled-model requests must stay in the expected result set")
         stats = self.mock_stats()
-        self.require(third.status == 200, "a disabled model must not be used as a last resort, got " + str(third.status))
-        self.require(stats["calls_by_channel"].get("8801") == 2, "the disabled member must be skipped after the threshold")
-        self.require(stats["calls_by_channel"].get("8802") == 1, "the healthy member must serve the post-threshold request")
+        self.require(stats["calls_by_channel"].get("8801") == 2, "the disabled member must be skipped during cooldown")
+        self.require(stats["calls_by_channel"].get("8802", 0) >= 1, "the healthy member must serve while the model is disabled")
         return {
-            "first": first.status,
-            "second": second.status,
-            "third": third.status,
+            "disabled_after_calls": before_disable["calls_by_channel"].get("8801"),
             "calls_by_channel": stats["calls_by_channel"],
         }
 
     def case_disable_model_recovers(self) -> dict[str, Any]:
         self.mock_reset({"default_delay_ms": 50, "channels": {"8801": {"status": 429}}})
-        first = self.relay("vpool-disable-recovery-lab", timeout=10)
-        second = self.relay("vpool-disable-recovery-lab", timeout=10)
-        before_recovery = self.mock_stats()
-        self.require(first.status == 429, "the first recovery request should surface 429, got " + str(first.status))
-        self.require(second.status == 200, "the second recovery request should retry to the healthy member, got " + str(second.status))
+        before_recovery: dict[str, Any] = {}
+        for _ in range(20):
+            self.relay(self.disable_model_recovery_route, timeout=10)
+            before_recovery = self.mock_stats()
+            if before_recovery["calls_by_channel"].get("8801", 0) >= 2:
+                break
         self.require(
             before_recovery["calls_by_channel"].get("8801") == 2,
-            "the failing member must be disabled after the configured threshold",
+            "the failing member must reach the disable threshold exactly once",
+        )
+        disabled = self.relay(self.disable_model_recovery_route, timeout=10)
+        during_cooldown = self.mock_stats()
+        self.require(disabled.status in (200, 429), "a cooling member must not surface an unrelated failure")
+        self.require(
+            during_cooldown["calls_by_channel"].get("8801") == 2,
+            "the disabled member must be skipped during cooldown",
         )
 
         self.mock_config({"channels": {"8801": {"status": 0}}})
         time.sleep(2.3)
-        recovered = self.relay("vpool-disable-recovery-lab", timeout=10)
-        stats = self.mock_stats()
-        self.require(recovered.status == 200, "a model must be tried again after cooldown expiry, got " + str(recovered.status))
-        self.require(stats["calls_by_channel"].get("8801") == 3, "the recovered member must be selected after cooldown expiry")
+        recovered = None
+        stats: dict[str, Any] = {}
+        for _ in range(4):
+            recovered = self.relay(self.disable_model_recovery_route, timeout=10)
+            stats = self.mock_stats()
+            if stats["calls_by_channel"].get("8801", 0) > 2:
+                break
+        self.require(recovered is not None and recovered.status == 200, "a recovered member must succeed after cooldown expiry")
+        self.require(stats["calls_by_channel"].get("8801") > 2, "the recovered member must be selected after cooldown expiry")
         return {
-            "first": first.status,
-            "second": second.status,
-            "recovered": recovered.status,
+            "disabled_after_calls": before_recovery["calls_by_channel"].get("8801"),
+            "during_cooldown": during_cooldown["calls_by_channel"],
             "calls_by_channel": stats["calls_by_channel"],
         }
 

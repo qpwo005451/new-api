@@ -46,6 +46,8 @@ Use a copied SQLite database, never production. Add:
 | F14 | Sticky session enabled | repeated session reuses one member while capacity remains |
 | F15 | Sticky disabled | capacity group still enforces the shared limit |
 | F16 | Previous response owner | continuation stays on the original candidate or fails closed |
+| F17 | `health.disable_model=true`, repeated unavailable failures | the failing model candidate is skipped until cooldown expiry and never used as a last resort |
+| F17b | A disabled candidate reaches cooldown expiry | the member is skipped during cooldown and is selectable again after expiry; use a short cooldown in the lab while production uses 300 seconds |
 
 ## 4. Failure And Boundary Cases
 
@@ -72,10 +74,11 @@ Use a copied SQLite database, never production. Add:
 4. Run F01-F06 sequentially, recording admission counts.
 5. Run F07-F10 for runtime capacity changes.
 6. Run F11-F13 for rotation and health.
-7. Run F14-F16 for sticky/private-state behavior.
-8. Run boundary cases and failure injection.
-9. Re-run `fast` smoke and verify candidate still uses the copied DB.
-10. Stop 4003, preserve logs and evidence, and report pass/fail/blockers.
+7. Run F17-F17b for strict model-level cooldown.
+8. Run F14-F16 for sticky/private-state behavior.
+9. Run boundary cases and failure injection.
+10. Re-run `fast` smoke and verify candidate still uses the copied DB.
+11. Stop 4003, preserve logs and evidence, and report pass/fail/blockers.
 
 ## 6. Evidence And Stop Conditions
 

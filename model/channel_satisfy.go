@@ -1,6 +1,8 @@
 package model
 
 import (
+	"slices"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
@@ -23,7 +25,7 @@ func IsChannelEnabledForGroupModel(group string, modelName string, channelID int
 	if isChannelIDInList(group2model2channels[group][modelName], channelID) {
 		return channelModelAllowedCached(channelID, modelName)
 	}
-	normalized := ratio_setting.FormatMatchingModelName(modelName)
+	normalized := ratio_setting.RoutingMatchModelName(modelName)
 	if normalized != "" && normalized != modelName {
 		return isChannelIDInList(group2model2channels[group][normalized], channelID) &&
 			channelModelAllowedCached(channelID, modelName)
@@ -51,7 +53,7 @@ func isChannelEnabledForGroupModelDB(group string, modelName string, channelID i
 	if err == nil && count > 0 {
 		return IsChannelModelAllowed(channelID, modelName)
 	}
-	normalized := ratio_setting.FormatMatchingModelName(modelName)
+	normalized := ratio_setting.RoutingMatchModelName(modelName)
 	if normalized == "" || normalized == modelName {
 		return false
 	}
@@ -68,10 +70,5 @@ func channelModelAllowedCached(channelID int, modelName string) bool {
 }
 
 func isChannelIDInList(list []int, channelID int) bool {
-	for _, id := range list {
-		if id == channelID {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(list, channelID)
 }

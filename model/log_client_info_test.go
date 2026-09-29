@@ -91,12 +91,12 @@ func TestRecordConsumeLogCapturesAdminClientInfo(t *testing.T) {
 		TokenId:          11,
 		UseTimeSeconds:   4,
 		Group:            "default",
-		Other: map[string]interface{}{
-			"model_price": 0.004,
-			"admin_info": map[string]interface{}{
-				"use_channel": []int{3},
-			},
-		},
+		Other: func() *LogOther {
+			other := NewLogOther()
+			other.SetPublic("model_price", 0.004)
+			other.SetAdmin("use_channel", []int{3})
+			return other
+		}(),
 	})
 
 	row := requireClientInfoLogRow(t, LogTypeConsume)
@@ -193,7 +193,11 @@ func TestRecordConsumeLogWithoutRequestOmitsClientInfo(t *testing.T) {
 		Content:        "done",
 		UseTimeSeconds: 1,
 		Group:          "default",
-		Other:          map[string]interface{}{"model_price": 0.004},
+		Other: func() *LogOther {
+			other := NewLogOther()
+			other.SetPublic("model_price", 0.004)
+			return other
+		}(),
 	})
 
 	var row Log
@@ -224,7 +228,7 @@ func TestRecordConsumeLogCapturesClientIdentityHeaders(t *testing.T) {
 		Content:        "done",
 		UseTimeSeconds: 1,
 		Group:          "default",
-		Other:          map[string]interface{}{},
+		Other:          NewLogOther(),
 	})
 
 	row := requireClientInfoLogRow(t, LogTypeConsume)
@@ -253,7 +257,7 @@ func TestRecordConsumeLogTruncatesOversizedClientInfo(t *testing.T) {
 		Content:        "done",
 		UseTimeSeconds: 1,
 		Group:          "default",
-		Other:          map[string]interface{}{},
+		Other:          NewLogOther(),
 	})
 
 	row := requireClientInfoLogRow(t, LogTypeConsume)

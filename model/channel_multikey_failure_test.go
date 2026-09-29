@@ -101,12 +101,12 @@ func TestRecordMultiKeyFailureUsesThresholdAndEnableClearsState(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, common.ChannelStatusAutoDisabled, stored.Status)
 
-	cached, err := GetRandomSatisfiedChannel(channel.Group, "test-model", 0, "")
+	cached, err := GetRandomSatisfiedChannel(channel.Group, "test-model", 0, nil)
 	require.NoError(t, err)
 	assert.Nil(t, cached)
 
 	assert.True(t, UpdateChannelStatus(channel.Id, "key-one", common.ChannelStatusEnabled, "recovery succeeded"))
-	cached, err = GetRandomSatisfiedChannel(channel.Group, "test-model", 0, "")
+	cached, err = GetRandomSatisfiedChannel(channel.Group, "test-model", 0, nil)
 	require.NoError(t, err)
 	require.NotNil(t, cached)
 	assert.Equal(t, channel.Id, cached.Id)

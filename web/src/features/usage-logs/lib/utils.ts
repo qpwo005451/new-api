@@ -40,6 +40,8 @@ import type {
   GetTaskLogsParams,
 } from '../types'
 
+export { buildQueryParams } from './query-params'
+
 // ============================================================================
 // Type Checkers & Utilities
 // ============================================================================
@@ -91,9 +93,6 @@ function timestampToSeconds(ms: number): number {
   return Math.floor(ms / 1000)
 }
 
-/**
- * Build query parameters from filters
- */
 /**
  * Build time range parameters with default values
  * Shared logic for all log types

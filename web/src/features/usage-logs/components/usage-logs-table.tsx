@@ -29,9 +29,15 @@ import {
   DataTableRow,
   useDataTable,
 } from '@/components/data-table'
+import {
+  getAdminPlans,
+  getSelfSubscriptionFull,
+} from '@/features/subscriptions/api'
 import { useMediaQuery } from '@/hooks'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
+import { createServerError } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { cancelInFlightLog } from '../api'
 import {
@@ -40,6 +46,7 @@ import {
   LOG_TYPE_ENUM,
 } from '../constants'
 import type { UsageLog } from '../data/schema'
+import { shouldShowBillingSource } from '../lib/billing-source'
 import { useColumnsByCategory } from '../lib/columns'
 import { parseLogOther } from '../lib/format'
 import { fetchLogsByCategory } from '../lib/utils'
@@ -48,7 +55,7 @@ import { CommonLogsFilterBar } from './common-logs-filter-bar'
 import { DetailsDialog } from './dialogs/details-dialog'
 import { TaskLogsFilterBar } from './task-logs-filter-bar'
 import { UsageLogsMobileList } from './usage-logs-mobile-card'
-import { useLogsViewScope } from './usage-logs-provider'
+import { useLogsViewScope, type LogsViewAccess } from './usage-logs-provider'
 import { useUsageLogAutoRefresh } from './use-usage-log-auto-refresh'
 
 const route = getRouteApi('/_authenticated/usage-logs/$section')
@@ -65,9 +72,9 @@ const quotaSaturationRowTint = 'bg-amber-50/60 dark:bg-amber-950/25'
 
 function getColumnVisibilityStorageKey(
   logCategory: LogCategory,
-  isAdmin: boolean
+  viewAccess: LogsViewAccess
 ): string {
-  return `usage-logs:${logCategory}:${isAdmin ? 'admin' : 'user'}:column-visibility`
+  return `usage-logs:${logCategory}:${viewAccess}:column-visibility`
 }
 
 function deserializeLogTypeFilter(value: unknown): unknown[] {
@@ -87,9 +94,37 @@ interface UsageLogsTableProps {
 export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const { isAdminView: isAdmin } = useLogsViewScope()
+  const {
+    isAdminView: isAdmin,
+    isRootView: isRoot,
+    viewAccess,
+  } = useLogsViewScope()
   const isMobile = useMediaQuery('(max-width: 640px)')
   const searchParams = route.useSearch()
+  const userId = useAuthStore((state) => state.auth.user?.id)
+  const { data: showBillingSource = false } = useQuery({
+    queryKey: ['usage-log-billing-source', isAdmin, userId],
+    enabled: logCategory === 'common' && userId != null,
+    queryFn: async () => {
+      if (isAdmin) {
+        const plansResult = await getAdminPlans()
+        return shouldShowBillingSource({
+          isAdmin,
+          plans: plansResult.success ? plansResult.data : undefined,
+          subscriptions: undefined,
+        })
+      }
+
+      const selfResult = await getSelfSubscriptionFull()
+      return shouldShowBillingSource({
+        isAdmin,
+        plans: undefined,
+        subscriptions: selfResult.success
+          ? selfResult.data?.subscriptions
+          : undefined,
+      })
+    },
+  })
 
   const {
     columnFilters,
@@ -138,11 +173,11 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
 
   useUsageLogAutoRefresh(queryClient, isCommon && autoRefresh)
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching } = useQuery({
     queryKey: [
       'logs',
       logCategory,
-      isAdmin,
+      viewAccess,
       pagination.pageIndex + 1,
       pagination.pageSize,
       columnFilters,
@@ -160,14 +195,16 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
       })
 
       if (!result?.success) {
-        toast.error(result?.message || t('Failed to load logs'))
-        return DEFAULT_LOGS_DATA
+        throw createServerError(result, t('Failed to load logs'))
       }
 
       return result.data || DEFAULT_LOGS_DATA
     },
     placeholderData: (previousData, previousQuery) => {
-      if (previousQuery?.queryKey[1] === logCategory) {
+      if (
+        previousQuery?.queryKey[1] === logCategory &&
+        previousQuery.queryKey[2] === viewAccess
+      ) {
         return previousData
       }
       return undefined
@@ -205,9 +242,11 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   const columns = useColumnsByCategory(
     logCategory,
     isAdmin,
-    commonColumnActions
+    isRoot,
+    commonColumnActions,
+    showBillingSource
   )
-  const isLoadingData = isLoading
+  const isLoadingData = isLoading || (isFetching && !data)
 
   const cancelMutation = useMutation({
     mutationFn: (logId: number) => cancelInFlightLog(logId),
@@ -224,7 +263,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     columnFilters,
     columnVisibilityStorageKey: getColumnVisibilityStorageKey(
       logCategory,
-      isAdmin
+      viewAccess
     ),
     pagination,
     enableRowSelection: false,
@@ -241,8 +280,10 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     <>
       <DataTablePage
         table={table}
+        compactPagination={isMobile && isCommon}
         columns={columns as ColumnDef<Record<string, unknown>>[]}
         isLoading={isLoadingData}
+        isFetching={isFetching}
         emptyTitle={t('No Logs Found')}
         emptyDescription={t(
           'No usage logs available. Logs will appear here once API calls are made.'
@@ -301,6 +342,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
         <DetailsDialog
           log={selectedLog}
           isAdmin={isAdmin}
+          isRoot={isRoot}
           open={selectedLogId != null}
           onOpenChange={(open) => {
             if (open) return

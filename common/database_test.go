@@ -12,12 +12,17 @@ import (
 
 func TestNormalizeSQLitePathAddsSQLitePragmas(t *testing.T) {
 	assert.Equal(t,
-		"data/new-api.db?_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)",
+		"data/new-api.db?_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)&_txlock=immediate",
 		normalizeSQLitePath("data/new-api.db"))
 	assert.Equal(t,
-		"data/new-api.db?mode=rwc&_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)",
+		"data/new-api.db?mode=rwc&_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)&_txlock=immediate",
 		normalizeSQLitePath("data/new-api.db?mode=rwc"))
-	assert.Equal(t, "data/new-api.db?_pragma=busy_timeout(5000)", normalizeSQLitePath("data/new-api.db?_pragma=busy_timeout(5000)"))
+	assert.Equal(t,
+		"data/new-api.db?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate",
+		normalizeSQLitePath("data/new-api.db?_pragma=busy_timeout(5000)"))
+	assert.Equal(t,
+		"data/new-api.db?_txlock=exclusive&_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)",
+		normalizeSQLitePath("data/new-api.db?_txlock=exclusive"))
 	assert.Equal(t, ":memory:", normalizeSQLitePath(":memory:"))
 }
 

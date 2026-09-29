@@ -73,7 +73,7 @@ function ClientInfoCell(props: {
   columnId: string
   log: UsageLog
 }) {
-  const columns = useCommonLogsColumns(props.isAdmin, {
+  const columns = useCommonLogsColumns(props.isAdmin, false, {
     onViewDetails() {},
     onCancelRequest() {},
   })
@@ -98,7 +98,7 @@ function renderCell(props: {
 }
 
 function ColumnsProbe(props: { isAdmin: boolean }) {
-  const columns = useCommonLogsColumns(props.isAdmin, {
+  const columns = useCommonLogsColumns(props.isAdmin, false, {
     onViewDetails() {},
     onCancelRequest() {},
   })

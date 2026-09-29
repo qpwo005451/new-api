@@ -36,12 +36,19 @@ import type { LogCategory } from '../types'
 export function useColumnsByCategory(
   logCategory: LogCategory,
   isAdmin: boolean,
-  commonActions: CommonLogsColumnActions
+  isRoot: boolean,
+  commonActions?: CommonLogsColumnActions,
+  showWalletSource = false
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): ColumnDef<any>[] {
-  const commonColumns = useCommonLogsColumns(isAdmin, commonActions)
+  const commonColumns = useCommonLogsColumns(
+    isAdmin,
+    isRoot,
+    commonActions,
+    showWalletSource
+  )
   const drawingColumns = useDrawingLogsColumns(isAdmin)
-  const taskColumns = useTaskLogsColumns(isAdmin)
+  const taskColumns = useTaskLogsColumns(isAdmin, isRoot)
 
   switch (logCategory) {
     case 'common':

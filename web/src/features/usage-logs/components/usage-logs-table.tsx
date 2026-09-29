@@ -46,6 +46,7 @@ import {
   LOG_TYPE_ENUM,
 } from '../constants'
 import type { UsageLog } from '../data/schema'
+import { shouldShowBillingSource } from '../lib/billing-source'
 import { useColumnsByCategory } from '../lib/columns'
 import { parseLogOther } from '../lib/format'
 import { fetchLogsByCategory } from '../lib/utils'
@@ -101,19 +102,27 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   const isMobile = useMediaQuery('(max-width: 640px)')
   const searchParams = route.useSearch()
   const userId = useAuthStore((state) => state.auth.user?.id)
-  const { data: showWalletSource = false } = useQuery({
-    queryKey: ['usage-log-wallet-source', isAdmin, userId],
+  const { data: showBillingSource = false } = useQuery({
+    queryKey: ['usage-log-billing-source', isAdmin, userId],
     enabled: logCategory === 'common' && userId != null,
     queryFn: async () => {
       if (isAdmin) {
-        const result = await getAdminPlans()
-        return result.success && (result.data?.length ?? 0) > 0
+        const plansResult = await getAdminPlans()
+        return shouldShowBillingSource({
+          isAdmin,
+          plans: plansResult.success ? plansResult.data : undefined,
+          subscriptions: undefined,
+        })
       }
 
-      const result = await getSelfSubscriptionFull()
-      const subscriptions =
-        result.data?.all_subscriptions ?? result.data?.subscriptions
-      return result.success && (subscriptions?.length ?? 0) > 0
+      const selfResult = await getSelfSubscriptionFull()
+      return shouldShowBillingSource({
+        isAdmin,
+        plans: undefined,
+        subscriptions: selfResult.success
+          ? selfResult.data?.subscriptions
+          : undefined,
+      })
     },
   })
 
@@ -235,7 +244,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     isAdmin,
     isRoot,
     commonColumnActions,
-    showWalletSource
+    showBillingSource
   )
   const isLoadingData = isLoading || (isFetching && !data)
 

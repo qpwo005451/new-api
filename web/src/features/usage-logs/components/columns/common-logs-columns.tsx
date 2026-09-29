@@ -1002,7 +1002,7 @@ function buildCommonLogsColumns(
           <LogCostDisplay
             quota={quota}
             other={other}
-            showWalletSource={showWalletSource}
+            showBillingSource={showWalletSource}
           />
         )
       },

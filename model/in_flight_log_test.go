@@ -107,14 +107,18 @@ func TestRecordPendingAndFinalizeToError(t *testing.T) {
 		ModelName: "m",
 		TokenName: "t",
 		TokenId:   1,
-		Other: map[string]interface{}{
-			"reasoning_effort": "high",
-		},
+		Other: func() *LogOther {
+			other := NewLogOther()
+			other.SetPublic("reasoning_effort", "high")
+			return other
+		}(),
 	})
 	pendingID := common.GetContextKeyInt(c, constant.ContextKeyPendingLogId)
 	require.Greater(t, pendingID, 0)
 
-	RecordErrorLog(c, 8, 2, "m", "t", "upstream failed", 1, 2, false, "default", map[string]interface{}{"error_code": "x"})
+	errorOther := NewLogOther()
+	errorOther.SetPublic("error_code", "x")
+	RecordErrorLog(c, 8, 2, "m", "t", "upstream failed", 1, 2, false, "default", errorOther)
 
 	var row Log
 	require.NoError(t, LOG_DB.First(&row, pendingID).Error)
@@ -210,9 +214,11 @@ func TestViolationFeeDoesNotFinalizePendingRequest(t *testing.T) {
 		TokenId:   1,
 		Quota:     25,
 		Content:   "Violation fee charged",
-		Other: map[string]interface{}{
-			"violation_fee": true,
-		},
+		Other: func() *LogOther {
+			other := NewLogOther()
+			other.SetPublic("violation_fee", true)
+			return other
+		}(),
 	})
 
 	var pending Log
@@ -236,9 +242,9 @@ func TestIntermediateRetryErrorDoesNotFinalizePendingRequest(t *testing.T) {
 	pendingID := common.GetContextKeyInt(c, constant.ContextKeyPendingLogId)
 	require.Greater(t, pendingID, 0)
 
-	RecordErrorLog(c, 10, 2, "m", "t", "first channel failed", 1, 2, false, "default", map[string]interface{}{
-		"intermediate_retry": true,
-	})
+	intermediateOther := NewLogOther()
+	intermediateOther.SetAdmin("intermediate_retry", true)
+	RecordErrorLog(c, 10, 2, "m", "t", "first channel failed", 1, 2, false, "default", intermediateOther)
 
 	var pending Log
 	require.NoError(t, LOG_DB.First(&pending, pendingID).Error)

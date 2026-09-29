@@ -188,6 +188,8 @@ export interface LogOtherData {
     client_referer?: string
     client_runtime?: string
     client_runtime_version?: string
+    // Reject / intercept reason (admin only)
+    reject_reason?: string
     task_plugin?: TaskPluginInfo
   }
   root_info?: {

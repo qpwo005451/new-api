@@ -10,10 +10,12 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	hostreasoning "github.com/QuantumNous/new-api/setting/reasoning"
 	hosttypes "github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -69,7 +71,10 @@ func isInputChannel(c *gin.Context, info *relaycommon.RelayInfo) bool {
 }
 
 func billingModelName(c *gin.Context, info *relaycommon.RelayInfo) string {
-	modelName := info.OriginModelName
+	// Upstream resolves the origin name to the first candidate that actually has a
+	// price/ratio entry (strips reasoning modifiers); the input-channel alias
+	// mapping below is applied on top of that resolved identity.
+	modelName := info.GetBillingModelName()
 	if !isInputChannel(c, info) {
 		return modelName
 	}
@@ -115,6 +120,11 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) hostty
 }
 
 func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (hosttypes.PriceData, error) {
+	if info != nil {
+		if matched := resolveBillingModelName(info.GetOriginModelName()); matched != "" && matched != info.OriginModelName {
+			info.BillingModelName = matched
+		}
+	}
 	priceModelName := billingModelName(c, info)
 	modelPrice, usePrice := ratio_setting.GetModelPrice(priceModelName, false)
 
@@ -311,6 +321,49 @@ func HasModelBillingConfig(modelName string) bool {
 	return ok && strings.TrimSpace(expr) != ""
 }
 
+// HasPriceOrRatioEntry reports whether name has a configured price, ratio, or
+// tiered billing-mode entry after a single wildcard normalization. Self-use
+// fallback does not count as a configured ratio.
+func HasPriceOrRatioEntry(name string) bool {
+	formatted := ratio_setting.FormatMatchingModelName(name)
+	if _, ok := ratio_setting.GetModelPrice(formatted, false); ok {
+		return true
+	}
+	if ratio_setting.HasConfiguredModelRatio(formatted) {
+		return true
+	}
+	return billing_setting.GetBillingMode(formatted) == billing_setting.BillingModeTieredExpr
+}
+
+func resolveBillingModelName(origin string) string {
+	var candidates []string
+	if !reasoning.ParseModelModifiers(origin).HasModifiers() {
+		candidates = append(candidates, origin)
+	}
+	candidates = append(candidates, hostreasoning.CanonicalBillingModelNames(origin)...)
+	base := hostreasoning.BaseModelName(origin)
+	candidates = append(candidates, base)
+
+	seen := make(map[string]struct{}, len(candidates))
+	matched := ""
+	for _, name := range candidates {
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		if HasPriceOrRatioEntry(name) {
+			matched = name
+			break
+		}
+	}
+	if matched == "" {
+		matched = base
+	}
+	return matched
+}
 func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, priceModelName string, promptTokens int, meta *types.TokenCountMeta, groupRatioInfo hosttypes.GroupRatioInfo) (hosttypes.PriceData, error) {
 	exprStr, ok := billing_setting.GetBillingExpr(priceModelName)
 	if !ok {
@@ -333,7 +386,7 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, priceMo
 		Len: float64(promptTokens),
 	}, requestInput)
 	if err != nil {
-		return hosttypes.PriceData{}, fmt.Errorf("model %s tiered expr run failed: %w", info.OriginModelName, err)
+		return hosttypes.PriceData{}, fmt.Errorf("model %s tiered expr run failed: %w", priceModelName, err)
 	}
 
 	// Expression coefficients are $/1M tokens prices; convert to quota the same way per-call billing does.
@@ -375,7 +428,7 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, priceMo
 		QuotaToPreConsume: preConsumedQuota,
 	}
 
-	logger.LogDebug(c, "model_price_helper_tiered result: model=%s preConsume=%d quotaBeforeGroup=%.2f groupRatio=%.2f tier=%s", info.OriginModelName, preConsumedQuota, quotaBeforeGroup, groupRatioInfo.GroupRatio, trace.MatchedTier)
+	logger.LogDebug(c, "model_price_helper_tiered result: model=%s preConsume=%d quotaBeforeGroup=%.2f groupRatio=%.2f tier=%s", priceModelName, preConsumedQuota, quotaBeforeGroup, groupRatioInfo.GroupRatio, trace.MatchedTier)
 
 	info.PriceData = priceData
 	return priceData, nil

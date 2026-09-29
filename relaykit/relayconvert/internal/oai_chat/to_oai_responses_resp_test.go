@@ -52,10 +52,12 @@ func TestChatCompletionsResponseToResponsesPreservesReasoningTextAlias(t *testin
 	resp, _, err := ChatCompletionsResponseToResponsesResponse(&chat, "resp_1")
 	require.NoError(t, err)
 	require.Len(t, resp.Output, 2)
-	assert.Equal(t, responsesOutputTypeMessage, resp.Output[0].Type)
-	assert.Equal(t, responsesOutputTypeReasoning, resp.Output[1].Type)
-	require.Len(t, resp.Output[1].Content, 1)
-	assert.Equal(t, "thinking", resp.Output[1].Content[0].Text)
+	// Upstream now emits the reasoning item first and keeps its text in Summary.
+	assert.Equal(t, responsesOutputTypeReasoning, resp.Output[0].Type)
+	require.Len(t, resp.Output[0].Summary, 1)
+	assert.Equal(t, "thinking", resp.Output[0].Summary[0].Text)
+	assert.Equal(t, responsesOutputTypeMessage, resp.Output[1].Type)
+	assert.Equal(t, "answer", resp.Output[1].Content[0].Text)
 }
 
 func TestResponsesFunctionCallItemIDIsStableAndBounded(t *testing.T) {
@@ -140,6 +142,27 @@ func TestChatCompletionsResponseToResponsesNormalizesLongFunctionCallID(t *testi
 	assert.True(t, strings.HasPrefix(output.CallId, "call_"))
 	assert.LessOrEqual(t, len(output.ID), 64)
 	assert.LessOrEqual(t, len(output.CallId), 64)
+}
+
+func TestChatCompletionsResponseToResponsesEmitsReasoningSummaryBeforeText(t *testing.T) {
+	message := dto.Message{Role: "assistant", Content: "final answer"}
+	message.ReasoningContent = lo.ToPtr("thinking summary")
+	resp, _, err := ChatCompletionsResponseToResponsesResponse(&dto.OpenAITextResponse{
+		Id:    "chatcmpl_1",
+		Model: "gpt-test",
+		Choices: []dto.OpenAITextResponseChoice{
+			{Message: message, FinishReason: "stop"},
+		},
+	}, "resp_1")
+	require.NoError(t, err)
+
+	require.Len(t, resp.Output, 2)
+	assert.Equal(t, responsesOutputTypeReasoning, resp.Output[0].Type)
+	require.Len(t, resp.Output[0].Summary, 1)
+	assert.Equal(t, "thinking summary", resp.Output[0].Summary[0].Text)
+	assert.Empty(t, resp.Output[0].Content)
+	assert.Equal(t, responsesOutputTypeMessage, resp.Output[1].Type)
+	assert.Equal(t, "final answer", resp.Output[1].Content[0].Text)
 }
 
 func TestChatCompletionsResponseToResponsesMapsIncompleteFinishReasons(t *testing.T) {

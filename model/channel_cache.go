@@ -153,7 +153,7 @@ func GetRandomSatisfiedChannel(
 
 	// If no channels found, try to find channels with the normalized model name.
 	if len(channels) == 0 {
-		normalizedModel := ratio_setting.FormatMatchingModelName(model)
+		normalizedModel := ratio_setting.RoutingMatchModelName(model)
 		candidates, _ := filterCandidateIDs(group2model2channels[group][normalizedModel], model, filters)
 		channels = filterCandidateIDsByModelProtection(candidates, model)
 	}
@@ -333,7 +333,7 @@ func GetOrderedSatisfiedChannels(group string, model string, filters []dto.Chann
 	channelIds, _ := filterCandidateIDs(group2model2channels[group][model], model, filters)
 	channelIds = filterCandidateIDsByModelProtection(channelIds, model)
 	if len(channelIds) == 0 {
-		normalizedModel := ratio_setting.FormatMatchingModelName(model)
+		normalizedModel := ratio_setting.RoutingMatchModelName(model)
 		candidates, _ := filterCandidateIDs(group2model2channels[group][normalizedModel], model, filters)
 		channelIds = filterCandidateIDsByModelProtection(candidates, model)
 	}

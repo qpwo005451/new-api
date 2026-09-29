@@ -283,7 +283,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
         compactPagination={isMobile && isCommon}
         columns={columns as ColumnDef<Record<string, unknown>>[]}
         isLoading={isLoadingData}
-        isFetching={isFetching}
+        isFetching={!isCommon && isFetching}
         emptyTitle={t('No Logs Found')}
         emptyDescription={t(
           'No usage logs available. Logs will appear here once API calls are made.'

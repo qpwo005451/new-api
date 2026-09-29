@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQueryClient, useIsFetching, useQuery } from '@tanstack/react-query'
+import { useQueryClient, useQuery } from '@tanstack/react-query'
 import { useNavigate, getRouteApi } from '@tanstack/react-router'
 import type { Table } from '@tanstack/react-table'
 import { Eye, EyeOff, RefreshCw } from 'lucide-react'
@@ -130,7 +130,6 @@ export function CommonLogsFilterBar<TData>(
   const { isAdminView: isAdmin } = useLogsViewScope()
   const { sensitiveVisible, setSensitiveVisible } = useUsageLogsContext()
   const [searchLoading, setSearchLoading] = useState(false)
-  const fetchingLogs = useIsFetching({ queryKey: ['logs'] })
   const { data: adminGroups } = useQuery({
     queryKey: ['groups'],
     queryFn: async () => requireServerSuccess(await getGroups()),
@@ -229,8 +228,10 @@ export function CommonLogsFilterBar<TData>(
             page: 1,
           },
         })
-        queryClient.invalidateQueries({ queryKey: ['logs'] })
-        queryClient.invalidateQueries({ queryKey: ['usage-logs-stats'] })
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['logs'] }),
+          queryClient.invalidateQueries({ queryKey: ['usage-logs-stats'] }),
+        ])
       } finally {
         setSearchLoading(false)
       }
@@ -556,7 +557,7 @@ export function CommonLogsFilterBar<TData>(
       advancedFilterCount={expandedFilterCount}
       hasActiveFilters={hasAdditionalFilters}
       onSearch={() => handleApply()}
-      searchLoading={searchLoading || fetchingLogs > 0}
+      searchLoading={searchLoading}
       onReset={handleReset}
     />
   )

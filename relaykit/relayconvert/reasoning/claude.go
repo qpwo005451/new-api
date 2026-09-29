@@ -61,6 +61,12 @@ func claudeCapabilitiesFor(model string) claudeCapabilities {
 		if strings.HasPrefix(model, "claude-opus-5") || strings.HasPrefix(model, "claude-sonnet-5") {
 			capabilities.defaultThinking = true
 		}
+		// Opus 5.5 rejects thinking.type="disabled", so the fork never derives a
+		// disabled block for that family: reasoning_effort "none" keeps adaptive
+		// thinking instead of turning it off (see merge-rc40-tdd-plan.md B类).
+		if strings.HasPrefix(model, "claude-opus-5") {
+			capabilities.supportsDisable = false
+		}
 		capabilities.supportsEffort = true
 		capabilities.supportsXHigh = true
 		capabilities.supportsMax = true

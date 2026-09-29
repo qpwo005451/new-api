@@ -108,7 +108,9 @@ func TestOpenAIChatRequestToClaudeMessages_ReasoningEffortMatrix(t *testing.T) {
 		{name: "opus-5-5 high", model: "claude-opus-5-5", effort: "high", wantThinkingType: "adaptive", wantEffort: "high", wantAccounting: "high"},
 		{name: "opus-5-5 xhigh", model: "claude-opus-5-5", effort: "xhigh", wantThinkingType: "adaptive", wantEffort: "xhigh", wantAccounting: "xhigh"},
 		{name: "opus-5-5 max", model: "claude-opus-5-5", effort: "max", wantThinkingType: "adaptive", wantEffort: "max", wantAccounting: "max"},
-		{name: "opus-5-5 none", model: "claude-opus-5-5", effort: "none", wantThinkingType: "disabled", wantAccounting: "none"},
+		// Opus 5.5 cannot disable thinking, so "none" keeps adaptive thinking and maps to the
+		// lowest representable effort. Accounting follows the effort actually used.
+		{name: "opus-5-5 none", model: "claude-opus-5-5", effort: "none", wantThinkingType: "adaptive", wantEffort: "low", wantAccounting: "low"},
 		{name: "opus-5-5 omitted", model: "claude-opus-5-5", effort: "", wantAccounting: "high"},
 		{name: "fable-5-1 minimal", model: "claude-fable-5-1", effort: "minimal", wantThinkingType: "adaptive", wantEffort: "low", wantAccounting: "low"},
 		{name: "fable-5-1 low", model: "claude-fable-5-1", effort: "low", wantThinkingType: "adaptive", wantEffort: "low", wantAccounting: "low"},

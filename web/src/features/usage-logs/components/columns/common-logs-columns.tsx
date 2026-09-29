@@ -45,6 +45,16 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { usePricingData } from '@/features/pricing/hooks/use-pricing-data'
+import {
+  normalizeTierLabel,
+  parseTaskTiersFromExpr,
+} from '@/features/pricing/lib/billing-expr'
+import {
+  formatTaskUsageUnitPrice,
+  getTaskUsagePriceUnitLabelKey,
+} from '@/features/pricing/lib/dynamic-price'
+import type { BillingUsageSchema } from '@/features/pricing/types'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatBillingCurrencyFromUSD } from '@/lib/currency'
 import {
@@ -59,6 +69,7 @@ import type { UsageLog } from '../../data/schema'
 import { recognizeUserAgent } from '../../lib/client-info'
 import {
   formatModelName,
+  decodeBillingExprB64,
   formatCacheTokenCount,
   getFirstResponseTimeColor,
   getResponseTimeColor,
@@ -75,6 +86,7 @@ import {
   isPerCallBilling,
 } from '../../lib/utils'
 import type { LogOtherData } from '../../types'
+import { DetailsDialog } from '../dialogs/details-dialog'
 import { LogCostDisplay } from '../log-cost-display'
 import { ModelBadge } from '../model-badge'
 import { StreamTpsCell } from '../timing-metrics-cell'
@@ -215,9 +227,10 @@ function buildDetailSegments(
   log: UsageLog,
   other: LogOtherData | null,
   t: (key: string, opts?: Record<string, unknown>) => string,
-  isAdmin: boolean
+  isAdmin: boolean,
+  usageSchema?: BillingUsageSchema
 ): DetailSegment[] {
-  const segments = buildTypeDetailSegments(log, other, t)
+  const segments = buildTypeDetailSegments(log, other, t, usageSchema)
   const adminSegments: DetailSegment[] = []
   // Quota saturation is a rare, admin-only anomaly marker; surface it first
   // and in danger styling so it stands out on the related billing log. The
@@ -226,24 +239,17 @@ function buildDetailSegments(
   if (isAdmin && other?.admin_info?.quota_saturation) {
     adminSegments.push({ text: t('Quota clamped'), danger: true })
   }
-  const plugin = isAdmin ? other?.admin_info?.task_plugin : undefined
-  if (plugin) {
-    const version = plugin.version ? ` @ ${plugin.version}` : ''
-    adminSegments.push({
-      text: `${t('Plugin')}: ${plugin.name || plugin.key}${version}`,
-    })
-  }
   return [...adminSegments, ...segments]
 }
 
 function buildTypeDetailSegments(
   log: UsageLog,
   other: LogOtherData | null,
-  t: (key: string, opts?: Record<string, unknown>) => string
+  t: (key: string, opts?: Record<string, unknown>) => string,
+  usageSchema?: BillingUsageSchema
 ): DetailSegment[] {
-  // Audit (type=3) and login (type=7) logs: render localized content from the
-  // structured op descriptor instead of the raw (English-fallback) content.
-  if (log.type === 3 || log.type === 7) {
+  // Top-up, audit, and login logs can carry a localized operation descriptor.
+  if (log.type === 1 || log.type === 3 || log.type === 7) {
     const text = renderAuditContent(other, t)
     return text ? [{ text }] : []
   }
@@ -294,7 +300,39 @@ function buildTypeDetailSegments(
   }
   const isTieredExpr = other.billing_mode === 'tiered_expr'
   const tieredSummary = getTieredBillingSummary(other)
-  if (isTieredExpr) {
+  if (isTieredExpr && other.is_task) {
+    const tiers = parseTaskTiersFromExpr(
+      decodeBillingExprB64(other.expr_b64),
+      usageSchema,
+      true
+    )
+    const tier = tiers.find(
+      (entry) =>
+        Boolean(other.matched_tier) &&
+        normalizeTierLabel(entry.label) ===
+          normalizeTierLabel(other.matched_tier)
+    )
+    if (tier) {
+      const prices = Object.entries(tier.unitPrices).map(([field, price]) => {
+        const unit = usageSchema?.[field]?.unit
+        const unitKey = getTaskUsagePriceUnitLabelKey(unit)
+        return `${field} ${formatTaskUsageUnitPrice(price, { tokenUnit: 'M' })}/${t(unitKey)}`
+      })
+      if (tier.constant > 0) {
+        prices.push(
+          `${t('Additional charge')} ${formatTaskUsageUnitPrice(tier.constant, { tokenUnit: 'M' })}/${t('request')}`
+        )
+      }
+      segments.push({
+        text: `${tier.label || t('Default')} · ${prices.join(' · ')}`,
+      })
+    } else {
+      segments.push({
+        text: `${t('Dynamic Pricing')} · ${t('No matching results')}`,
+        muted: true,
+      })
+    }
+  } else if (isTieredExpr) {
     if (tieredSummary) {
       const baseEntries = tieredSummary.priceEntries
         .filter((entry) => ['inputPrice', 'outputPrice'].includes(entry.field))
@@ -418,7 +456,8 @@ function buildTypeDetailSegments(
 
 function buildCommonLogsColumns(
   isAdmin: boolean,
-  actions: CommonLogsColumnActions,
+  isRoot: boolean,
+  actions: CommonLogsColumnActions | undefined,
   t: TFunction
 ): ColumnDef<UsageLog>[] {
   const columns: ColumnDef<UsageLog>[] = [
@@ -966,10 +1005,25 @@ function buildCommonLogsColumns(
       accessorKey: 'content',
       header: t('Details'),
       cell: function DetailsCell({ row }) {
+        const [dialogOpen, setDialogOpen] = useState(false)
         const log = row.original
         const other = parseLogOther(log.other)
 
-        const segments = buildDetailSegments(log, other, t, isAdmin)
+        const pricingData = usePricingData(
+          log.type === 2 &&
+            other?.is_task === true &&
+            other.billing_mode === 'tiered_expr'
+        )
+        const usageSchema = pricingData.models.find(
+          (model) => model.model_name === log.model_name
+        )?.billing_usage_schema
+        const segments = buildDetailSegments(
+          log,
+          other,
+          t,
+          isAdmin,
+          usageSchema
+        )
         const primary = segments[0]
         const hasMore = segments.length > 1
         let primaryTextClass = 'text-foreground'
@@ -1003,42 +1057,63 @@ function buildCommonLogsColumns(
           )
         }
 
+        // The table supplies the action bag and renders the shared dialog; a
+        // standalone cell (tests, embedded previews) opens its own dialog.
+        const openDetails = () => {
+          if (actions) {
+            actions.onViewDetails(log)
+            return
+          }
+          setDialogOpen(true)
+        }
+
         return (
-          <div className='flex items-center gap-1'>
-            <button
-              type='button'
-              className='group flex max-w-[200px] min-w-0 flex-1 flex-col gap-0.5 text-left text-xs'
-              onClick={() => actions.onViewDetails(log)}
-              title={t('Click to view full details')}
-            >
-              {detailPreview}
-            </button>
-            {isAdmin && log.type === LOG_TYPE_ENUM.PENDING && (
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        variant='ghost'
-                        size='icon-xs'
-                        className='text-muted-foreground hover:text-destructive shrink-0'
-                        aria-label={t('Cancel in-flight request')}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          actions.onCancelRequest(log)
-                        }}
-                      />
-                    }
-                  >
-                    <X />
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {t('Cancel in-flight request')}
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
+          <>
+            <div className='flex items-center gap-1'>
+              <button
+                type='button'
+                className='group flex max-w-[200px] min-w-0 flex-1 flex-col gap-0.5 text-left text-xs'
+                onClick={openDetails}
+                title={t('Click to view full details')}
+              >
+                {detailPreview}
+              </button>
+              {actions && isAdmin && log.type === LOG_TYPE_ENUM.PENDING && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          variant='ghost'
+                          size='icon-xs'
+                          className='text-muted-foreground hover:text-destructive shrink-0'
+                          aria-label={t('Cancel in-flight request')}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            actions.onCancelRequest(log)
+                          }}
+                        />
+                      }
+                    >
+                      <X />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {t('Cancel in-flight request')}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
+            </div>
+            {!actions && (
+              <DetailsDialog
+                log={log}
+                isAdmin={isAdmin}
+                isRoot={isRoot}
+                open={dialogOpen}
+                onOpenChange={setDialogOpen}
+              />
             )}
-          </div>
+          </>
         )
       },
       size: 180,
@@ -1051,11 +1126,12 @@ function buildCommonLogsColumns(
 
 export function useCommonLogsColumns(
   isAdmin: boolean,
-  actions: CommonLogsColumnActions
+  isRoot: boolean,
+  actions?: CommonLogsColumnActions
 ): ColumnDef<UsageLog>[] {
   const { t } = useTranslation()
   return useMemo(
-    () => buildCommonLogsColumns(isAdmin, actions, t),
-    [actions, isAdmin, t]
+    () => buildCommonLogsColumns(isAdmin, isRoot, actions, t),
+    [actions, isAdmin, isRoot, t]
   )
 }

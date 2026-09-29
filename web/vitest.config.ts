@@ -31,7 +31,14 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
+    server: {
+      deps: { inline: [/@lobehub\//, /antd-style/] },
+    },
     setupFiles: ['./src/test-setup.ts'],
+    // This workstation runs the whole suite with high parallelism, which
+    // stretches the slow UI integration tests well past Vitest's 5s default
+    // even though they need under 2s when run alone.
+    testTimeout: 15_000,
     clearMocks: true,
     restoreMocks: true,
     include: ['src/**/*.{test,spec}.{ts,tsx}'],

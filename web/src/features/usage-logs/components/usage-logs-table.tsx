@@ -249,6 +249,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     <>
       <DataTablePage
         table={table}
+        compactPagination={isMobile && isCommon}
         columns={columns as ColumnDef<Record<string, unknown>>[]}
         isLoading={isLoadingData}
         emptyTitle={t('No Logs Found')}

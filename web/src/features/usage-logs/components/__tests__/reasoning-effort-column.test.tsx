@@ -17,9 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { describe, test, vi } from 'vitest'
 
 import type { CellContext } from '@tanstack/react-table'
+import { describe, test, vi } from 'vitest'
 
 import type { UsageLog } from '../../data/schema'
 
@@ -85,7 +85,7 @@ function createUsageLog(other: string): UsageLog {
 }
 
 function ReasoningEffortColumn(props: { log: UsageLog }) {
-  const columns = useCommonLogsColumns(false, {
+  const columns = useCommonLogsColumns(false, false, {
     onViewDetails() {},
     onCancelRequest() {},
   })

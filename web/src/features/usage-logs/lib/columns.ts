@@ -40,7 +40,7 @@ export function useColumnsByCategory(
   commonActions: CommonLogsColumnActions
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): ColumnDef<any>[] {
-  const commonColumns = useCommonLogsColumns(isAdmin, commonActions)
+  const commonColumns = useCommonLogsColumns(isAdmin, isRoot, commonActions)
   const drawingColumns = useDrawingLogsColumns(isAdmin)
   const taskColumns = useTaskLogsColumns(isAdmin, isRoot)
 

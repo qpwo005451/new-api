@@ -63,7 +63,7 @@ func claudeCapabilitiesFor(model string) claudeCapabilities {
 		}
 		// Opus 5.5 rejects thinking.type="disabled", so the fork never derives a
 		// disabled block for that family: reasoning_effort "none" keeps adaptive
-		// thinking instead of turning it off (see merge-rc40-tdd-plan.md B类).
+		// thinking instead of turning it off.
 		if strings.HasPrefix(model, "claude-opus-5") {
 			capabilities.supportsDisable = false
 		}

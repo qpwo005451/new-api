@@ -10,7 +10,7 @@ import (
 // Opus 5.5 rejects thinking.type="disabled" upstream, so the fork must never
 // derive a disabled thinking block for the claude-opus-5 family. The capability
 // table is what drives that decision, and the manual families must keep the
-// upstream behaviour (see merge-rc40-tdd-plan.md, B类).
+// upstream behaviour.
 func TestClaudeCapabilityTableDisableSupport(t *testing.T) {
 	tests := []struct {
 		model           string

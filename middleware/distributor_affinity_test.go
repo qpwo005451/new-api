@@ -91,8 +91,8 @@ func TestDistributeAffinityHitSkipsCoolingChannel(t *testing.T) {
 	t.Cleanup(func() { *policySetting = origPolicy })
 
 	// 2861 crossed the failure threshold and is cooling down.
-	service.RecordModelHealthFailure(modelName, "default", 2861, http.StatusServiceUnavailable)
-	service.RecordModelHealthFailure(modelName, "default", 2861, http.StatusServiceUnavailable)
+	service.RecordModelHealthFailure(nil, modelName, "default", 2861, http.StatusServiceUnavailable)
+	service.RecordModelHealthFailure(nil, modelName, "default", 2861, http.StatusServiceUnavailable)
 
 	gin.SetMode(gin.TestMode)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"deepseek-sticky"}`))

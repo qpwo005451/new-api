@@ -41,7 +41,7 @@ func TestModelHealthCoolsOnlyTheMatchingModelAndChannel(t *testing.T) {
 		CooldownSeconds:  300,
 		StatusCodes:      []int{429, 502, 503},
 	})
-	RecordModelHealthFailure(modelName, "default", 2801, http.StatusServiceUnavailable)
+	RecordModelHealthFailure(nil, modelName, "default", 2801, http.StatusServiceUnavailable)
 
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -58,7 +58,7 @@ func TestModelHealthCoolsOnlyTheMatchingModelAndChannel(t *testing.T) {
 	require.NotNil(t, first)
 	assert.Equal(t, 2801, first.Id, "one failure must stay below the configured threshold")
 
-	RecordModelHealthFailure(modelName, "default", 2801, http.StatusServiceUnavailable)
+	RecordModelHealthFailure(nil, modelName, "default", 2801, http.StatusServiceUnavailable)
 	next, _, err := CacheGetRandomSatisfiedChannel(&RetryParam{
 		Ctx:         ctx,
 		TokenGroup:  "default",
@@ -99,7 +99,7 @@ func TestModelHealthRecoversAfterCooldown(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-	RecordModelHealthFailure(modelName, "default", 2811, http.StatusTooManyRequests)
+	RecordModelHealthFailure(nil, modelName, "default", 2811, http.StatusTooManyRequests)
 	first, _, err := CacheGetRandomSatisfiedChannel(&RetryParam{
 		Ctx:         ctx,
 		TokenGroup:  "default",
@@ -128,7 +128,7 @@ func TestModelHealthSuccessClearsCounter(t *testing.T) {
 		CooldownSeconds:  300,
 		StatusCodes:      []int{503},
 	})
-	RecordModelHealthFailure(modelName, "default", 2821, http.StatusServiceUnavailable)
+	RecordModelHealthFailure(nil, modelName, "default", 2821, http.StatusServiceUnavailable)
 	RecordModelHealthSuccess(modelName, "default", 2821)
 	view, ok := ModelHealthSnapshot(modelName, 2821)
 	require.True(t, ok)
@@ -146,7 +146,7 @@ func TestModelHealthIgnoresUnconfiguredStatus(t *testing.T) {
 		CooldownSeconds:  300,
 		StatusCodes:      []int{503},
 	})
-	RecordModelHealthFailure(modelName, "default", 2831, http.StatusBadRequest)
+	RecordModelHealthFailure(nil, modelName, "default", 2831, http.StatusBadRequest)
 	view, ok := ModelHealthSnapshot(modelName, 2831)
 	require.True(t, ok)
 	assert.False(t, view.Cooling)

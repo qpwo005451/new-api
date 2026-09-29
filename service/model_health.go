@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/gin-gonic/gin"
 )
 
 const modelHealthRedisPrefix = "new-api:model-health:v1:"
@@ -113,8 +114,10 @@ func FilterModelHealthCandidates(candidates []*model.Channel, modelName string, 
 }
 
 // RecordModelHealthFailure extends the existing per-entry cooldown semantics to
-// ordinary model names selected outside a virtual route.
-func RecordModelHealthFailure(modelName string, group string, channelID int, statusCode int) {
+// ordinary model names selected outside a virtual route. When a policy matches,
+// the request's channel affinity pin is cleared so sticky traffic does not
+// keep returning to the failing channel.
+func RecordModelHealthFailure(c *gin.Context, modelName string, group string, channelID int, statusCode int) {
 	policy, ok := modelHealthPolicy(modelName, group)
 	if !ok || !policy.AllowsStatus(statusCode) {
 		return
@@ -133,7 +136,9 @@ func RecordModelHealthFailure(modelName string, group string, channelID int, sta
 	}.Normalize()
 	if err := store.RecordFailure(context.Background(), modelHealthKey(modelName, channelID), health, time.Now()); err != nil {
 		common.SysError("failed to record model health failure: " + err.Error())
+		return
 	}
+	ClearCurrentChannelAffinityCache(c)
 }
 
 func RecordModelHealthSuccess(modelName string, group string, channelID int) {

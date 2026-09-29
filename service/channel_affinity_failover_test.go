@@ -84,6 +84,69 @@ func TestRecordChannelAffinityFailoverRewritesToServingChannel(t *testing.T) {
 	}
 }
 
+// A policy-model failure must break the request's affinity pin, so sticky
+// traffic does not keep returning to a channel that the circuit breaker is
+// counting failures on. The pin is re-established to the serving channel on
+// success (see RecordChannelAffinity failover rewrite).
+func TestRecordModelHealthFailureClearsPinnedAffinity(t *testing.T) {
+	installAffinityFailoverRule(t)
+	setting := operation_setting.GetModelHealthPolicySetting()
+	orig := *setting
+	setting.Enabled = true
+	setting.Rules = []operation_setting.ModelHealthPolicyRule{{
+		Name:             "failover cooldown",
+		Enabled:          true,
+		Models:           []string{"failover-model"},
+		FailureThreshold: 2,
+		CooldownSeconds:  300,
+		StatusCodes:      []int{503},
+	}}
+	t.Cleanup(func() { *setting = orig })
+
+	const userID = 3
+	ctx := newAffinityFailoverContext(t, userID)
+	const modelName = "failover-model"
+	require.NoError(t, getChannelAffinityCache().SetWithTTL(
+		failoverCacheKey(userID), 2881, 300*time.Second))
+	preferred, found := GetPreferredChannelByAffinity(ctx, modelName, "default")
+	require.True(t, found)
+	require.Equal(t, 2881, preferred)
+
+	RecordModelHealthFailure(ctx, modelName, "default", 2881, 503)
+
+	_, found, _ = getChannelAffinityCache().Get(failoverCacheKey(userID))
+	assert.False(t, found, "a policy-model failure must clear the affinity pin")
+}
+
+// Failures on models outside the policy must not touch the pin.
+func TestRecordModelHealthFailureKeepsPinForUnmatchedPolicy(t *testing.T) {
+	installAffinityFailoverRule(t)
+	setting := operation_setting.GetModelHealthPolicySetting()
+	orig := *setting
+	setting.Enabled = true
+	setting.Rules = []operation_setting.ModelHealthPolicyRule{{
+		Name:             "failover cooldown",
+		Enabled:          true,
+		Models:           []string{"failover-model"},
+		FailureThreshold: 2,
+		CooldownSeconds:  300,
+		StatusCodes:      []int{503},
+	}}
+	t.Cleanup(func() { *setting = orig })
+
+	const userID = 4
+	ctx := newAffinityFailoverContext(t, userID)
+	require.NoError(t, getChannelAffinityCache().SetWithTTL(
+		failoverCacheKey(userID), 2881, 300*time.Second))
+	_, found := GetPreferredChannelByAffinity(ctx, "failover-model", "default")
+	require.True(t, found)
+
+	RecordModelHealthFailure(ctx, "other-model", "default", 2881, 503)
+
+	_, found, _ = getChannelAffinityCache().Get(failoverCacheKey(userID))
+	assert.True(t, found, "non-policy failures must not clear the affinity pin")
+}
+
 // A request that succeeded on its first channel must keep the affinity pin on
 // the preferred channel even when switch_on_success is enabled, so ordinary
 // sticky traffic is not silently re-pinned by every request.

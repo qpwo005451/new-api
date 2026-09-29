@@ -108,8 +108,8 @@ func TestModelHealthRetryFallsThroughWhenTierExhausted(t *testing.T) {
 
 	for _, id := range []int{2851, 2852} {
 		// FailureThreshold is 2: cross the threshold on both tier channels.
-		RecordModelHealthFailure(modelName, "default", id, http.StatusServiceUnavailable)
-		RecordModelHealthFailure(modelName, "default", id, http.StatusServiceUnavailable)
+		RecordModelHealthFailure(nil, modelName, "default", id, http.StatusServiceUnavailable)
+		RecordModelHealthFailure(nil, modelName, "default", id, http.StatusServiceUnavailable)
 	}
 	// Threshold reached on both tier channels: both are cooling now.
 

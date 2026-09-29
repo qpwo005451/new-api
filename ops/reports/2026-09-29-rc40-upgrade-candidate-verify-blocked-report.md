@@ -1,3 +1,6 @@
+> Superseded: the schema gap recorded below was resolved on 2026-09-29 by an explicit production migration;
+> see `ops/reports/2026-09-29-rc40-upgrade-cutover-report.md` for the migration, cutover and finalization.
+
 # 2026-09-29 rc.40 Upgrade Candidate Verification Report (blocked)
 
 Scope: production NewAPI instance at `10.0.0.251:/opt/new-api` (port 4002). Action class: `prepare` (done) + candidate

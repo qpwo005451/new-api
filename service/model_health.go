@@ -192,6 +192,76 @@ func ModelHealthKeys() []string {
 	return keys
 }
 
+// ModelHealthCooldownEntry is one (model, channel) health entry in the admin
+// cooldown snapshot.
+type ModelHealthCooldownEntry struct {
+	ModelName       string `json:"model_name"`
+	ChannelID       int    `json:"channel_id"`
+	Cooling         bool   `json:"cooling"`
+	ConsecutiveErrs int    `json:"consecutive_errors"`
+	CooldownUntil   int64  `json:"cooldown_until,omitempty"`
+}
+
+// ModelHealthCooldownSnapshot exposes the process-local cooldown table for the
+// admin settings UI. It is visibility only and never drives routing.
+type ModelHealthCooldownSnapshot struct {
+	Binding string                     `json:"binding"`
+	Entries []ModelHealthCooldownEntry `json:"entries"`
+}
+
+// ModelHealthBindingMode reports where cooldown state is persisted.
+func ModelHealthBindingMode() string {
+	setting := operation_setting.GetModelRetryPolicySetting().VirtualPoolSticky.Normalize()
+	if setting.BindingMode == operation_setting.VirtualPoolBindingModeRedis && common.RedisEnabled && common.RDB != nil {
+		return operation_setting.VirtualPoolBindingModeRedis
+	}
+	return "memory"
+}
+
+// ListModelHealthCooldowns returns every health entry tracked by this
+// process, including entries that are no longer cooling (their consecutive
+// error count is still useful for diagnosis).
+func ListModelHealthCooldowns() ModelHealthCooldownSnapshot {
+	snapshot := ModelHealthCooldownSnapshot{
+		Binding: ModelHealthBindingMode(),
+		Entries: make([]ModelHealthCooldownEntry, 0),
+	}
+	modelHealthMemoryStore.mutex.Lock()
+	defer modelHealthMemoryStore.mutex.Unlock()
+	now := time.Now()
+	for key, entry := range modelHealthMemoryStore.entries {
+		parts := strings.SplitN(key, "|", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		channelID, err := strconv.Atoi(parts[1])
+		if err != nil {
+			continue
+		}
+		entry.mutex.Lock()
+		snapshot.Entries = append(snapshot.Entries, ModelHealthCooldownEntry{
+			ModelName:       parts[0],
+			ChannelID:       channelID,
+			Cooling:         now.Before(entry.cooldownUntil),
+			ConsecutiveErrs: entry.consecutiveErrors,
+			CooldownUntil:   entry.cooldownUntil.Unix(),
+		})
+		entry.mutex.Unlock()
+	}
+	return snapshot
+}
+
+// ResetModelHealthState clears this process's cooldown table and returns how
+// many entries were removed. In Redis binding mode only the local memory view
+// is cleared; the shared Redis state is untouched.
+func ResetModelHealthState() int {
+	modelHealthMemoryStore.mutex.Lock()
+	defer modelHealthMemoryStore.mutex.Unlock()
+	cleared := len(modelHealthMemoryStore.entries)
+	modelHealthMemoryStore.entries = make(map[string]*virtualRouteHealthEntry)
+	return cleared
+}
+
 func IsModelHealthStatus(statusCode int) bool {
 	switch statusCode {
 	case http.StatusNotFound, http.StatusTooManyRequests:

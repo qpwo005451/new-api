@@ -718,7 +718,13 @@ func RecordChannelAffinity(c *gin.Context, channelID int) {
 	if setting == nil || !setting.Enabled {
 		return
 	}
-	if setting.SwitchOnSuccess && c != nil {
+	// A failover means the preferred channel just failed in-request; pin the
+	// request to the channel that actually served it so sticky traffic never
+	// returns to the failed channel. Without a failover the preferred channel
+	// is (re)written as before, honoring switch_on_success.
+	useChannel := c.GetStringSlice("use_channel")
+	failoverHappened := len(useChannel) > 1
+	if (setting.SwitchOnSuccess || failoverHappened) && c != nil {
 		if successChannelID := c.GetInt("channel_id"); successChannelID > 0 {
 			channelID = successChannelID
 		}

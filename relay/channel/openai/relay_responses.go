@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -17,6 +18,8 @@ import (
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
@@ -41,6 +44,8 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		responseBody = normalizedResponseBody
 		logger.LogWarn(c, "normalized integral decimal in Grok 4.5 shell_command timeout_ms")
 	}
+	info.ObserveResponseModel(responsesResponse.Model)
+	responseBody = rewriteSGLangResponsesCreatedAt(info, responseBody, "created_at", responsesResponse.CreatedAt)
 
 	// 写入新的 response body（先剥离上游 encrypted_content，第三方客户端无法解密）
 	responseBody = relaycommon.StripResponsesEncryptedContent(responseBody)
@@ -48,7 +53,8 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 
 	// compute usage
-	usage := relayconvert.NormalizeResponsesUsage(responsesResponse.Usage)
+	usage := &dto.Usage{}
+	service.ApplyResponsesUsage(usage, responsesResponse.Usage)
 	// Count actual tool invocations from Output (not tool declarations).
 	for _, output := range responsesResponse.Output {
 		switch output.Type {
@@ -94,6 +100,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	grok45ToolArgumentNormalizer := newGrok45ToolArgumentStreamNormalizer(info)
 	imageCounter := &relaycommon.ImageGenerationCallCounter{}
 	imageCommitted := false
+	accumulator := service.NewResponsesUsageAccumulator(info)
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 
@@ -105,8 +112,11 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			return
 		}
 		relaycommon.RecordResponsesStreamDiagnostic(c, info, streamResponse)
-		if streamResponse.Response != nil && strings.TrimSpace(streamResponse.Response.ID) != "" {
-			info.UpstreamResponseID = strings.TrimSpace(streamResponse.Response.ID)
+		if streamResponse.Response != nil {
+			if trimmed := strings.TrimSpace(streamResponse.Response.ID); trimmed != "" {
+				info.UpstreamResponseID = trimmed
+			}
+			data = string(rewriteSGLangResponsesCreatedAt(info, []byte(data), "response.created_at", streamResponse.Response.CreatedAt))
 		}
 		if streamResponse.Type == "response.output_text.delta" && !firstOutputSeen {
 			if toolCalls, ok := parseTextToolCalls(streamResponse.Delta, info); ok {
@@ -215,6 +225,12 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 					types.ErrOptionWithSkipRetry(),
 				)
 			}
+			if streamResponse.Response != nil && streamResponse.Response.Usage != nil {
+				// A failed response can still report what the upstream produced before
+				// the failure. Keep that usage so a committed partial stream is settled
+				// from the reported numbers instead of being treated as unbilled.
+				usage = dto.MergeUsageNonZero(usage, relayconvert.NormalizeResponsesUsage(streamResponse.Response.Usage))
+			}
 			if !imageCommitted {
 				imageCounter.Reset()
 				imageCounter.Commit(info)
@@ -279,7 +295,11 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 				}
 			}
 		}
+		accumulator.Observe(&streamResponse)
 	})
+
+	common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, info.StreamStatus)
+	info.StreamStatus.RequireTerminal()
 
 	if usage.CompletionTokens == 0 {
 		// Preserve partial-stream usage for settlement when the upstream ended
@@ -345,6 +365,20 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	}
 
 	return usage, nil
+}
+
+func rewriteSGLangResponsesCreatedAt(info *relaycommon.RelayInfo, payload []byte, path string, createdAt dto.IntValue) []byte {
+	if info.GetChannelType() != constant.ChannelTypeSGLang {
+		return payload
+	}
+	if !gjson.GetBytes(payload, path).Exists() {
+		return payload
+	}
+	patched, err := sjson.SetBytes(payload, path, int(createdAt))
+	if err != nil {
+		return payload
+	}
+	return patched
 }
 
 func emitTextToolCallEvent(c *gin.Context, sr *helper.StreamResult, event dto.ResponsesStreamResponse) {

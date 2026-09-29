@@ -56,6 +56,8 @@ import {
   getCurrencyLabel,
 } from '@/lib/currency'
 import { formatTimestampToDate } from '@/lib/format'
+import { handleServerError } from '@/lib/handle-server-error'
+import { createServerError } from '@/lib/server-error-message'
 import { truncateText } from '@/lib/utils'
 import {
   DEFAULT_CURRENCY_CONFIG,
@@ -70,6 +72,8 @@ import {
 import {
   CHANNEL_STATUS_CONFIG,
   CHANNEL_TYPE_TASK_PLUGIN,
+  CHANNEL_TYPE_VLLM,
+  CHANNEL_TYPE_SGLANG,
   MODEL_FETCHABLE_TYPES,
 } from '../constants'
 import {
@@ -404,6 +408,7 @@ export function BalanceCell({ channel }: { channel: Channel }) {
     deepSeekBalanceCurrency,
     setDeepSeekBalanceCurrency,
     setCurrentRow,
+    setOpen,
   } = useChannels()
   const currencyConfig = useSystemConfigStore((state) => state.config.currency)
   const isTagRow = isTagAggregateRow(channel)
@@ -546,8 +551,17 @@ export function BalanceCell({ channel }: { channel: Channel }) {
 
   // Regular channel row: show used and remaining with click to update
   const variant = getBalanceVariant(balance)
+  const isInferenceChannel =
+    channel.type === CHANNEL_TYPE_VLLM || channel.type === CHANNEL_TYPE_SGLANG
+  const inferenceStatusLabel =
+    channel.type === CHANNEL_TYPE_SGLANG ? t('SGLang status') : t('vLLM status')
 
   const handleClickUpdate = async () => {
+    if (isInferenceChannel) {
+      setCurrentRow(channel)
+      setOpen('inference-status')
+      return
+    }
     if (isUpdating) {
       return
     }
@@ -557,14 +571,12 @@ export function BalanceCell({ channel }: { channel: Channel }) {
       try {
         const res = await getCodexUsage(channel.id)
         if (!res.success) {
-          throw new Error(res.message || t('Failed to fetch usage'))
+          throw createServerError(res, t('Failed to fetch usage'))
         }
         setCodexUsageResponse(res)
         setCodexUsageOpen(true)
       } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : t('Failed to fetch usage')
-        )
+        handleServerError(error, t('Failed to fetch usage'))
       } finally {
         setIsUpdating(false)
       }
@@ -608,12 +620,10 @@ export function BalanceCell({ channel }: { channel: Channel }) {
         setCurrentRow(channel)
         setRawBalanceResponse(response.raw_response)
       } else {
-        toast.error(response.message || t('Failed to update balance'))
+        handleServerError(response, t('Failed to update balance'))
       }
     } catch (error: unknown) {
-      toast.error(
-        error instanceof Error ? error.message : t('Failed to update balance')
-      )
+      handleServerError(error, t('Failed to update balance'))
     } finally {
       setIsUpdating(false)
     }
@@ -625,6 +635,8 @@ export function BalanceCell({ channel }: { channel: Channel }) {
     remainingBadgeLabel = t('Account Info')
   } else if (sensitiveVisible && channel.type === 4) {
     remainingBadgeLabel = t('Ollama Usage')
+  } else if (sensitiveVisible && isInferenceChannel) {
+    remainingBadgeLabel = inferenceStatusLabel
   }
   let remainingTooltipLabel = remainingLabel
   if (!sensitiveVisible) {
@@ -633,9 +645,11 @@ export function BalanceCell({ channel }: { channel: Channel }) {
     remainingTooltipLabel = t('Click to view Codex usage')
   } else if (channel.type === 4) {
     remainingTooltipLabel = t('Click to view Ollama usage')
+  } else if (isInferenceChannel) {
+    remainingTooltipLabel = inferenceStatusLabel
   }
   let remainingBadgeVariant: StatusBadgeProps['variant'] = variant
-  if (channel.type === 57 || channel.type === 4) {
+  if (channel.type === 57 || channel.type === 4 || isInferenceChannel) {
     remainingBadgeVariant = 'info'
   } else if (isUpdating) {
     remainingBadgeVariant = 'neutral'
@@ -666,6 +680,17 @@ export function BalanceCell({ channel }: { channel: Channel }) {
         break
     }
   }
+  const remainingBadge = (
+    <StatusBadge
+      label={remainingBadgeLabel}
+      variant={remainingBadgeVariant}
+      size='sm'
+      copyable={false}
+      showDot={false}
+      className='cursor-pointer'
+      onClick={isInferenceChannel ? undefined : handleClickUpdate}
+    />
+  )
 
   return (
     <TooltipProvider>
@@ -690,22 +715,26 @@ export function BalanceCell({ channel }: { channel: Channel }) {
         <Tooltip>
           <TooltipTrigger
             render={
-              <StatusBadge
-                label={remainingBadgeLabel}
-                variant={remainingBadgeVariant}
-                size='sm'
-                copyable={false}
-                showDot={false}
-                className='cursor-pointer'
-                onClick={handleClickUpdate}
-              />
+              isInferenceChannel ? (
+                <Button
+                  variant='ghost'
+                  size='sm'
+                  className='h-auto rounded-full p-0'
+                  aria-haspopup='dialog'
+                  onClick={handleClickUpdate}
+                >
+                  {remainingBadge}
+                </Button>
+              ) : (
+                remainingBadge
+              )
             }
           />
           <TooltipContent>
             <p>{remainingTooltipLabel}</p>
-            {channel.type !== 57 && channel.type !== 4 && (
-              <p>{t('Click to update balance')}</p>
-            )}
+            {channel.type !== 57 &&
+              channel.type !== 4 &&
+              !isInferenceChannel && <p>{t('Click to update balance')}</p>}
           </TooltipContent>
         </Tooltip>
         {isOfficialDeepSeek && (
@@ -789,15 +818,11 @@ export function BalanceCell({ channel }: { channel: Channel }) {
           try {
             const res = await getCodexUsage(channel.id)
             if (!res.success) {
-              throw new Error(res.message || t('Failed to fetch usage'))
+              throw createServerError(res, t('Failed to fetch usage'))
             }
             setCodexUsageResponse(res)
           } catch (error) {
-            toast.error(
-              error instanceof Error
-                ? error.message
-                : t('Failed to fetch usage')
-            )
+            handleServerError(error, t('Failed to fetch usage'))
           } finally {
             setIsUpdating(false)
           }

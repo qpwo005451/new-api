@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
@@ -178,9 +179,15 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 			return hosttypes.PriceData{}, err
 		}
 		preConsumedQuota = quota
+		if _, image := info.Request.(*dto.ImageRequest); image {
+			info.ImageQuotaBeforeGroup = float64(preConsumedTokens) * modelRatio
+		}
 	} else {
 		if meta.ImagePriceRatio != 0 {
 			modelPrice = modelPrice * meta.ImagePriceRatio
+		}
+		if _, image := info.Request.(*dto.ImageRequest); image {
+			info.ImageQuotaBeforeGroup = modelPrice * common.QuotaPerUnit
 		}
 	}
 
@@ -223,6 +230,36 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		for name, ratio := range meta.BillingRatios {
 			priceData.AddOtherRatio(name, ratio)
 		}
+	}
+	if request, image := info.Request.(*dto.ImageRequest); image {
+		channelType := common.GetContextKeyInt(c, constant.ContextKeyChannelType)
+		count, err := request.ImageCount(channelType == constant.ChannelTypeAli)
+		if err != nil {
+			return hosttypes.PriceData{}, err
+		}
+		if usePrice || channelType == constant.ChannelTypeAli {
+			priceData.AddOtherRatio("n", float64(count))
+		}
+		if channelType == constant.ChannelTypeAli && request.BillingParameters != nil && request.BillingParameters.PromptExtend != nil && *request.BillingParameters.PromptExtend {
+			// Resolve only routing identity; do not initialize ChannelMeta on the
+			// real request, which also distinguishes the first channel attempt.
+			mapped := &relaycommon.RelayInfo{OriginModelName: info.OriginModelName, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: info.OriginModelName}}
+			if err := ModelMappedHelper(c, mapped, nil); err != nil {
+				return hosttypes.PriceData{}, err
+			}
+			if strings.Contains(mapped.UpstreamModelName, "z-image") {
+				priceData.AddOtherRatio("prompt_extend", common.ZImagePromptExtendMultiplier)
+			}
+		}
+		if !usePrice {
+			quota, err := common.QuotaFromFloatStrict(priceData.ApplyOtherRatiosToFloat(info.ImageQuotaBeforeGroup * groupRatioInfo.GroupRatio))
+			if err != nil {
+				return hosttypes.PriceData{}, err
+			}
+			priceData.QuotaToPreConsume = quota
+		}
+	}
+	if usePrice {
 		quotaToPreConsume := priceData.ApplyOtherRatiosToFloat(modelPrice * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
 		quota, err := common.QuotaFromFloatStrict(quotaToPreConsume)
 		if err != nil {
@@ -369,6 +406,10 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, priceMo
 	if !ok {
 		return hosttypes.PriceData{}, fmt.Errorf("model %s is configured as tiered_expr but has no billing expression", priceModelName)
 	}
+	exprHash := billingexpr.ExprHashString(exprStr)
+	if info.RelayFormat == types.RelayFormatOpenAIRealtime && billingexpr.UsesFixedPricingByHash(exprStr, exprHash) {
+		return hosttypes.PriceData{}, fmt.Errorf("fixed pricing is not supported for Realtime requests")
+	}
 
 	estimatedCompletionTokens := meta.MaxTokens
 	if estimatedCompletionTokens == 0 && groupRatioInfo.GroupRatio != 0 {
@@ -379,8 +420,14 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, priceMo
 	if err != nil {
 		return hosttypes.PriceData{}, err
 	}
+	if billingexpr.UsedVarsByHash(exprStr, exprHash)["image_count"] {
+		requestInput, err = ResolveImageBillingRequestInput(c, info, requestInput)
+		if err != nil {
+			return hosttypes.PriceData{}, err
+		}
+	}
 
-	rawCost, trace, err := billingexpr.RunExprWithRequest(exprStr, billingexpr.TokenParams{
+	rawCost, trace, err := billingexpr.RunExprByHashWithRequest(exprStr, exprHash, billingexpr.TokenParams{
 		P:   float64(promptTokens),
 		C:   float64(estimatedCompletionTokens),
 		Len: float64(promptTokens),
@@ -404,8 +451,8 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, priceMo
 		}
 	}
 
-	exprHash := billingexpr.ExprHashString(exprStr)
 	snapshot := &billingexpr.BillingSnapshot{
+		EstimatedImageCount:       trace.ImageCount,
 		BillingMode:               billing_setting.BillingModeTieredExpr,
 		ModelName:                 priceModelName,
 		ExprString:                exprStr,
@@ -416,6 +463,8 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, priceMo
 		EstimatedQuotaBeforeGroup: quotaBeforeGroup,
 		EstimatedQuotaAfterGroup:  preConsumedQuota,
 		EstimatedTier:             trace.MatchedTier,
+		EstimatedBillingUnit:      trace.BillingUnit,
+		EstimatedFixedPrice:       trace.FixedPrice,
 		QuotaPerUnit:              common.QuotaPerUnit,
 		ExprVersion:               billingexpr.ExprVersion(exprStr),
 	}

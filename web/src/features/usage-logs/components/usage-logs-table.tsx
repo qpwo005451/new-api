@@ -29,9 +29,15 @@ import {
   DataTableRow,
   useDataTable,
 } from '@/components/data-table'
+import {
+  getAdminPlans,
+  getSelfSubscriptionFull,
+} from '@/features/subscriptions/api'
 import { useMediaQuery } from '@/hooks'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
+import { createServerError } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { cancelInFlightLog } from '../api'
 import {
@@ -94,6 +100,22 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   } = useLogsViewScope()
   const isMobile = useMediaQuery('(max-width: 640px)')
   const searchParams = route.useSearch()
+  const userId = useAuthStore((state) => state.auth.user?.id)
+  const { data: showWalletSource = false } = useQuery({
+    queryKey: ['usage-log-wallet-source', isAdmin, userId],
+    enabled: logCategory === 'common' && userId != null,
+    queryFn: async () => {
+      if (isAdmin) {
+        const result = await getAdminPlans()
+        return result.success && (result.data?.length ?? 0) > 0
+      }
+
+      const result = await getSelfSubscriptionFull()
+      const subscriptions =
+        result.data?.all_subscriptions ?? result.data?.subscriptions
+      return result.success && (subscriptions?.length ?? 0) > 0
+    },
+  })
 
   const {
     columnFilters,
@@ -142,7 +164,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
 
   useUsageLogAutoRefresh(queryClient, isCommon && autoRefresh)
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching } = useQuery({
     queryKey: [
       'logs',
       logCategory,
@@ -164,8 +186,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
       })
 
       if (!result?.success) {
-        toast.error(result?.message || t('Failed to load logs'))
-        return DEFAULT_LOGS_DATA
+        throw createServerError(result, t('Failed to load logs'))
       }
 
       return result.data || DEFAULT_LOGS_DATA
@@ -213,9 +234,10 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     logCategory,
     isAdmin,
     isRoot,
-    commonColumnActions
+    commonColumnActions,
+    showWalletSource
   )
-  const isLoadingData = isLoading
+  const isLoadingData = isLoading || (isFetching && !data)
 
   const cancelMutation = useMutation({
     mutationFn: (logId: number) => cancelInFlightLog(logId),
@@ -252,6 +274,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
         compactPagination={isMobile && isCommon}
         columns={columns as ColumnDef<Record<string, unknown>>[]}
         isLoading={isLoadingData}
+        isFetching={isFetching}
         emptyTitle={t('No Logs Found')}
         emptyDescription={t(
           'No usage logs available. Logs will appear here once API calls are made.'

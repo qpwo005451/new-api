@@ -62,6 +62,8 @@ type Channel struct {
 	BalanceProtection *ChannelBalanceProtectionView `json:"balance_protection,omitempty" gorm:"-"`
 }
 
+const ChannelStatusReasonAllKeysDisabled = "All keys are disabled"
+
 type ChannelInfo struct {
 	IsMultiKey             bool                  `json:"is_multi_key"`                        // 是否多Key模式
 	MultiKeySize           int                   `json:"multi_key_size"`                      // 多Key模式下的Key数量
@@ -817,11 +819,11 @@ func handlerMultiKeyUpdate(channel *Channel, usingKey string, status int, reason
 				common.SysLog(fmt.Sprintf("failed to update multi-key status: channel_id=%d, using key not found", channel.Id))
 				return false
 			}
-			if channel.Status == status {
+			info := channel.GetOtherInfo()
+			if channel.Status == status && info["status_reason"] == reason {
 				return false
 			}
 			channel.Status = status
-			info := channel.GetOtherInfo()
 			info["status_reason"] = reason
 			info["status_time"] = common.GetTimestamp()
 			channel.SetOtherInfo(info)
@@ -874,7 +876,7 @@ func handlerMultiKeyUpdate(channel *Channel, usingKey string, status int, reason
 			}
 			channel.Status = common.ChannelStatusAutoDisabled
 			info := channel.GetOtherInfo()
-			info["status_reason"] = "All keys are disabled"
+			info["status_reason"] = ChannelStatusReasonAllKeysDisabled
 			info["status_time"] = common.GetTimestamp()
 			channel.SetOtherInfo(info)
 		} else if status == common.ChannelStatusEnabled {
@@ -1040,6 +1042,9 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 	if err != nil {
 		return false
 	} else {
+		// A manual channel operation must replace the exhaustion reason even when
+		// the status value is already manually disabled; the multi-key handler
+		// reports a reason replacement as a change.
 		if !channel.ChannelInfo.IsMultiKey && channel.Status == status {
 			return false
 		}
@@ -1083,6 +1088,19 @@ func EnableChannelByTag(tag string) error {
 }
 
 func DisableChannelByTag(tag string) error {
+	// Explicit tag-level disable also cancels automatic restoration for
+	// channels that were already disabled because all keys were unavailable.
+	var channels []Channel
+	if err := DB.Where("tag = ?", tag).Find(&channels).Error; err != nil {
+		return err
+	}
+	for _, channel := range channels {
+		if channel.ChannelInfo.IsMultiKey && channel.GetOtherInfo()["status_reason"] == ChannelStatusReasonAllKeysDisabled {
+			if !UpdateChannelStatus(channel.Id, "", common.ChannelStatusManuallyDisabled, "manual tag operation") {
+				return fmt.Errorf("failed to disable channel #%d by tag", channel.Id)
+			}
+		}
+	}
 	err := DB.Model(&Channel{}).Where("tag = ?", tag).Update("status", common.ChannelStatusManuallyDisabled).Error
 	if err != nil {
 		return err
@@ -1272,7 +1290,10 @@ func (channel *Channel) ValidateSettings() error {
 	if err := channelOtherSettings.ValidateToolLossPolicy(); err != nil {
 		return err
 	}
-	if channel.Type == constant.ChannelTypeAdvancedCustom {
+	if preset := common.GetAdvancedCustomPreset(channel.Type); preset != nil {
+		channelOtherSettings.AdvancedCustom = preset
+	}
+	if constant.IsAdvancedCustomChannel(channel.Type) {
 		if channelOtherSettings.AdvancedCustom == nil {
 			return fmt.Errorf("advanced_custom is required")
 		}
@@ -1282,7 +1303,7 @@ func (channel *Channel) ValidateSettings() error {
 			return err
 		}
 	}
-	if channel.Type == constant.ChannelTypeAdvancedCustom && channelOtherSettings.UpstreamModelUpdateCheckEnabled {
+	if constant.IsAdvancedCustomChannel(channel.Type) && channelOtherSettings.UpstreamModelUpdateCheckEnabled {
 		if _, ok := channelOtherSettings.AdvancedCustom.ModelListRoute(); !ok {
 			return fmt.Errorf("advanced custom channels require a %s route when upstream model update checks are enabled", dto.AdvancedCustomModelListPath)
 		}
@@ -1321,6 +1342,9 @@ func (channel *Channel) GetOtherSettings() dto.ChannelOtherSettings {
 			channel.OtherSettings = "{}" // 清空设置以避免后续错误
 			_ = channel.Save()           // 保存修改
 		}
+	}
+	if preset := common.GetAdvancedCustomPreset(channel.Type); preset != nil {
+		setting.AdvancedCustom = preset
 	}
 	return setting
 }

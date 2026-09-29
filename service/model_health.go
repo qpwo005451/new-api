@@ -62,6 +62,26 @@ func ModelHealthGroup(c interface{ Get(string) (any, bool) }, fallback string) s
 	return fallback
 }
 
+// IsModelHealthChannelCooling reports whether the model-health policy matched
+// and the (model, channel) entry is currently cooling down. Store errors fail
+// open so a health-store outage never blocks routing by itself.
+func IsModelHealthChannelCooling(modelName string, group string, channelID int) bool {
+	if _, ok := modelHealthPolicy(modelName, group); !ok {
+		return false
+	}
+	store, err := modelHealthStore()
+	if err != nil {
+		common.SysError("failed to open model health store: " + err.Error())
+		return false
+	}
+	cooling, err := store.IsCoolingDown(context.Background(), modelHealthKey(modelName, channelID), time.Now())
+	if err != nil {
+		common.SysError("failed to read model health cooldown: " + err.Error())
+		return false
+	}
+	return cooling
+}
+
 // FilterModelHealthCandidates removes channels that are cooling down for a
 // normal (non-virtual) model. It is intentionally per-model: other models on
 // the same channel remain selectable.

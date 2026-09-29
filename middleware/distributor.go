@@ -124,7 +124,11 @@ func Distribute() func(c *gin.Context) {
 					if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
 						affinityUsable := false
 						preferred, err := model.CacheGetChannel(preferredChannelID)
-						if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled &&
+						// A model-health cooldown must break the pin, otherwise the
+						// affinity cache keeps steering traffic to a channel that the
+						// circuit breaker already marked as failing.
+						coolingPin := service.IsModelHealthChannelCooling(modelRequest.Model, usingGroup, preferredChannelID)
+						if err == nil && preferred != nil && !coolingPin && preferred.Status == common.ChannelStatusEnabled &&
 							channelSupportsRequestPath(preferred, c.Request.URL.Path, modelRequest.Model) &&
 							model.IsChannelModelAllowed(preferred.Id, modelRequest.Model) {
 							if usingGroup == "auto" {
@@ -147,7 +151,7 @@ func Distribute() func(c *gin.Context) {
 								service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
 							}
 						}
-						if !affinityUsable && !service.ShouldKeepChannelAffinityOnChannelDisabled() {
+						if coolingPin || (!affinityUsable && !service.ShouldKeepChannelAffinityOnChannelDisabled()) {
 							service.ClearCurrentChannelAffinityCache(c)
 						}
 					}

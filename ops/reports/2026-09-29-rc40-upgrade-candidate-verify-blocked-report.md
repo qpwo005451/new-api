@@ -43,8 +43,8 @@ The startup path (`main.go` -> `model.InitDB` -> early return when the node is n
 `DB.AutoMigrate` of the model list, `User` included) should create these objects; the candidate did not. Candidates to
 confirm on the database copy before touching production: (a) how the master-node flag evaluates at the point `InitDB`
 runs, (b) an early return inside `migrateDB()`, (c) the fork's curated schema path intentionally skipping this
-table/column. The plan already reserved this decision (`merge-rc40-tdd-plan.md` item D3/P4: the migration action needs
-explicit per-item approval).
+table/column. The migration action was reserved for explicit per-item approval before it was executed; see
+`2026-09-29-rc40-upgrade-cutover-report.md` for the itemized change set that was applied.
 
 ## Side observation — live binary provenance gap
 

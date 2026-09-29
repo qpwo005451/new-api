@@ -63,7 +63,7 @@ func claudeCapabilitiesFor(model string) claudeCapabilities {
 		}
 		// Opus 5.5 rejects thinking.type="disabled", so the fork never derives a
 		// disabled block for that family: reasoning_effort "none" keeps adaptive
-		// thinking instead of turning it off (see merge-rc40-tdd-plan.md B类).
+		// thinking instead of turning it off.
 		if strings.HasPrefix(model, "claude-opus-5") {
 			capabilities.supportsDisable = false
 		}
@@ -81,6 +81,17 @@ func claudeCapabilitiesFor(model string) claudeCapabilities {
 	}
 
 	return capabilities
+}
+
+// claudeDefaultEffort mirrors geminiDefaultEffort: it is the tier the gateway
+// applies and accounts when a request carries no explicit effort. The product
+// requirement fixes the adaptive Claude 5 defaults as medium for Opus 5.5 and
+// high for Fable 5.1, so every other family keeps the historical high default.
+func claudeDefaultEffort(model string) Effort {
+	if strings.HasPrefix(strings.ToLower(model), "claude-opus-5") {
+		return EffortMedium
+	}
+	return EffortHigh
 }
 
 func RenderClaude(model string, intent Intent, maxTokens *uint, adapterBudgetPercentage float64) (ClaudeRender, error) {
@@ -119,12 +130,12 @@ func RenderClaude(model string, intent Intent, maxTokens *uint, adapterBudgetPer
 			}
 			return ClaudeRender{
 				Thinking:        thinking,
-				EffectiveEffort: EffortHigh,
+				EffectiveEffort: claudeDefaultEffort(model),
 				ClearSampling:   capabilities.strictSampling,
 			}, nil
 		}
 		if capabilities.defaultThinking {
-			return ClaudeRender{EffectiveEffort: EffortHigh, ClearSampling: capabilities.strictSampling}, nil
+			return ClaudeRender{EffectiveEffort: claudeDefaultEffort(model), ClearSampling: capabilities.strictSampling}, nil
 		}
 		return ClaudeRender{ClearSampling: capabilities.strictSampling}, nil
 	}
@@ -181,7 +192,7 @@ func RenderClaude(model string, intent Intent, maxTokens *uint, adapterBudgetPer
 			effort = EffortFromBudget(*intent.BudgetTokens)
 		}
 		if effort == "" && intent.Mode == ModeEnabled {
-			effort = EffortHigh
+			effort = claudeDefaultEffort(model)
 		}
 		normalizedEffort := normalizeClaudeEffort(effort, capabilities)
 		if effort != "" && normalizedEffort != effort {
@@ -193,7 +204,7 @@ func RenderClaude(model string, intent Intent, maxTokens *uint, adapterBudgetPer
 		effort = normalizedEffort
 		effectiveEffort := effort
 		if effectiveEffort == "" && intent.Mode == ModeAdaptive {
-			effectiveEffort = EffortHigh
+			effectiveEffort = claudeDefaultEffort(model)
 		}
 
 		// Claude effort can be used without enabling thinking. Preserve that

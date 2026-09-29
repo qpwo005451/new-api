@@ -14,3 +14,4 @@
 | Watchdog shell | `watchdog.sh` | keep as tracked helper | Relay health check script with server-only key file |
 | Live relay timeout | `/opt/new-api/.env` | document only | `RELAY_TIMEOUT=900` remains server-only runtime config |
 | Claude Opus 5 thinking-disable guard | `relaykit/relayconvert/reasoning/claude.go` | commit as source change | `claude-opus-5*` sets `supportsDisable=false`, so `reasoning_effort: "none"` keeps adaptive thinking instead of deriving `thinking.type="disabled"`, which that family rejects with 400 |
+| Claude default effort tier | `relaykit/relayconvert/reasoning/claude.go` | commit as source change | Requests that carry no effort signal are accounted at the family default: Opus 5.5 medium, Fable 5.1 high (`claudeDefaultEffort`, mirrors `geminiDefaultEffort`) |

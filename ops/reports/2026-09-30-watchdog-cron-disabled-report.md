@@ -51,3 +51,6 @@ instead of re-enabling the cron entry.
   MainPID (1698446, started by the 05:41 watchdog restart) was unchanged by this change, and `/api/status` returned 200.
 - Last watchdog log line before the change: `Wed Sep 30 05:51:11 CST 2026 | FAIL 1/2 (relay transport failure (HTTP 000))`.
   That would have triggered a restart at about 06:01, which no longer happens.
+- Confirmed after the two following cron boundaries (`06:01` and `06:11`, checked at `06:08`): `watchdog.log` still ends at
+  the `05:51:11` line and its mtime is unchanged, zero `Started new-api.service` events since `05:52`, MainPID unchanged
+  at `1698446`, service active, `/api/status` 200, and zero HTTP 500 responses in the window.

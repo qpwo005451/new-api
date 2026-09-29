@@ -704,7 +704,7 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(service.RelayRequestContext(c), c.Request.Method, fullRequestURL, requestBody)
+	req, err := newTaskAPIRequest(c, fullRequestURL, requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
@@ -727,4 +727,15 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
 		return nil, fmt.Errorf("do request failed: %w", err)
 	}
 	return resp, nil
+}
+
+// newTaskAPIRequest builds the task submission request. It carries the relay
+// cancellation context (administrator cancel, virtual-pool attempt release)
+// instead of the bare client request context, so aborting a relay attempt also
+// stops an in-flight task submission.
+func newTaskAPIRequest(c *gin.Context, fullRequestURL string, requestBody io.Reader) (*http.Request, error) {
+	if c == nil || c.Request == nil {
+		return nil, errors.New("task client request is missing")
+	}
+	return http.NewRequestWithContext(service.RelayRequestContext(c), c.Request.Method, fullRequestURL, requestBody)
 }

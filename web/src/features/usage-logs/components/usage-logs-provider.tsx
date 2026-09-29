@@ -26,12 +26,23 @@ import {
   type ReactNode,
 } from 'react'
 
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 import { useIsAdmin } from '@/hooks/use-admin'
 
 import { getClientAliases, upsertClientAlias } from '../api'
 import type { ChannelAffinityInfo } from '../types'
 
 export type LogsViewScope = 'all' | 'self'
+export type LogsViewAccess = 'self' | 'admin' | 'root'
+
+export function resolveLogsViewAccess(
+  role: number,
+  viewScope: LogsViewScope
+): LogsViewAccess {
+  if (viewScope !== 'all' || role < ROLE.ADMIN) return 'self'
+  return role === ROLE.SUPER_ADMIN ? 'root' : 'admin'
+}
 
 interface UsageLogsContextValue {
   selectedUserId: number | null
@@ -142,13 +153,19 @@ export function useUsageLogsContext() {
  * mine" is treated exactly like a regular user for that view.
  */
 export function useLogsViewScope() {
-  const canManageScope = useIsAdmin()
+  const role = useAuthStore((state) => state.auth.user?.role ?? ROLE.GUEST)
   const { viewScope, setViewScope } = useUsageLogsContext()
+  const canManageScope = role >= ROLE.ADMIN
+  const viewAccess = resolveLogsViewAccess(role, viewScope)
+  const isAdminView = viewAccess !== 'self'
+  const isRootView = viewAccess === 'root'
 
   return {
     canManageScope,
     viewScope,
     setViewScope,
-    isAdminView: canManageScope && viewScope === 'all',
+    isAdminView,
+    isRootView,
+    viewAccess,
   }
 }

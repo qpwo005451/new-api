@@ -70,7 +70,7 @@ func TestInitChannelCacheKeepsPreviousSnapshotWhenDatabaseReadFails(t *testing.T
 	channel := createChannelCacheTestFixture(t)
 
 	InitChannelCache()
-	cached, err := GetRandomSatisfiedChannel("svip", "paid-model", 0, "")
+	cached, err := GetRandomSatisfiedChannel("svip", "paid-model", 0, nil)
 	require.NoError(t, err)
 	require.NotNil(t, cached)
 	assert.Equal(t, channel.Id, cached.Id)
@@ -78,7 +78,7 @@ func TestInitChannelCacheKeepsPreviousSnapshotWhenDatabaseReadFails(t *testing.T
 	require.NoError(t, DB.Migrator().DropTable(&Ability{}))
 	InitChannelCache()
 
-	cached, err = GetRandomSatisfiedChannel("svip", "paid-model", 0, "")
+	cached, err = GetRandomSatisfiedChannel("svip", "paid-model", 0, nil)
 	require.NoError(t, err)
 	require.NotNil(t, cached)
 	assert.Equal(t, channel.Id, cached.Id)
@@ -96,14 +96,14 @@ func TestInitChannelCacheKeepsPreviousBalanceProtectionWhenProtectionReadFails(t
 	require.NoError(t, DB.Create(protection).Error)
 
 	InitChannelCache()
-	cached, err := GetRandomSatisfiedChannel("svip", "paid-model", 0, "")
+	cached, err := GetRandomSatisfiedChannel("svip", "paid-model", 0, nil)
 	require.NoError(t, err)
 	assert.Nil(t, cached)
 
 	require.NoError(t, DB.Migrator().DropTable(&ChannelBalanceProtection{}))
 	InitChannelCache()
 
-	cached, err = GetRandomSatisfiedChannel("svip", "paid-model", 0, "")
+	cached, err = GetRandomSatisfiedChannel("svip", "paid-model", 0, nil)
 	require.NoError(t, err)
 	assert.Nil(t, cached)
 }
@@ -146,17 +146,17 @@ func TestGetRandomSatisfiedChannelSinglePassPriorityFallback(t *testing.T) {
 			}
 
 			for retry, wantPriority := range []int64{300, 200, 100} {
-				channel, err := GetRandomSatisfiedChannel("svip", "single-pass-model", retry, "")
+				channel, err := GetRandomSatisfiedChannel("svip", "single-pass-model", retry, nil)
 				require.NoError(t, err)
 				require.NotNil(t, channel)
 				assert.Equal(t, wantPriority, channel.GetPriority())
 			}
 
-			channel, err := GetRandomSatisfiedChannel("svip", "single-pass-model", 3, "")
+			channel, err := GetRandomSatisfiedChannel("svip", "single-pass-model", 3, nil)
 			require.ErrorIs(t, err, ErrPriorityFallbackExhausted)
 			assert.Nil(t, channel)
 
-			channel, err = GetRandomSatisfiedChannel("svip", "ordinary-model", 3, "")
+			channel, err = GetRandomSatisfiedChannel("svip", "ordinary-model", 3, nil)
 			require.NoError(t, err)
 			require.NotNil(t, channel)
 			assert.Equal(t, int64(100), channel.GetPriority())

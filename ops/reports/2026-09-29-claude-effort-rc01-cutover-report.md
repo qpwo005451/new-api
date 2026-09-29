@@ -53,9 +53,10 @@ contain it.
 ## Observations
 
 1. The post-cutover `.schema` hash differs from the pre-cutover hash only by the *order* of the `users` indexes in
-   `sqlite_master`; a sorted comparison of both schemas is identical, object counts are unchanged, and
-   `integrity_check` is ok. GORM rewrites the `users` table during `migrateDB()` on startup (observed at the previous
-   cutover as well). Low priority, pre-existing upstream behavior, no data change.
+   `sqlite_master`: the `migrateDB()` startup pass recreates those indexes in a different sequence (observed at the
+   previous cutover and after every restart since). After sorting, the schema text is identical apart from at most one
+   whitespace character; table and index counts, row counts, and `integrity_check` are unchanged. Low priority,
+   pre-existing upstream behavior, no data change.
 2. Behavior change delivered by this release: `claude-opus-5*` requests without an explicit effort are accounted at
    `medium` instead of `high`; outbound `output_config.effort` is still omitted when the caller did not request a level.
 
@@ -63,3 +64,21 @@ contain it.
 
 `finalize_release.sh 2026-09-29-claude-effort-rc01` completed: `finalized.env` written, candidate runtime copies removed,
 port `4003` released, candidate binary and rollback metadata preserved.
+
+## Observed Runtime Behaviour (about 8 hours after cutover)
+
+- Watchdog restarts: the host cron runs `/opt/new-api/watchdog.sh` every 10 minutes. Between the 21:16 cutover and
+  02:51 there was no restart; from 02:51 to 05:21 the service restarted once every about 20 minutes (8 restarts). Each
+  restart is triggered by the watchdog's relay probe (`MODEL=glm-5.3-flash` against
+  `http://localhost:4002/v1/chat/completions`) returning a transport failure (HTTP 000) twice in a row, while the
+  liveness probe (`/api/status`) kept returning 200. The probe times out because the gateway is still retrying the
+  currently unstable upstream channels, i.e. the parked upstream instability rather than a release regression. Each
+  restart costs a few seconds of downtime and can interrupt in-flight streams.
+- Request outcomes in the same window: 22,432 x HTTP 200, 102 x 401, 60 x 404, 52 x 499, 25 x 503, 19 x 502, 18 x 400,
+  4 x 429, 1 x 500. The single 500 was a free-model request (`nvidia/nemotron-3-ultra-550b-a55b:free`, channel #5) whose
+  client disconnected after 35 seconds; the record carries `context canceled`, so it is not an application fault.
+- Backend error templates are dominated by upstream channel failures (Cloudflare invalid/incomplete response, upstream
+  closed connection, service temporarily unavailable, provider error, upstream forbidden, `ResourceExhausted` worker
+  limit). No panics, no SQL errors, no `database is locked`.
+- Database state after those restarts: `integrity_check` = ok, 47 tables, 214 indexes, 31 `users` columns, the three
+  migrated tables still present, and row counts preserved.

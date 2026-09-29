@@ -31,6 +31,7 @@ release and commit.
 | Release id | Source commit | Binary sha256 (first 8) | Notes |
 | --- | --- | --- | --- |
 | `2026-09-29-rc40` | `f053d74e3` | `43858fcb` | rc.26 ... rc.40 upstream merge plus the Opus 5 thinking-disable guard; explicit schema migration, cutover and finalization on 2026-09-29 20:47. Rollback handle: `releases/2026-09-29-rc40/runtime/cutover-backup.env`. |
+| `2026-09-29-claude-effort-rc01` | `99510d05f` | `7129c19f` | Claude family default-effort change (PR #20); cutover 2026-09-29 21:16 after candidate verify on 4003. Rollback handle: `releases/2026-09-29-claude-effort-rc01/runtime/cutover-backup.env` (previous binary `43858fcb`). |
 | `2026-09-29-affinity-circuit-breaker-rc02` | `8341cae96` (`prod/251` head) | `ed5ec59a` | Live until the rc40 cutover. Manifest and candidate binary are kept under `/opt/new-api-release-runner/releases/2026-09-29-affinity-circuit-breaker-rc02/`, not in `/opt/new-api-release-archive` (archive directory is empty). |
 | `2026-09-29-model-health-rc01` | `cca4fdc4c` | `522f3b02` | Cutover 2026-09-29 07:45; rollback metadata under `/opt/new-api-release-runner/releases/2026-09-29-model-health-rc01/runtime/cutover-backup.env`. |
 | (release id not recorded) | `054c5b32a` | `b1654690` | Previous binary recorded by the rc01 cutover backup; the archiving policy was not followed for it. |

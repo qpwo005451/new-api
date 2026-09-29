@@ -89,7 +89,9 @@ func TestOpenAIChatRequestToClaudeMessagesNormalizesToolInputSchema(t *testing.T
 //     "enabled" with a budget, and budget_tokens is never emitted;
 //   - output_config.effort carries the level verbatim when the model supports
 //     it, and is absent when no effort was requested;
-//   - an unknown level is rejected instead of being silently downgraded.
+//   - an unknown level is rejected instead of being silently downgraded;
+//   - a request without any effort signal is accounted at the family default
+//     (Opus 5.5 medium, Fable 5.1 high) while output_config.effort stays absent.
 func TestOpenAIChatRequestToClaudeMessages_ReasoningEffortMatrix(t *testing.T) {
 	maxTokens := uint(4096)
 
@@ -111,7 +113,7 @@ func TestOpenAIChatRequestToClaudeMessages_ReasoningEffortMatrix(t *testing.T) {
 		// Opus 5.5 cannot disable thinking, so "none" keeps adaptive thinking and maps to the
 		// lowest representable effort. Accounting follows the effort actually used.
 		{name: "opus-5-5 none", model: "claude-opus-5-5", effort: "none", wantThinkingType: "adaptive", wantEffort: "low", wantAccounting: "low"},
-		{name: "opus-5-5 omitted", model: "claude-opus-5-5", effort: "", wantAccounting: "high"},
+		{name: "opus-5-5 omitted", model: "claude-opus-5-5", effort: "", wantAccounting: "medium"},
 		{name: "fable-5-1 minimal", model: "claude-fable-5-1", effort: "minimal", wantThinkingType: "adaptive", wantEffort: "low", wantAccounting: "low"},
 		{name: "fable-5-1 low", model: "claude-fable-5-1", effort: "low", wantThinkingType: "adaptive", wantEffort: "low", wantAccounting: "low"},
 		{name: "fable-5-1 medium", model: "claude-fable-5-1", effort: "medium", wantThinkingType: "adaptive", wantEffort: "medium", wantAccounting: "medium"},

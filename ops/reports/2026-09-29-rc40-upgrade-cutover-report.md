@@ -86,8 +86,11 @@ so the staged runtime never runs `migrateDB()`.
 
 ## Residual Notes
 
-1. Live binary provenance gap: `ed5ec59a...` (previous live) matches neither the last archived manifest (`522f3b02...`)
-   nor the older release manifest (`b1654690...`). Worth an explanation before the next cutover.
+1. Live binary provenance gap (resolved): `ed5ec59a...` is release `2026-09-29-affinity-circuit-breaker-rc02`, built from
+   `prod/251` head `8341cae96`; its manifest and candidate binary are kept under
+   `/opt/new-api-release-runner/releases/2026-09-29-affinity-circuit-breaker-rc02/`. The same investigation found that
+   `/opt/new-api-release-archive` is empty and that the `-release-runner` checkout carries uncommitted script edits whose
+   content matches the current fork scripts. See `ops/instance/251/README.md` (Release History).
 2. Open product question (unchanged by this work): adaptive Claude requests without an explicit effort tier are accounted
    as `high` in both upstream and the merged tree, while the requirement document asks for `medium` as the Opus 5.5
    default.

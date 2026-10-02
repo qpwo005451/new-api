@@ -191,3 +191,33 @@ func TestGetRandomSatisfiedChannelUsesPerModelWeightOverride(t *testing.T) {
 	}
 	assert.Greater(t, picked, 190, "the overridden channel must dominate selection")
 }
+
+func TestSelectSatisfiedChannelFromCandidatesUsesPerModelWeightOverride(t *testing.T) {
+	setupChannelCacheTestDB(t)
+
+	channelA := &Channel{Name: "a", Status: common.ChannelStatusEnabled, Models: "shared-model", Group: "svip", Priority: common.GetPointer(int64(10))}
+	channelB := &Channel{Name: "b", Status: common.ChannelStatusEnabled, Models: "shared-model", Group: "svip", Priority: common.GetPointer(int64(10))}
+	require.NoError(t, DB.Create(channelA).Error)
+	require.NoError(t, DB.Create(channelB).Error)
+	require.NoError(t, channelA.UpdateAbilities(nil))
+	require.NoError(t, channelB.UpdateAbilities(nil))
+	InitChannelCache()
+
+	previous := operation_setting.GetModelWeightSetting().Weights
+	operation_setting.GetModelWeightSetting().Weights = `[{"channel_id":` + strconv.Itoa(channelA.Id) + `,"model":"shared-model","weight":100000}]`
+	t.Cleanup(func() { operation_setting.GetModelWeightSetting().Weights = previous })
+
+	candidates, err := GetSatisfiedChannelsInPriorityOrder("svip", "shared-model", nil)
+	require.NoError(t, err)
+
+	picked := 0
+	for range 200 {
+		channel, err := SelectSatisfiedChannelFromCandidates(candidates, 0, "shared-model")
+		require.NoError(t, err)
+		require.NotNil(t, channel)
+		if channel.Id == channelA.Id {
+			picked++
+		}
+	}
+	assert.Greater(t, picked, 190, "the overridden channel must dominate selection")
+}

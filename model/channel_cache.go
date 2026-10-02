@@ -350,11 +350,15 @@ func GetOrderedSatisfiedChannels(group string, model string, filters []dto.Chann
 		channels = append(channels, channel)
 	}
 	sort.SliceStable(channels, func(i, j int) bool {
-		if channels[i].GetPriority() != channels[j].GetPriority() {
-			return channels[i].GetPriority() > channels[j].GetPriority()
+		leftPriority := channels[i].GetPriority()
+		rightPriority := channels[j].GetPriority()
+		if leftPriority != rightPriority {
+			return leftPriority > rightPriority
 		}
-		if channels[i].GetWeight() != channels[j].GetWeight() {
-			return channels[i].GetWeight() > channels[j].GetWeight()
+		leftWeight := operation_setting.EffectiveModelWeight(channels[i].Id, model, channels[i].GetWeight())
+		rightWeight := operation_setting.EffectiveModelWeight(channels[j].Id, model, channels[j].GetWeight())
+		if leftWeight != rightWeight {
+			return leftWeight > rightWeight
 		}
 		return channels[i].Id < channels[j].Id
 	})
@@ -368,8 +372,9 @@ func GetSatisfiedChannelsInPriorityOrder(group string, model string, filters []d
 }
 
 // SelectSatisfiedChannelFromCandidates applies priority/weight selection to a
-// pre-filtered candidate list.
-func SelectSatisfiedChannelFromCandidates(channels []*Channel, retry int) (*Channel, error) {
+// pre-filtered candidate list. The per-model weight override is scoped to
+// modelName, so the same channel can weigh differently per model.
+func SelectSatisfiedChannelFromCandidates(channels []*Channel, retry int, modelName string) (*Channel, error) {
 	if len(channels) == 0 {
 		return nil, nil
 	}
@@ -396,10 +401,13 @@ func SelectSatisfiedChannelFromCandidates(channels []*Channel, retry int) (*Chan
 	targetPriority := int64(sorted[retry])
 	var targetChannels []*Channel
 	sumWeight := 0
+	effectiveWeights := make(map[int]int, len(channels))
 	for _, channel := range channels {
 		if channel != nil && channel.GetPriority() == targetPriority {
+			weight := operation_setting.EffectiveModelWeight(channel.Id, modelName, channel.GetWeight())
+			effectiveWeights[channel.Id] = weight
 			targetChannels = append(targetChannels, channel)
-			sumWeight += channel.GetWeight()
+			sumWeight += weight
 		}
 	}
 	if len(targetChannels) == 0 {
@@ -415,7 +423,7 @@ func SelectSatisfiedChannelFromCandidates(channels []*Channel, retry int) (*Chan
 	}
 	randomWeight := rand.Intn(sumWeight * smoothingFactor)
 	for _, channel := range targetChannels {
-		randomWeight -= channel.GetWeight()*smoothingFactor + smoothingAdjustment
+		randomWeight -= effectiveWeights[channel.Id]*smoothingFactor + smoothingAdjustment
 		if randomWeight < 0 {
 			return channel, nil
 		}

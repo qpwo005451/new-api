@@ -1057,7 +1057,7 @@ func selectSatisfiedChannelWithModelHealth(param *RetryParam, group string, retr
 			}
 		}
 	}
-	return model.SelectSatisfiedChannelFromCandidates(channels, retry)
+	return model.SelectSatisfiedChannelFromCandidates(channels, retry, param.ModelName)
 }
 
 func pinnedTaskPluginIdentities(c *gin.Context, expected string) ([]int, []string) {

@@ -52,6 +52,9 @@ export type ModelHealthPolicySettings = {
   'model_health_policy_setting.enabled': boolean
   'model_health_policy_setting.rules': string
 }
+export type ModelWeightSettings = {
+  'model_weight_setting.weights': string
+}
 export type FilteringSettings = Pick<
   SecuritySettings,
   'CheckSensitiveEnabled' | 'CheckSensitiveOnPromptEnabled' | 'SensitiveWords'
@@ -62,6 +65,7 @@ export type RequestPolicySettings = RetrySettings &
   UpstreamRateLimitSettings &
   VirtualPoolRoutingSettings &
   ModelHealthPolicySettings &
+  ModelWeightSettings &
   FilteringSettings &
   Pick<ChannelAffinitySettings, keyof ChannelAffinitySettings>
 
@@ -92,6 +96,7 @@ export const defaultRequestPolicySettings: RequestPolicySettings = {
   'model_retry_policy_setting.virtual_model_routes': '{}',
   'model_health_policy_setting.enabled': false,
   'model_health_policy_setting.rules': '[]',
+  'model_weight_setting.weights': '[]',
   CheckSensitiveEnabled: false,
   CheckSensitiveOnPromptEnabled: false,
   SensitiveWords: '',

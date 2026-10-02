@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { ModelHealthPolicySection } from '../models/model-health-policy-section'
+import { ModelWeightSection } from '../models/model-weight-section'
 import { UpstreamRateLimitSection } from '../models/upstream-rate-limit-section'
 import { VirtualPoolRoutingSection } from '../models/virtual-pool-routing-section'
 import { createSectionRegistry } from '../utils/section-registry'
@@ -87,6 +88,18 @@ const POLICY_SECTIONS = [
             settings['model_health_policy_setting.enabled'],
           'model_health_policy_setting.rules':
             settings['model_health_policy_setting.rules'],
+        }}
+      />
+    ),
+  },
+  {
+    id: 'model-weights',
+    titleKey: 'Model Weights',
+    build: (settings: RequestPolicySettings) => (
+      <ModelWeightSection
+        defaultValues={{
+          'model_weight_setting.weights':
+            settings['model_weight_setting.weights'],
         }}
       />
     ),

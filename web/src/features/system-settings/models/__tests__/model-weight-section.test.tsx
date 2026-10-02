@@ -164,3 +164,45 @@ it('removes an override and saves the remaining rows', async () => {
     { channel_id: 36, model: 'glm-5.3-flash', weight: 5 },
   ])
 })
+
+it('renders an existing priority and saves a priority-only override', async () => {
+  weights = JSON.stringify([
+    { channel_id: 9, model: 'deepseek-v4.1-flash', priority: 500 },
+  ])
+  show()
+
+  expect(await screen.findByText('#9 - channel-nine')).toBeVisible()
+  const priority = screen.getByRole('spinbutton', { name: 'Priority' })
+  expect(priority).toHaveValue(500)
+  expect(screen.getByRole('spinbutton', { name: 'Weight' })).toHaveValue(null)
+
+  fireEvent.change(priority, { target: { value: '497' } })
+  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
+  const payload = vi.mocked(api.patch).mock.calls[0][1] as {
+    options: Record<string, string>
+  }
+  expect(JSON.parse(payload.options['model_weight_setting.weights'])).toEqual([
+    { channel_id: 9, model: 'deepseek-v4.1-flash', priority: 497 },
+  ])
+})
+
+it('drops rows that set neither a weight nor a priority', async () => {
+  weights = JSON.stringify([
+    { channel_id: 9, model: 'deepseek-v4.1-flash', weight: 20 },
+  ])
+  show()
+
+  expect(await screen.findByText('#9 - channel-nine')).toBeVisible()
+  fireEvent.change(screen.getByRole('spinbutton', { name: 'Weight' }), {
+    target: { value: '' },
+  })
+  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
+  const payload = vi.mocked(api.patch).mock.calls[0][1] as {
+    options: Record<string, string>
+  }
+  expect(JSON.parse(payload.options['model_weight_setting.weights'])).toEqual([])
+})

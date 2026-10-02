@@ -1,6 +1,9 @@
 {
   "{{duration}} ms total duration": "总耗时 {{duration}} ms",
   "Chat ID": "Chat ID",
+  "Doubao": "Doubao",
   "Last observation {{time}}": "最近观测：{{time}}",
-  "Referer": "Referer"
+  "Referer": "Referer",
+  "Responses WebSocket": "Responses WebSocket",
+  "SGLang": "SGLang"
 }

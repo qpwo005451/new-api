@@ -41,13 +41,17 @@ import { useSavePolicy } from '../request-policies/use-save-policy'
 const MODEL_WEIGHTS_KEY = 'model_weight_setting.weights'
 const CHANNEL_PAGE_SIZE = 100
 const MAX_MODEL_WEIGHT_VALUE = 1000000
+const MAX_MODEL_PRIORITY_VALUE = 1000000000
 
 type ModelWeightRow = {
   /** Client-side stable identity for React keys; stripped before saving. */
   key: string
   channel_id: number
   model: string
+  /** Empty means "no override"; an explicit 0 is a real value. */
   weight: string
+  /** Empty means "no override"; an explicit 0 is a real value. */
+  priority: string
 }
 
 type Props = {
@@ -98,6 +102,10 @@ async function fetchAllChannels() {
   )
 }
 
+function optionalNumberText(value: unknown) {
+  return value === undefined || value === null ? '' : String(value)
+}
+
 function parseModelWeights(value: string): ModelWeightRow[] {
   try {
     const parsed: unknown = JSON.parse(value || '[]')
@@ -108,7 +116,8 @@ function parseModelWeights(value: string): ModelWeightRow[] {
         key: nextModelWeightRowKey(),
         channel_id: Number(record.channel_id) || 0,
         model: typeof record.model === 'string' ? record.model : '',
-        weight: String(record.weight ?? 0),
+        weight: optionalNumberText(record.weight),
+        priority: optionalNumberText(record.priority),
       }
     })
   } catch {
@@ -117,15 +126,30 @@ function parseModelWeights(value: string): ModelWeightRow[] {
 }
 
 function serializeModelWeights(rows: ModelWeightRow[]) {
-  return JSON.stringify(
-    rows
-      .filter((row) => row.channel_id > 0 && row.model.trim() !== '')
-      .map((row) => ({
+  const entries = rows
+    .filter((row) => row.channel_id > 0 && row.model.trim() !== '')
+    .map((row) => {
+      const entry: Record<string, number | string> = {
         channel_id: row.channel_id,
         model: row.model.trim(),
-        weight: Math.min(Number(row.weight) || 0, MAX_MODEL_WEIGHT_VALUE),
-      }))
-  )
+      }
+      if (row.weight.trim() !== '') {
+        entry.weight = Math.min(
+          Math.max(Number(row.weight) || 0, 0),
+          MAX_MODEL_WEIGHT_VALUE
+        )
+      }
+      if (row.priority.trim() !== '') {
+        entry.priority = Math.min(
+          Math.max(Number(row.priority) || 0, 0),
+          MAX_MODEL_PRIORITY_VALUE
+        )
+      }
+      return entry
+    })
+    // A row with neither value would be rejected by the backend validator.
+    .filter((entry) => 'weight' in entry || 'priority' in entry)
+  return JSON.stringify(entries)
 }
 
 export function ModelWeightSection(props: Props) {
@@ -184,7 +208,7 @@ export function ModelWeightSection(props: Props) {
   const handleAdd = () => {
     setRows((prev) => [
       ...prev,
-      { key: nextModelWeightRowKey(), channel_id: 0, model: '', weight: '' },
+      { key: nextModelWeightRowKey(), channel_id: 0, model: '', weight: '', priority: '' },
     ])
   }
 
@@ -203,14 +227,12 @@ export function ModelWeightSection(props: Props) {
   }
 
   return (
-    <SettingsSection title={t('Model Weights')}>
+    <SettingsSection title={t('Model Routing')}>
       <p className='text-muted-foreground text-sm font-medium'>
-        {t('Per-model channel weight')}
+        {t('Per-model channel routing')}
       </p>
       <p className='text-muted-foreground text-sm'>
-        {t(
-          'Overrides the channel weight for one model only. Higher weight = more requests.'
-        )}
+        {t('Overrides the channel priority or weight for one model only.')}
       </p>
       <SettingsForm
         onSubmit={(event) => {
@@ -228,8 +250,11 @@ export function ModelWeightSection(props: Props) {
             {t('Add override')}
           </Button>
           <span className='text-muted-foreground text-xs'>
-            {t('Unset models keep the channel weight.')}{' '}
-            {t('Explicit 0 excludes the model on this channel.')}
+            {t('Unset fields keep the channel value.')}{' '}
+            {t('A weight of 0 excludes the model on this channel.')}{' '}
+            {t(
+              'Priority decides which channels compete; weight splits traffic within one priority.'
+            )}
           </span>
         </div>
 
@@ -242,7 +267,7 @@ export function ModelWeightSection(props: Props) {
             {rows.map((row, index) => (
               <div
                 key={row.key}
-                className='grid gap-3 rounded-lg border p-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_8rem_auto]'
+                className='grid gap-3 rounded-lg border p-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_7rem_7rem_auto]'
               >
                 <label className='grid gap-1.5 text-sm'>
                   <span className='text-muted-foreground text-xs font-medium'>
@@ -296,6 +321,21 @@ export function ModelWeightSection(props: Props) {
                     value={row.weight}
                     onChange={(event) =>
                       updateRow(index, { weight: event.target.value })
+                    }
+                  />
+                </label>
+                <label className='grid gap-1.5 text-sm'>
+                  <span className='text-muted-foreground text-xs font-medium'>
+                    {t('Priority')}
+                  </span>
+                  <Input
+                    aria-label={t('Priority')}
+                    type='number'
+                    min={0}
+                    max={MAX_MODEL_PRIORITY_VALUE}
+                    value={row.priority}
+                    onChange={(event) =>
+                      updateRow(index, { priority: event.target.value })
                     }
                   />
                 </label>

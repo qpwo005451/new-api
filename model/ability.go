@@ -84,6 +84,7 @@ func GetChannel(
 			if ability.Priority != nil {
 				priority = *ability.Priority
 			}
+			priority = operation_setting.EffectiveModelPriority(ability.ChannelId, model, priority)
 			if !seen[priority] {
 				seen[priority] = true
 				priorities = append(priorities, priority)
@@ -98,7 +99,11 @@ func GetChannel(
 		}
 		targetPriority := priorities[retry]
 		abilities = lo.Filter(abilities, func(ability Ability, _ int) bool {
-			return ability.Priority == nil && targetPriority == 0 || ability.Priority != nil && *ability.Priority == targetPriority
+			priority := int64(0)
+			if ability.Priority != nil {
+				priority = *ability.Priority
+			}
+			return operation_setting.EffectiveModelPriority(ability.ChannelId, model, priority) == targetPriority
 		})
 	}
 	channel := Channel{}

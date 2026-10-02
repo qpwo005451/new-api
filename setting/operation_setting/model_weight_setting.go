@@ -13,15 +13,21 @@ import (
 const (
 	MaxModelWeightEntries = 10000
 	MaxModelWeightValue   = 1000000
+	MaxModelPriorityValue = 1000000000
 )
 
-// ModelWeightOverride replaces the channel-level weight for one model on one
-// channel. It is scoped to (channel, model); every other model keeps using the
-// channel weight.
+// ModelWeightOverride overrides the channel-level selection attributes for one
+// model on one channel. It is scoped to (channel, model); every other model on
+// the same channel keeps using the channel-level weight and priority.
+//
+// Both fields are optional so an entry can override only the priority, only the
+// weight, or both. An absent field falls back to the channel value, while an
+// explicit 0 is a real value and not a fallback.
 type ModelWeightOverride struct {
 	ChannelID int    `json:"channel_id"`
 	Model     string `json:"model"`
-	Weight    uint   `json:"weight"`
+	Weight    *uint  `json:"weight,omitempty"`
+	Priority  *int64 `json:"priority,omitempty"`
 }
 
 // ModelWeightSetting keeps the overrides as a raw JSON array string so the
@@ -49,10 +55,10 @@ func modelWeightKey(channelID int, modelName string) string {
 var modelWeightIndexCache = struct {
 	sync.RWMutex
 	raw   string
-	index map[string]uint
+	index map[string]ModelWeightOverride
 }{}
 
-func modelWeightIndex() map[string]uint {
+func modelWeightIndex() map[string]ModelWeightOverride {
 	raw := modelWeightSetting.Weights
 	modelWeightIndexCache.RLock()
 	if modelWeightIndexCache.index != nil && modelWeightIndexCache.raw == raw {
@@ -62,7 +68,7 @@ func modelWeightIndex() map[string]uint {
 	}
 	modelWeightIndexCache.RUnlock()
 
-	index := make(map[string]uint)
+	index := make(map[string]ModelWeightOverride)
 	if strings.TrimSpace(raw) != "" {
 		var entries []ModelWeightOverride
 		if err := common.UnmarshalJsonStr(raw, &entries); err == nil {
@@ -70,7 +76,7 @@ func modelWeightIndex() map[string]uint {
 				if entry.ChannelID <= 0 || strings.TrimSpace(entry.Model) == "" {
 					continue
 				}
-				index[modelWeightKey(entry.ChannelID, entry.Model)] = entry.Weight
+				index[modelWeightKey(entry.ChannelID, entry.Model)] = entry
 			}
 		}
 	}
@@ -82,7 +88,7 @@ func modelWeightIndex() map[string]uint {
 	return index
 }
 
-// EffectiveModelWeight returns the configured per-model override for
+// EffectiveModelWeight returns the configured per-model weight override for
 // (channel, model), or channelWeight when no override exists. A configured
 // weight of 0 is an explicit zero, not a fallback.
 func EffectiveModelWeight(channelID int, modelName string, channelWeight int) int {
@@ -90,10 +96,29 @@ func EffectiveModelWeight(channelID int, modelName string, channelWeight int) in
 	if len(index) == 0 {
 		return channelWeight
 	}
-	if weight, ok := index[modelWeightKey(channelID, modelName)]; ok {
-		return int(weight)
+	if entry, ok := index[modelWeightKey(channelID, modelName)]; ok && entry.Weight != nil {
+		return int(*entry.Weight)
 	}
 	return channelWeight
+}
+
+// EffectiveModelPriority returns the configured per-model priority override for
+// (channel, model), or channelPriority when no override exists. Selection groups
+// candidates into priority tiers before applying weights, so overriding the
+// priority for a single model is what lets that model spread across channels of
+// different channel-level priorities without changing the channel-level
+// priority that every other model on those channels still uses.
+//
+// A configured priority of 0 is an explicit zero, not a fallback.
+func EffectiveModelPriority(channelID int, modelName string, channelPriority int64) int64 {
+	index := modelWeightIndex()
+	if len(index) == 0 {
+		return channelPriority
+	}
+	if entry, ok := index[modelWeightKey(channelID, modelName)]; ok && entry.Priority != nil {
+		return *entry.Priority
+	}
+	return channelPriority
 }
 
 // ListModelWeightOverrides returns the parsed overrides for one channel.
@@ -140,8 +165,19 @@ func ValidateModelWeights(value string) error {
 		if len(model) > 255 {
 			return fmt.Errorf("model weight entry %d has a model name longer than 255 bytes", index+1)
 		}
-		if entry.Weight > MaxModelWeightValue {
+		if entry.Weight != nil && *entry.Weight > MaxModelWeightValue {
 			return fmt.Errorf("model weight entry %d exceeds the maximum weight %d", index+1, MaxModelWeightValue)
+		}
+		if entry.Priority != nil {
+			if *entry.Priority < 0 {
+				return fmt.Errorf("model weight entry %d has a negative priority %d", index+1, *entry.Priority)
+			}
+			if *entry.Priority > MaxModelPriorityValue {
+				return fmt.Errorf("model weight entry %d exceeds the maximum priority %d", index+1, MaxModelPriorityValue)
+			}
+		}
+		if entry.Weight == nil && entry.Priority == nil {
+			return fmt.Errorf("model weight entry %d for channel %d model %q must set a weight or a priority", index+1, entry.ChannelID, model)
 		}
 		key := modelWeightKey(entry.ChannelID, model)
 		if _, exists := seen[key]; exists {

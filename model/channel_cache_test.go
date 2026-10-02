@@ -248,3 +248,103 @@ func TestGetChannelWithoutMemoryCacheUsesPerModelWeightOverride(t *testing.T) {
 	}
 	assert.Greater(t, picked, 190)
 }
+
+// createPriorityOverrideFixture creates two channels that serve the same two
+// models at different channel-level priorities. A per-model priority override
+// must move the lower channel into the top tier for one model only.
+func createPriorityOverrideFixture(t *testing.T) (high *Channel, low *Channel) {
+	t.Helper()
+
+	high = &Channel{Name: "high", Status: common.ChannelStatusEnabled, Models: "shared-model,other-model", Group: "svip", Priority: common.GetPointer(int64(20))}
+	low = &Channel{Name: "low", Status: common.ChannelStatusEnabled, Models: "shared-model,other-model", Group: "svip", Priority: common.GetPointer(int64(10))}
+	require.NoError(t, DB.Create(high).Error)
+	require.NoError(t, DB.Create(low).Error)
+	require.NoError(t, high.UpdateAbilities(nil))
+	require.NoError(t, low.UpdateAbilities(nil))
+	return high, low
+}
+
+func setModelWeightsForSelectionTest(t *testing.T, raw string) {
+	t.Helper()
+	previous := operation_setting.GetModelWeightSetting().Weights
+	operation_setting.GetModelWeightSetting().Weights = raw
+	t.Cleanup(func() { operation_setting.GetModelWeightSetting().Weights = previous })
+}
+
+func TestGetRandomSatisfiedChannelUsesPerModelPriorityOverride(t *testing.T) {
+	setupChannelCacheTestDB(t)
+	_, low := createPriorityOverrideFixture(t)
+	InitChannelCache()
+
+	setModelWeightsForSelectionTest(t, `[{"channel_id":`+strconv.Itoa(low.Id)+`,"model":"shared-model","priority":20}]`)
+
+	pickedLow := 0
+	for range 200 {
+		channel, err := GetRandomSatisfiedChannel("svip", "shared-model", 0, nil)
+		require.NoError(t, err)
+		require.NotNil(t, channel)
+		if channel.Id == low.Id {
+			pickedLow++
+		}
+	}
+	assert.Greater(t, pickedLow, 60, "the priority override lifts the lower-priority channel into the top tier")
+	assert.Less(t, pickedLow, 140, "both channels must share the top tier")
+}
+
+func TestPerModelPriorityOverrideDoesNotAffectOtherModels(t *testing.T) {
+	setupChannelCacheTestDB(t)
+	high, low := createPriorityOverrideFixture(t)
+	InitChannelCache()
+
+	setModelWeightsForSelectionTest(t, `[{"channel_id":`+strconv.Itoa(low.Id)+`,"model":"shared-model","priority":20}]`)
+
+	for range 200 {
+		channel, err := GetRandomSatisfiedChannel("svip", "other-model", 0, nil)
+		require.NoError(t, err)
+		require.NotNil(t, channel)
+		assert.Equal(t, high.Id, channel.Id, "other models keep the channel-level priority")
+	}
+}
+
+func TestSelectSatisfiedChannelFromCandidatesUsesPerModelPriorityOverride(t *testing.T) {
+	setupChannelCacheTestDB(t)
+	_, low := createPriorityOverrideFixture(t)
+	InitChannelCache()
+
+	setModelWeightsForSelectionTest(t, `[{"channel_id":`+strconv.Itoa(low.Id)+`,"model":"shared-model","priority":20}]`)
+
+	candidates, err := GetSatisfiedChannelsInPriorityOrder("svip", "shared-model", nil)
+	require.NoError(t, err)
+
+	pickedLow := 0
+	for range 200 {
+		channel, err := SelectSatisfiedChannelFromCandidates(candidates, 0, "shared-model")
+		require.NoError(t, err)
+		require.NotNil(t, channel)
+		if channel.Id == low.Id {
+			pickedLow++
+		}
+	}
+	assert.Greater(t, pickedLow, 60)
+	assert.Less(t, pickedLow, 140)
+}
+
+func TestGetChannelWithoutMemoryCacheUsesPerModelPriorityOverride(t *testing.T) {
+	setupChannelCacheTestDB(t)
+	common.MemoryCacheEnabled = false
+	_, low := createPriorityOverrideFixture(t)
+
+	setModelWeightsForSelectionTest(t, `[{"channel_id":`+strconv.Itoa(low.Id)+`,"model":"shared-model","priority":20}]`)
+
+	pickedLow := 0
+	for range 200 {
+		channel, err := GetChannel("svip", "shared-model", 0, nil)
+		require.NoError(t, err)
+		require.NotNil(t, channel)
+		if channel.Id == low.Id {
+			pickedLow++
+		}
+	}
+	assert.Greater(t, pickedLow, 60)
+	assert.Less(t, pickedLow, 140)
+}

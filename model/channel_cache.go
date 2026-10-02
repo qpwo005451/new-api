@@ -86,11 +86,14 @@ func InitChannelCache() {
 		}
 	}
 
-	// sort by priority
+	// Sort by the per-model effective priority so an override can reorder the
+	// candidates for one model without touching the channel-level priority.
 	for group, model2channels := range newGroup2model2channels {
 		for model, channels := range model2channels {
 			sort.Slice(channels, func(i, j int) bool {
-				return newChannelId2channel[channels[i]].GetPriority() > newChannelId2channel[channels[j]].GetPriority()
+				left := operation_setting.EffectiveModelPriority(channels[i], model, newChannelId2channel[channels[i]].GetPriority())
+				right := operation_setting.EffectiveModelPriority(channels[j], model, newChannelId2channel[channels[j]].GetPriority())
+				return left > right
 			})
 			newGroup2model2channels[group][model] = channels
 		}
@@ -165,7 +168,7 @@ func GetRandomSatisfiedChannel(
 	uniquePriorities := make(map[int]bool)
 	for _, channelId := range channels {
 		if channel, ok := channelsIDM[channelId]; ok {
-			uniquePriorities[int(channel.GetPriority())] = true
+			uniquePriorities[int(operation_setting.EffectiveModelPriority(channel.Id, model, channel.GetPriority()))] = true
 		} else {
 			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelId)
 		}
@@ -190,7 +193,7 @@ func GetRandomSatisfiedChannel(
 	effectiveWeights := make(map[int]int, len(channels))
 	for _, channelId := range channels {
 		if channel, ok := channelsIDM[channelId]; ok {
-			if channel.GetPriority() == targetPriority {
+			if operation_setting.EffectiveModelPriority(channel.Id, model, channel.GetPriority()) == targetPriority {
 				weight := operation_setting.EffectiveModelWeight(channel.Id, model, channel.GetWeight())
 				effectiveWeights[channel.Id] = weight
 				sumWeight += weight
@@ -350,8 +353,8 @@ func GetOrderedSatisfiedChannels(group string, model string, filters []dto.Chann
 		channels = append(channels, channel)
 	}
 	sort.SliceStable(channels, func(i, j int) bool {
-		leftPriority := channels[i].GetPriority()
-		rightPriority := channels[j].GetPriority()
+		leftPriority := operation_setting.EffectiveModelPriority(channels[i].Id, model, channels[i].GetPriority())
+		rightPriority := operation_setting.EffectiveModelPriority(channels[j].Id, model, channels[j].GetPriority())
 		if leftPriority != rightPriority {
 			return leftPriority > rightPriority
 		}
@@ -381,7 +384,7 @@ func SelectSatisfiedChannelFromCandidates(channels []*Channel, retry int, modelN
 	priorities := make(map[int]struct{})
 	for _, channel := range channels {
 		if channel != nil {
-			priorities[int(channel.GetPriority())] = struct{}{}
+			priorities[int(operation_setting.EffectiveModelPriority(channel.Id, modelName, channel.GetPriority()))] = struct{}{}
 		}
 	}
 	sorted := make([]int, 0, len(priorities))
@@ -403,7 +406,7 @@ func SelectSatisfiedChannelFromCandidates(channels []*Channel, retry int, modelN
 	sumWeight := 0
 	effectiveWeights := make(map[int]int, len(channels))
 	for _, channel := range channels {
-		if channel != nil && channel.GetPriority() == targetPriority {
+		if channel != nil && operation_setting.EffectiveModelPriority(channel.Id, modelName, channel.GetPriority()) == targetPriority {
 			weight := operation_setting.EffectiveModelWeight(channel.Id, modelName, channel.GetWeight())
 			effectiveWeights[channel.Id] = weight
 			targetChannels = append(targetChannels, channel)

@@ -94,7 +94,7 @@ const POLICY_SECTIONS = [
   },
   {
     id: 'model-weights',
-    titleKey: 'Model Weights',
+    titleKey: 'Model Routing',
     build: (settings: RequestPolicySettings) => (
       <ModelWeightSection
         defaultValues={{

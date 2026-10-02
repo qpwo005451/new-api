@@ -33,6 +33,41 @@ func TestEffectiveModelWeightIgnoresMalformedJSON(t *testing.T) {
 	assert.Equal(t, 3, EffectiveModelWeight(9, "deepseek-v4.1-flash", 3))
 }
 
+func TestEffectiveModelPriorityFallsBackToChannelPriority(t *testing.T) {
+	setModelWeightsForTest(t, `[{"channel_id":9,"model":"deepseek-v4.1-flash","priority":500}]`)
+
+	assert.Equal(t, int64(500), EffectiveModelPriority(9, "deepseek-v4.1-flash", 497), "override wins")
+	assert.Equal(t, int64(500), EffectiveModelPriority(9, "DeepSeek-V4.1-Flash", 497), "model match is case-insensitive")
+	assert.Equal(t, int64(497), EffectiveModelPriority(36, "deepseek-v4.1-flash", 497), "missing override falls back")
+	assert.Equal(t, int64(497), EffectiveModelPriority(9, "glm-5.3-flash", 497), "other model falls back")
+}
+
+func TestEffectiveModelPriorityExplicitZeroIsNotAFallback(t *testing.T) {
+	setModelWeightsForTest(t, `[{"channel_id":9,"model":"glm-5.3-flash","priority":0}]`)
+	assert.Equal(t, int64(0), EffectiveModelPriority(9, "glm-5.3-flash", 500), "explicit zero overrides the channel priority")
+}
+
+func TestPriorityOverrideLeavesWeightAtChannelValue(t *testing.T) {
+	setModelWeightsForTest(t, `[{"channel_id":9,"model":"m","priority":600}]`)
+	assert.Equal(t, 7, EffectiveModelWeight(9, "m", 7))
+}
+
+func TestWeightOverrideLeavesPriorityAtChannelValue(t *testing.T) {
+	setModelWeightsForTest(t, `[{"channel_id":9,"model":"m","weight":5}]`)
+	assert.Equal(t, int64(500), EffectiveModelPriority(9, "m", 500))
+}
+
+func TestEffectiveModelPriorityIgnoresMalformedJSON(t *testing.T) {
+	setModelWeightsForTest(t, `{not json`)
+	assert.Equal(t, int64(9), EffectiveModelPriority(9, "deepseek-v4.1-flash", 9))
+}
+
+func TestModelWeightOverrideMergesPriorityAndWeight(t *testing.T) {
+	setModelWeightsForTest(t, `[{"channel_id":9,"model":"m","priority":500,"weight":50}]`)
+	assert.Equal(t, int64(500), EffectiveModelPriority(9, "m", 497))
+	assert.Equal(t, 50, EffectiveModelWeight(9, "m", 1))
+}
+
 func TestListModelWeightOverridesFiltersByChannel(t *testing.T) {
 	setModelWeightsForTest(t, `[{"channel_id":9,"model":"a","weight":1},{"channel_id":36,"model":"b","weight":2},{"channel_id":9,"model":"c","weight":3}]`)
 	got := ListModelWeightOverrides(9)
@@ -53,4 +88,14 @@ func TestValidateModelWeights(t *testing.T) {
 	assert.Error(t, ValidateModelWeights(`[{"channel_id":9,"model":"  ","weight":1}]`), "model required")
 	assert.Error(t, ValidateModelWeights(`[{"channel_id":9,"model":"a","weight":1000001}]`), "weight upper bound")
 	assert.Error(t, ValidateModelWeights(`[{"channel_id":9,"model":"a","weight":1},{"channel_id":9,"model":"A","weight":2}]`), "duplicate (channel, model) case-insensitive")
+}
+
+func TestValidateModelWeightsAcceptsPriority(t *testing.T) {
+	require.NoError(t, ValidateModelWeights(`[{"channel_id":9,"model":"a","priority":500}]`))
+	require.NoError(t, ValidateModelWeights(`[{"channel_id":9,"model":"a","priority":0}]`))
+	require.NoError(t, ValidateModelWeights(`[{"channel_id":9,"model":"a","priority":500,"weight":10}]`))
+
+	assert.Error(t, ValidateModelWeights(`[{"channel_id":9,"model":"a","priority":1000000001}]`), "priority upper bound")
+	assert.Error(t, ValidateModelWeights(`[{"channel_id":9,"model":"a","priority":-1}]`), "priority lower bound")
+	assert.Error(t, ValidateModelWeights(`[{"channel_id":9,"model":"a"}]`), "an entry must set a weight or a priority")
 }

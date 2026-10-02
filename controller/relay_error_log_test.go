@@ -4,6 +4,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -18,6 +21,63 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+// Relay records a pending (type=8) usage log before billing preparation runs.
+// An early rejection there - sensitive words, token estimation, pricing - must
+// still produce a terminal error log, otherwise the console shows the request
+// as pending until the stale sweeper rewrites it much later.
+func TestRelayFinalizesPendingLogWhenBillingPreparationRejects(t *testing.T) {
+	fixture := setupVirtualPoolE2EFixture(t, false, "round_robin", false)
+
+	previousConsumeEnabled := common.LogConsumeEnabled
+	previousInFlightEnabled := common.InFlightUsageLogEnabled
+	common.LogConsumeEnabled = true
+	common.InFlightUsageLogEnabled = true
+	t.Cleanup(func() {
+		common.LogConsumeEnabled = previousConsumeEnabled
+		common.InFlightUsageLogEnabled = previousInFlightEnabled
+	})
+	require.NoError(t, model.LOG_DB.AutoMigrate(&model.Log{}))
+
+	previousSensitiveWords := setting.SensitiveWords
+	previousCheckEnabled := setting.CheckSensitiveEnabled
+	previousPromptCheckEnabled := setting.CheckSensitiveOnPromptEnabled
+	setting.SensitiveWords = []string{"relay-pending-sensitive-word"}
+	setting.CheckSensitiveEnabled = true
+	setting.CheckSensitiveOnPromptEnabled = true
+	t.Cleanup(func() {
+		setting.SensitiveWords = previousSensitiveWords
+		setting.CheckSensitiveEnabled = previousCheckEnabled
+		setting.CheckSensitiveOnPromptEnabled = previousPromptCheckEnabled
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/chat/completions",
+		strings.NewReader(`{"model":"vpool-upstream-a","messages":[{"role":"user","content":"say relay-pending-sensitive-word"}],"max_tokens":1}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	fixture.router.ServeHTTP(recorder, request)
+
+	require.NotEqual(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "sensitive words detected")
+
+	requestIdMatch := regexp.MustCompile(`request id: ([A-Za-z0-9]+)`).FindStringSubmatch(recorder.Body.String())
+	require.Len(t, requestIdMatch, 2, "relay error response must carry the request id")
+
+	var stored model.Log
+	require.NoError(t, model.LOG_DB.Where("request_id = ?", requestIdMatch[1]).First(&stored).Error)
+	assert.Equal(t, model.LogTypeError, stored.Type)
+	assert.Contains(t, stored.Content, "sensitive words detected")
+	// The pending row already knew the selected channel; the early-return
+	// finalization must not clobber it with zero.
+	assert.Contains(t, []int{9401, 9402}, stored.ChannelId, "finalized row must keep the selected channel")
+
+	var pendingCount int64
+	require.NoError(t, model.LOG_DB.Model(&model.Log{}).Where("type = ?", model.LogTypePending).Count(&pendingCount).Error)
+	assert.Zero(t, pendingCount, "the pending row must be finalized in place")
+}
 
 func TestProcessChannelErrorUsesSnapshotWithoutLeakingChannelMetadata(t *testing.T) {
 	gin.SetMode(gin.TestMode)

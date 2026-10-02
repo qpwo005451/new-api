@@ -91,6 +91,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	defer func() {
 		if newAPIError != nil {
 			service.RecordRequestPolicyTermination(c, newAPIError)
+			if common.GetContextKeyInt(c, constant.ContextKeyPendingLogId) > 0 {
+				// Early returns never reached the retry loop, so the selected
+				// channel is only available from the request context. Passing it
+				// keeps the finalized row on the channel the pending row recorded.
+				recordRelayErrorLog(c, nil, types.ChannelError{
+					ChannelId: common.GetContextKeyInt(c, constant.ContextKeyChannelId),
+				}, newAPIError, false)
+			}
 			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
 			if newAPIError.GetErrorCode() == types.ErrorCodeRequestCancelled {
@@ -814,6 +822,52 @@ func waitTransientRetryBackoff(c *gin.Context, statusCode int, retryIndex int) b
 	}
 }
 
+func recordRelayErrorLog(c *gin.Context, relayInfo *relaycommon.RelayInfo, channelError types.ChannelError, err *types.NewAPIError, intermediateRetry bool) {
+	if c == nil || err == nil {
+		return
+	}
+	if !((constant.ErrorLogEnabled && types.IsRecordErrorLog(err)) ||
+		(!intermediateRetry && common.GetContextKeyInt(c, constant.ContextKeyPendingLogId) > 0)) {
+		return
+	}
+
+	userId := c.GetInt("id")
+	tokenName := c.GetString("token_name")
+	modelName := c.GetString("original_model")
+	tokenId := c.GetInt("token_id")
+	userGroup := c.GetString("group")
+	other := model.NewLogOther()
+	if c.Request != nil && c.Request.URL != nil {
+		other.SetPublic("request_path", c.Request.URL.Path)
+	}
+	other.SetPublic("error_type", err.GetErrorType())
+	other.SetPublic("error_code", err.GetErrorCode())
+	other.SetPublic("status_code", err.StatusCode)
+	service.AppendRelayLogAdminInfo(c, relayInfo, other)
+	// The fork keeps the channel identity, retry flags and the upstream error
+	// payload auditable; they belong to admin_info, not the user-visible level.
+	other.SetAdmin("channel_id", channelError.ChannelId)
+	other.SetAdmin("channel_name", c.GetString("channel_name"))
+	other.SetAdmin("channel_type", c.GetInt("channel_type"))
+	if intermediateRetry {
+		other.SetAdmin("intermediate_retry", true)
+	}
+	if err.GetErrorCode() == types.ErrorCodeRequestCancelled {
+		other.SetAdmin("cancelled_by_admin", true)
+	}
+	if upstreamError := err.GetUpstreamErrorInfo(); upstreamError != nil {
+		other.SetAdmin("upstream_error", upstreamError)
+	}
+	relaycommon.AppendResponsesDiagnosticsAdminInfo(c, err, other.AdminMap())
+	service.AppendTaskPluginContextAuditInfo(c, other)
+	startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
+	if startTime.IsZero() {
+		startTime = time.Now()
+	}
+	useTimeSeconds := int(time.Since(startTime).Seconds())
+	model.RecordErrorLog(c, userId, channelError.ChannelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
+}
+
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, relayInfo *relaycommon.RelayInfo, intermediateRetry bool) {
 	requestCancelled := err.GetErrorCode() == types.ErrorCodeRequestCancelled
 	if requestCancelled {
@@ -842,45 +896,7 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		}
 	}
 
-	if (constant.ErrorLogEnabled && types.IsRecordErrorLog(err)) ||
-		(!intermediateRetry && common.GetContextKeyInt(c, constant.ContextKeyPendingLogId) > 0) {
-		// 保存错误日志到mysql中
-		userId := c.GetInt("id")
-		tokenName := c.GetString("token_name")
-		modelName := c.GetString("original_model")
-		tokenId := c.GetInt("token_id")
-		userGroup := c.GetString("group")
-		other := model.NewLogOther()
-		if c.Request != nil && c.Request.URL != nil {
-			other.SetPublic("request_path", c.Request.URL.Path)
-		}
-		other.SetPublic("error_type", err.GetErrorType())
-		other.SetPublic("error_code", err.GetErrorCode())
-		other.SetPublic("status_code", err.StatusCode)
-		service.AppendRelayLogAdminInfo(c, relayInfo, other)
-		// The fork keeps the channel identity, retry flags and the upstream error
-		// payload auditable; they belong to admin_info, not the user-visible level.
-		other.SetAdmin("channel_id", channelError.ChannelId)
-		other.SetAdmin("channel_name", c.GetString("channel_name"))
-		other.SetAdmin("channel_type", c.GetInt("channel_type"))
-		if intermediateRetry {
-			other.SetAdmin("intermediate_retry", true)
-		}
-		if requestCancelled {
-			other.SetAdmin("cancelled_by_admin", true)
-		}
-		if upstreamError := err.GetUpstreamErrorInfo(); upstreamError != nil {
-			other.SetAdmin("upstream_error", upstreamError)
-		}
-		relaycommon.AppendResponsesDiagnosticsAdminInfo(c, err, other.AdminMap())
-		service.AppendTaskPluginContextAuditInfo(c, other)
-		startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
-		if startTime.IsZero() {
-			startTime = time.Now()
-		}
-		useTimeSeconds := int(time.Since(startTime).Seconds())
-		model.RecordErrorLog(c, userId, channelError.ChannelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
-	}
+	recordRelayErrorLog(c, relayInfo, channelError, err, intermediateRetry)
 
 }
 

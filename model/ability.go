@@ -103,18 +103,21 @@ func GetChannel(
 	}
 	channel := Channel{}
 	if len(abilities) > 0 {
-		// Randomly choose one
+		effectiveWeights := make(map[int]int, len(abilities))
 		weightSum := uint(0)
-		for _, ability_ := range abilities {
-			weightSum += ability_.Weight + 10
+		for _, ability := range abilities {
+			weight := operation_setting.EffectiveModelWeight(ability.ChannelId, model, int(ability.Weight))
+			if weight < 0 {
+				weight = 0
+			}
+			effectiveWeights[ability.ChannelId] = weight
+			weightSum += uint(weight) + 10
 		}
-		// Randomly choose one
 		weight := common.GetRandomInt(int(weightSum))
-		for _, ability_ := range abilities {
-			weight -= int(ability_.Weight) + 10
-			//log.Printf("weight: %d, ability weight: %d", weight, *ability_.Weight)
+		for _, ability := range abilities {
+			weight -= effectiveWeights[ability.ChannelId] + 10
 			if weight <= 0 {
-				channel.Id = ability_.ChannelId
+				channel.Id = ability.ChannelId
 				break
 			}
 		}

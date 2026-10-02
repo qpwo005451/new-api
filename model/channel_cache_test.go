@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -162,4 +163,31 @@ func TestGetRandomSatisfiedChannelSinglePassPriorityFallback(t *testing.T) {
 			assert.Equal(t, int64(100), channel.GetPriority())
 		})
 	}
+}
+
+func TestGetRandomSatisfiedChannelUsesPerModelWeightOverride(t *testing.T) {
+	setupChannelCacheTestDB(t)
+
+	channelA := &Channel{Name: "a", Status: common.ChannelStatusEnabled, Models: "shared-model", Group: "svip", Priority: common.GetPointer(int64(10))}
+	channelB := &Channel{Name: "b", Status: common.ChannelStatusEnabled, Models: "shared-model", Group: "svip", Priority: common.GetPointer(int64(10))}
+	require.NoError(t, DB.Create(channelA).Error)
+	require.NoError(t, DB.Create(channelB).Error)
+	require.NoError(t, channelA.UpdateAbilities(nil))
+	require.NoError(t, channelB.UpdateAbilities(nil))
+	InitChannelCache()
+
+	previous := operation_setting.GetModelWeightSetting().Weights
+	operation_setting.GetModelWeightSetting().Weights = `[{"channel_id":` + strconv.Itoa(channelB.Id) + `,"model":"shared-model","weight":100000}]`
+	t.Cleanup(func() { operation_setting.GetModelWeightSetting().Weights = previous })
+
+	picked := 0
+	for range 200 {
+		channel, err := GetRandomSatisfiedChannel("svip", "shared-model", 0, nil)
+		require.NoError(t, err)
+		require.NotNil(t, channel)
+		if channel.Id == channelB.Id {
+			picked++
+		}
+	}
+	assert.Greater(t, picked, 190, "the overridden channel must dominate selection")
 }

@@ -187,10 +187,13 @@ func GetRandomSatisfiedChannel(
 	// get the priority for the given retry number
 	var sumWeight = 0
 	var targetChannels []*Channel
+	effectiveWeights := make(map[int]int, len(channels))
 	for _, channelId := range channels {
 		if channel, ok := channelsIDM[channelId]; ok {
 			if channel.GetPriority() == targetPriority {
-				sumWeight += channel.GetWeight()
+				weight := operation_setting.EffectiveModelWeight(channel.Id, model, channel.GetWeight())
+				effectiveWeights[channel.Id] = weight
+				sumWeight += weight
 				targetChannels = append(targetChannels, channel)
 			}
 		} else {
@@ -224,7 +227,7 @@ func GetRandomSatisfiedChannel(
 
 	// Find a channel based on its weight
 	for _, channel := range targetChannels {
-		randomWeight -= channel.GetWeight()*smoothingFactor + smoothingAdjustment
+		randomWeight -= effectiveWeights[channel.Id]*smoothingFactor + smoothingAdjustment
 		if randomWeight < 0 {
 			return channel, nil
 		}

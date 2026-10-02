@@ -120,3 +120,33 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildRequestPolicyValidatesModelWeights(t *testing.T) {
+	base := func() map[string]string {
+		return map[string]string{
+			"RetryTimes":                                "3",
+			"AutomaticRetryStatusCodes":                 "500-599",
+			"AutomaticDisableStatusCodes":               "401,403,404,429",
+			"AutomaticDisableKeywords":                  "",
+			"AutomaticDisableChannelEnabled":            "false",
+			"AutomaticEnableChannelEnabled":             "false",
+			"CheckSensitiveEnabled":                     "false",
+			"CheckSensitiveOnPromptEnabled":             "false",
+			"SensitiveWords":                            "",
+			"ChannelDisableThreshold":                   "0",
+			"monitor_setting.auto_test_channel_enabled": "false",
+			"monitor_setting.auto_test_channel_minutes": "0",
+			"monitor_setting.channel_test_concurrency":  "1",
+			"monitor_setting.channel_test_mode":         "scheduled_all",
+			"model_weight_setting.weights":              `[{"channel_id":9,"model":"a","weight":1}]`,
+		}
+	}
+
+	_, err := BuildRequestPolicy(base())
+	require.NoError(t, err)
+
+	invalid := base()
+	invalid["model_weight_setting.weights"] = `[{"channel_id":0,"model":"a","weight":1}]`
+	_, err = BuildRequestPolicy(invalid)
+	require.Error(t, err)
+}

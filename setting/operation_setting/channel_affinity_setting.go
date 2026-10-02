@@ -1,6 +1,10 @@
 package operation_setting
 
-import "github.com/QuantumNous/new-api/setting/config"
+import (
+	"strings"
+
+	"github.com/QuantumNous/new-api/setting/config"
+)
 
 type ChannelAffinityKeySource struct {
 	Type string `json:"type"` // context_int, context_string, request_header, gjson
@@ -33,12 +37,39 @@ type ChannelAffinityRule struct {
 type ChannelAffinitySetting struct {
 	Enabled bool `json:"enabled"`
 	// Default for rules with SessionMode "inherit". Empty defaults to "prefer".
-	SessionMode           string                `json:"session_mode"`
+	SessionMode string `json:"session_mode"`
+	// Placement decides how a sticky session that has no binding yet picks its
+	// channel. "balanced" starts the session on the candidate carrying the fewest
+	// live sessions per unit of configured weight so the session split converges
+	// to the configured weights; "weighted" (default) keeps the plain weighted
+	// draw, where the binding is only written once a channel served the request.
+	Placement             string                `json:"placement"`
 	SwitchOnSuccess       bool                  `json:"switch_on_success"`
 	KeepOnChannelDisabled bool                  `json:"keep_on_channel_disabled"`
 	MaxEntries            int                   `json:"max_entries"`
 	DefaultTTLSeconds     int                   `json:"default_ttl_seconds"`
 	Rules                 []ChannelAffinityRule `json:"rules"`
+}
+
+const (
+	// ChannelAffinityPlacementBalanced starts a sticky session on the candidate
+	// with the fewest live sessions per unit of configured weight.
+	ChannelAffinityPlacementBalanced = "balanced"
+	// ChannelAffinityPlacementWeighted keeps the plain weighted draw.
+	ChannelAffinityPlacementWeighted = "weighted"
+)
+
+// EffectivePlacement resolves the placement mode for sticky sessions that have
+// no binding yet. Placement stays opt-in: an unset or unknown mode keeps the
+// plain weighted draw, so an unbound session is never pinned implicitly.
+func (s *ChannelAffinitySetting) EffectivePlacement() string {
+	if s == nil {
+		return ChannelAffinityPlacementWeighted
+	}
+	if strings.EqualFold(strings.TrimSpace(s.Placement), ChannelAffinityPlacementBalanced) {
+		return ChannelAffinityPlacementBalanced
+	}
+	return ChannelAffinityPlacementWeighted
 }
 
 // Keep Codex CLI passthrough aligned with upstream. Codex uses lower-case

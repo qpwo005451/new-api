@@ -28,6 +28,7 @@ const options = {
   RetryTimes: '2',
   'channel_affinity_setting.enabled': 'true',
   'channel_affinity_setting.session_mode': '',
+  'channel_affinity_setting.placement': '',
   'channel_affinity_setting.switch_on_success': 'false',
   'channel_affinity_setting.keep_on_channel_disabled': 'false',
   'channel_affinity_setting.max_entries': '100000',

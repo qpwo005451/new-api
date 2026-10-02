@@ -265,6 +265,50 @@ function AffinitySettings() {
       />
       <FormField
         control={form.control}
+        name='channel_affinity_setting.placement'
+        render={({ field }) => (
+          <FormItem className='mt-4'>
+            <FormLabel>{t('Session placement')}</FormLabel>
+            <FormControl>
+              <RadioGroup
+                aria-label={t('Session placement')}
+                value={field.value || 'weighted'}
+                onValueChange={field.onChange}
+                disabled={!enabled}
+                className='gap-2 sm:grid-cols-2'
+              >
+                {(['weighted', 'balanced'] as const).map((placement) => (
+                  <div key={placement} className='rounded-lg border'>
+                    <Label
+                      htmlFor={`global-placement-${placement}`}
+                      className='hover:bg-muted/30 flex h-full cursor-pointer items-start gap-3 rounded-lg px-4 py-3 font-normal'
+                    >
+                      <RadioGroupItem
+                        id={`global-placement-${placement}`}
+                        value={placement}
+                        onClick={() => field.onChange(placement)}
+                      />
+                      <span className='flex min-w-0 flex-col gap-1'>
+                        <span>{policyLabel(t, placement)}</span>
+                        <span className='text-muted-foreground text-xs font-normal'>
+                          {placement === 'balanced'
+                            ? t(
+                                'New sessions start on the channel with the fewest live sessions.'
+                              )
+                            : t('New sessions keep the configured weighted draw.')}
+                        </span>
+                      </span>
+                    </Label>
+                  </div>
+                ))}
+              </RadioGroup>
+            </FormControl>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+      <FormField
+        control={form.control}
         name='channel_affinity_setting.keep_on_channel_disabled'
         render={({ field }) => (
           <SettingsSwitchField

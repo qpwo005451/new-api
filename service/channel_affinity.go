@@ -773,6 +773,12 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 		if found {
 			return channelID, true
 		}
+		// The session has no binding yet: place it on the channel that carries
+		// the fewest live sessions per unit of weight, so sticky sessions spread
+		// over the configured weights instead of drifting with the weighted draw.
+		if placedChannelID, placed := PlaceChannelAffinitySession(c, setting, cacheKeyFull, modelName, usingGroup, ttlSeconds); placed {
+			return placedChannelID, true
+		}
 		return 0, false
 	}
 	return 0, false
@@ -907,7 +913,11 @@ func RecordChannelAffinity(c *gin.Context, channelID int) {
 	cache := getChannelAffinityCache()
 	if err := cache.SetWithTTL(cacheKey, channelID, time.Duration(ttlSeconds)*time.Second); err != nil {
 		common.SysError(fmt.Sprintf("channel affinity cache set failed: key=%s, err=%v", cacheKey, err))
+		return
 	}
+	// Keep load-aware placement aligned with the binding that is now enforced,
+	// including a failover that repinned the session on another channel.
+	rememberChannelAffinityPlacement(cacheKey, channelID, ttlSeconds)
 }
 
 type ChannelAffinityUsageCacheStats struct {

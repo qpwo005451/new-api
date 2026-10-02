@@ -15,6 +15,7 @@ export function createRoutingPolicySchema(t: TFunction) {
     channel_affinity_setting: z.object({
       enabled: z.boolean(),
       session_mode: z.enum(['', 'off', 'prefer', 'strict']),
+      placement: z.enum(['', 'balanced', 'weighted']),
       switch_on_success: z.boolean(),
       keep_on_channel_disabled: z.boolean(),
       max_entries: z.number().int().min(0),
@@ -53,6 +54,8 @@ export function routingPolicyFormValues(
       enabled: options['channel_affinity_setting.enabled'] === 'true',
       session_mode: (options['channel_affinity_setting.session_mode'] ||
         '') as RoutingPolicyFormValues['channel_affinity_setting']['session_mode'],
+      placement: (options['channel_affinity_setting.placement'] ||
+        '') as RoutingPolicyFormValues['channel_affinity_setting']['placement'],
       switch_on_success:
         options['channel_affinity_setting.switch_on_success'] === 'true',
       keep_on_channel_disabled:

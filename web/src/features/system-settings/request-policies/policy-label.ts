@@ -73,6 +73,10 @@ export function policyLabel(t: TFunction, value: string): string {
       return t('Prefer the original channel, allow switching')
     case 'strict':
       return t('Require the original channel')
+    case 'weighted':
+      return t('Weighted draw')
+    case 'balanced':
+      return t('Load aware')
     default:
       return value
   }

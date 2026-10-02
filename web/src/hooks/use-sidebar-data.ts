@@ -30,6 +30,7 @@ import {
   MessageSquare,
   PlugZap,
   Radio,
+  Route,
   ServerCog,
   Settings,
   ShieldCheck,
@@ -147,6 +148,11 @@ export function useSidebarData(): SidebarData {
             title: t('Model Availability'),
             url: '/model-monitor',
             icon: Gauge,
+          },
+          {
+            title: t('Routing Statistics'),
+            url: '/routing-stats',
+            icon: Route,
           },
           {
             title: t('Users'),

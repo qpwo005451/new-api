@@ -325,6 +325,8 @@ func SetApiRouter(router *gin.Engine) {
 		logRoute.GET("/channel_affinity_usage_cache", middleware.AdminAuth(), controller.GetChannelAffinityUsageCacheStats)
 		logRoute.GET("/model_health_cooldowns", middleware.AdminAuth(), controller.GetModelHealthCooldowns)
 		logRoute.POST("/model_health_cooldowns/reset", middleware.AdminAuth(), controller.ResetModelHealthCooldowns)
+		logRoute.GET("/routing_stats", middleware.AdminAuth(), controller.GetRoutingStats)
+		logRoute.GET("/channel_affinity_bindings", middleware.AdminAuth(), controller.GetChannelAffinityBindings)
 		logRoute.GET("/client_aliases", middleware.AdminAuth(), controller.GetLogClientAliases)
 		logRoute.PUT("/client_aliases", middleware.AdminAuth(), controller.UpdateLogClientAlias)
 		logRoute.GET("/search", middleware.AdminAuth(), controller.SearchAllLogs)

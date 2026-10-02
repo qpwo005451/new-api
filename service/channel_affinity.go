@@ -5,6 +5,7 @@ import (
 	"hash/fnv"
 	"maps"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -195,6 +196,153 @@ func GetChannelAffinityCacheStats() ChannelAffinityCacheStats {
 		CacheCapacity: mainCap,
 		CacheAlgo:     mainAlgo,
 	}
+}
+
+// ChannelAffinityBinding is one live session binding: the session identified by
+// its key hint and fingerprint is currently pinned to a channel.
+type ChannelAffinityBinding struct {
+	RuleName       string `json:"rule_name"`
+	ModelName      string `json:"model_name"`
+	UsingGroup     string `json:"using_group"`
+	KeyHint        string `json:"key_hint"`
+	KeyFingerprint string `json:"key_fingerprint"`
+	ChannelID      int    `json:"channel_id"`
+	// ChannelName is resolved by the API layer and stays empty when the channel
+	// no longer exists.
+	ChannelName string `json:"channel_name"`
+}
+
+type ChannelAffinityBindings struct {
+	Enabled bool `json:"enabled"`
+	// Total, Unknown and Truncated describe the whole cache, not the entries
+	// returned below.
+	Total     int                      `json:"total"`
+	Unknown   int                      `json:"unknown"`
+	Truncated bool                     `json:"truncated"`
+	Entries   []ChannelAffinityBinding `json:"entries"`
+}
+
+const (
+	// defaultChannelAffinityBindingLimit keeps the current binding list small
+	// enough for the admin page while covering every realistic session count.
+	defaultChannelAffinityBindingLimit = 500
+	maxChannelAffinityBindingLimit     = 5000
+)
+
+// parseChannelAffinityCacheKeySuffix splits a cache key back into the parts the
+// rule encoded into it. The session value is returned whole, because it may
+// itself contain the separator.
+func parseChannelAffinityCacheKeySuffix(rule operation_setting.ChannelAffinityRule, suffix string) (modelName, usingGroup, affinityValue string, ok bool) {
+	if rule.IncludeRuleName {
+		name, rest, found := strings.Cut(suffix, ":")
+		if !found || strings.TrimSpace(name) != strings.TrimSpace(rule.Name) {
+			return "", "", "", false
+		}
+		suffix = rest
+	}
+	if rule.IncludeModelName {
+		value, rest, found := strings.Cut(suffix, ":")
+		if !found {
+			return "", "", "", false
+		}
+		modelName, suffix = value, rest
+	}
+	if rule.IncludeUsingGroup {
+		value, rest, found := strings.Cut(suffix, ":")
+		if !found {
+			return "", "", "", false
+		}
+		usingGroup, suffix = value, rest
+	}
+	if suffix == "" {
+		return "", "", "", false
+	}
+	return modelName, usingGroup, suffix, true
+}
+
+// ListChannelAffinityBindings reports which channel every live session is
+// currently pinned to, so an operator can see how stickiness spreads traffic
+// right now. The session value is reduced to the same hint and fingerprint the
+// usage log stores.
+func ListChannelAffinityBindings(limit int) ChannelAffinityBindings {
+	setting := operation_setting.GetChannelAffinitySetting()
+	bindings := ChannelAffinityBindings{Enabled: setting.Enabled, Entries: []ChannelAffinityBinding{}}
+	if limit <= 0 {
+		limit = defaultChannelAffinityBindingLimit
+	}
+	if limit > maxChannelAffinityBindingLimit {
+		limit = maxChannelAffinityBindingLimit
+	}
+
+	ruleByName := make(map[string]operation_setting.ChannelAffinityRule, len(setting.Rules))
+	for _, rule := range setting.Rules {
+		name := strings.TrimSpace(rule.Name)
+		if name == "" || !rule.IncludeRuleName {
+			continue
+		}
+		ruleByName[name] = rule
+	}
+
+	cache := getChannelAffinityCache()
+	keys, err := cache.Keys()
+	if err != nil {
+		common.SysError(fmt.Sprintf("channel affinity cache list keys failed: err=%v", err))
+		keys = nil
+	}
+	bindings.Total = len(keys)
+
+	prefix := channelAffinityCacheNamespace + ":"
+	entries := make([]ChannelAffinityBinding, 0, min(len(keys), limit))
+	for _, key := range keys {
+		suffix, found := strings.CutPrefix(key, prefix)
+		if !found {
+			bindings.Unknown++
+			continue
+		}
+		ruleName, _, found := strings.Cut(suffix, ":")
+		rule, known := ruleByName[ruleName]
+		if !found || !known {
+			bindings.Unknown++
+			continue
+		}
+		modelName, usingGroup, affinityValue, ok := parseChannelAffinityCacheKeySuffix(rule, suffix)
+		if !ok {
+			bindings.Unknown++
+			continue
+		}
+		channelID, bound, err := cache.Get(suffix)
+		if err != nil || !bound {
+			bindings.Unknown++
+			continue
+		}
+		entries = append(entries, ChannelAffinityBinding{
+			RuleName:       ruleName,
+			ModelName:      modelName,
+			UsingGroup:     usingGroup,
+			KeyHint:        buildChannelAffinityKeyHint(affinityValue),
+			KeyFingerprint: affinityFingerprint(affinityValue),
+			ChannelID:      channelID,
+		})
+	}
+
+	slices.SortFunc(entries, func(a, b ChannelAffinityBinding) int {
+		if a.RuleName != b.RuleName {
+			return strings.Compare(a.RuleName, b.RuleName)
+		}
+		if a.ModelName != b.ModelName {
+			return strings.Compare(a.ModelName, b.ModelName)
+		}
+		if a.UsingGroup != b.UsingGroup {
+			return strings.Compare(a.UsingGroup, b.UsingGroup)
+		}
+		return strings.Compare(a.KeyFingerprint, b.KeyFingerprint)
+	})
+	if len(entries) > limit {
+		entries = entries[:limit]
+		bindings.Truncated = true
+	}
+	bindings.Entries = entries
+	return bindings
 }
 
 func ClearChannelAffinityCacheAll() int {

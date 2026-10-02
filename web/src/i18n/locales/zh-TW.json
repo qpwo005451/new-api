@@ -7034,6 +7034,14 @@
     "{{count}} observations": "{{count}} 条观测",
     "{{duration}} ms total duration": "总耗时 {{duration}} ms",
     "{{family}} · {{billing}} · {{time}}": "{{family}} · {{billing}} · {{time}}",
-    "{{score}} score · {{channels}} channels · {{models}} models": "{{score}} 分 · {{channels}} 个渠道 · {{models}} 个模型"
+    "{{score}} score · {{channels}} channels · {{models}} models": "{{score}} 分 · {{channels}} 个渠道 · {{models}} 个模型",
+    "Add override": "新增覆寫",
+    "Explicit 0 excludes the model on this channel.": "明確設為 0 表示該模型在此渠道上不參與分配。",
+    "Model Weights": "模型權重",
+    "No overrides yet. Click \"Add override\" to create one.": "尚無覆寫項目。點擊「新增覆寫」建立。",
+    "Overrides the channel weight for one model only. Higher weight = more requests.": "僅覆寫單一模型在此渠道上的權重。權重越高，請求越多。",
+    "Per-model channel weight": "單模型渠道權重",
+    "Select a channel": "選擇渠道",
+    "Unset models keep the channel weight.": "未設定的模型沿用渠道權重。"
   }
 }

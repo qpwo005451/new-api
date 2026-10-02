@@ -7034,6 +7034,14 @@
     "{{count}} observations": "{{count}} 条观测",
     "{{duration}} ms total duration": "总耗时 {{duration}} ms",
     "{{family}} · {{billing}} · {{time}}": "{{family}} · {{billing}} · {{time}}",
-    "{{score}} score · {{channels}} channels · {{models}} models": "{{score}} 分 · {{channels}} 个渠道 · {{models}} 个模型"
+    "{{score}} score · {{channels}} channels · {{models}} models": "{{score}} 分 · {{channels}} 个渠道 · {{models}} 个模型",
+    "Add override": "Add override",
+    "Explicit 0 excludes the model on this channel.": "Explicit 0 excludes the model on this channel.",
+    "Model Weights": "Model Weights",
+    "No overrides yet. Click \"Add override\" to create one.": "No overrides yet. Click \"Add override\" to create one.",
+    "Overrides the channel weight for one model only. Higher weight = more requests.": "Overrides the channel weight for one model only. Higher weight = more requests.",
+    "Per-model channel weight": "Per-model channel weight",
+    "Select a channel": "Select a channel",
+    "Unset models keep the channel weight.": "Unset models keep the channel weight."
   }
 }

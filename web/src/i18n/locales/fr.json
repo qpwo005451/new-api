@@ -7034,6 +7034,14 @@
     "{{count}} observations": "{{count}} 条观测",
     "{{duration}} ms total duration": "总耗时 {{duration}} ms",
     "{{family}} · {{billing}} · {{time}}": "{{family}} · {{billing}} · {{time}}",
-    "{{score}} score · {{channels}} channels · {{models}} models": "{{score}} 分 · {{channels}} 个渠道 · {{models}} 个模型"
+    "{{score}} score · {{channels}} channels · {{models}} models": "{{score}} 分 · {{channels}} 个渠道 · {{models}} 个模型",
+    "Add override": "Ajouter un remplacement",
+    "Explicit 0 excludes the model on this channel.": "Un 0 explicite exclut le modèle de ce canal.",
+    "Model Weights": "Poids des modèles",
+    "No overrides yet. Click \"Add override\" to create one.": "Aucun remplacement pour le moment. Cliquez sur « Ajouter un remplacement » pour en créer un.",
+    "Overrides the channel weight for one model only. Higher weight = more requests.": "Remplace le poids du canal pour un seul modèle. Un poids plus élevé signifie plus de requêtes.",
+    "Per-model channel weight": "Poids du canal par modèle",
+    "Select a channel": "Sélectionner un canal",
+    "Unset models keep the channel weight.": "Les modèles non définis conservent le poids du canal."
   }
 }

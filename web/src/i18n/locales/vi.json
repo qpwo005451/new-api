@@ -7034,6 +7034,14 @@
     "{{count}} observations": "{{count}} 条观测",
     "{{duration}} ms total duration": "总耗时 {{duration}} ms",
     "{{family}} · {{billing}} · {{time}}": "{{family}} · {{billing}} · {{time}}",
-    "{{score}} score · {{channels}} channels · {{models}} models": "{{score}} 分 · {{channels}} 个渠道 · {{models}} 个模型"
+    "{{score}} score · {{channels}} channels · {{models}} models": "{{score}} 分 · {{channels}} 个渠道 · {{models}} 个模型",
+    "Add override": "Thêm ghi đè",
+    "Explicit 0 excludes the model on this channel.": "Giá trị 0 rõ ràng sẽ loại mô hình khỏi kênh này.",
+    "Model Weights": "Trọng số mô hình",
+    "No overrides yet. Click \"Add override\" to create one.": "Chưa có ghi đè nào. Nhấp vào \"Thêm ghi đè\" để tạo.",
+    "Overrides the channel weight for one model only. Higher weight = more requests.": "Ghi đè trọng số kênh chỉ cho một mô hình. Trọng số càng cao, càng nhiều yêu cầu.",
+    "Per-model channel weight": "Trọng số kênh theo mô hình",
+    "Select a channel": "Chọn một kênh",
+    "Unset models keep the channel weight.": "Các mô hình chưa đặt vẫn dùng trọng số kênh."
   }
 }

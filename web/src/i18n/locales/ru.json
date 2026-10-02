@@ -7034,6 +7034,14 @@
     "{{count}} observations": "{{count}} 条观测",
     "{{duration}} ms total duration": "总耗时 {{duration}} ms",
     "{{family}} · {{billing}} · {{time}}": "{{family}} · {{billing}} · {{time}}",
-    "{{score}} score · {{channels}} channels · {{models}} models": "{{score}} 分 · {{channels}} 个渠道 · {{models}} 个模型"
+    "{{score}} score · {{channels}} channels · {{models}} models": "{{score}} 分 · {{channels}} 个渠道 · {{models}} 个模型",
+    "Add override": "Добавить переопределение",
+    "Explicit 0 excludes the model on this channel.": "Явный 0 исключает модель из этого канала.",
+    "Model Weights": "Веса моделей",
+    "No overrides yet. Click \"Add override\" to create one.": "Переопределений пока нет. Нажмите «Добавить переопределение», чтобы создать.",
+    "Overrides the channel weight for one model only. Higher weight = more requests.": "Переопределяет вес канала только для одной модели. Чем выше вес, тем больше запросов.",
+    "Per-model channel weight": "Вес канала для модели",
+    "Select a channel": "Выберите канал",
+    "Unset models keep the channel weight.": "Для моделей без настройки используется вес канала."
   }
 }

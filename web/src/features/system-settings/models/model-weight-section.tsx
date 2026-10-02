@@ -204,6 +204,9 @@ export function ModelWeightSection(props: Props) {
 
   return (
     <SettingsSection title={t('Model Weights')}>
+      <p className='text-muted-foreground text-sm font-medium'>
+        {t('Per-model channel weight')}
+      </p>
       <p className='text-muted-foreground text-sm'>
         {t(
           'Overrides the channel weight for one model only. Higher weight = more requests.'

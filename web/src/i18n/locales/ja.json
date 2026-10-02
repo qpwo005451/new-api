@@ -7034,6 +7034,14 @@
     "{{count}} observations": "{{count}} 条观测",
     "{{duration}} ms total duration": "总耗时 {{duration}} ms",
     "{{family}} · {{billing}} · {{time}}": "{{family}} · {{billing}} · {{time}}",
-    "{{score}} score · {{channels}} channels · {{models}} models": "{{score}} 分 · {{channels}} 个渠道 · {{models}} 个模型"
+    "{{score}} score · {{channels}} channels · {{models}} models": "{{score}} 分 · {{channels}} 个渠道 · {{models}} 个模型",
+    "Add override": "上書きを追加",
+    "Explicit 0 excludes the model on this channel.": "明示的に 0 を指定すると、このチャネルではそのモデルが除外されます。",
+    "Model Weights": "モデル重み",
+    "No overrides yet. Click \"Add override\" to create one.": "上書きはまだありません。「上書きを追加」をクリックして作成してください。",
+    "Overrides the channel weight for one model only. Higher weight = more requests.": "1つのモデルについてのみチャネル重みを上書きします。重みが大きいほどリクエストが増えます。",
+    "Per-model channel weight": "モデル別チャネル重み",
+    "Select a channel": "チャネルを選択",
+    "Unset models keep the channel weight.": "設定されていないモデルはチャネル重みを使用します。"
   }
 }

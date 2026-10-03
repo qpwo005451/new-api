@@ -3848,6 +3848,14 @@ export function ChannelsPage() {
 
 `web/src/mobile/app.tsx`：把兜底面板替换为 `{activeTab === 'channels' ? <ChannelsPage /> : null}`。
 
+**Task 11 review 追加要求（控制器裁决）**：
+
+1. `ConfirmDialog` 要传 `isLoading={toggle.isPending}`，避免写入进行中重复点击发出重复 POST（`@/components/confirm-dialog.tsx` 支持该 prop）。
+2. 渠道列表查询加 `placeholderData: keepPreviousData`：搜索框每次按键都会换 queryKey，否则列表在输入期间被 `MobileLoading` 顶掉、输入体验碎裂。
+3. `ChannelListResult` 的 `page`/`page_size` 设为可选：`/api/channel/search` 只返回 `items/total/type_counts`，没有分页字段。
+4. 写入失败时对 401（`ApiError.code === 'unauthorized'`，`api-client.ts` 会 `clearPat()`）给专门文案（例如需要重新粘贴令牌），不要只给通用失败文案。
+5. 测试补：状态 chip 的请求参数（`Enabled` 发 `status=1`、`Disabled` 发 `status=0`、`All` 省略 `status`）、写入成功后列表会重新拉取、写入进行中不能重复提交。
+
 **`toast` 需要在手机端挂载 `<Toaster />`（否则 `toast.success`/`toast.error` 是静默空操作）**：在 `web/src/mobile/providers.tsx` 里从 **`sonner` 直接**引入并渲染：
 
 ```tsx
@@ -3862,6 +3870,12 @@ return (
 ```
 
 **不要**用 `@/components/ui/sonner`：那个包装层会引入 `@hugeicons/core-free-icons`、`@hugeicons/react` 与 `@/context/theme-provider`（桌面主题），把手机首屏拖大（Global Constraints 的禁用依赖口径）。
+
+**手机端只能挂一个 `<Toaster />`（Task 11 review Important-1/2）**：`web/src/mobile/main.tsx` 从 Task 3 起就挂了 `@/components/ui/sonner` 的桌面包装 Toaster，它把 `@hugeicons/*`（图标 path 数据）与 `@/context/theme-provider` 带进首屏；本次又在 `providers.tsx` 挂了明文 `sonner` 的 Toaster。两个实例都会订阅全局 ToastState 并渲染同一个 toast（默认位置相同），成功/失败反馈会叠成两份、样式还不一致。因此：
+
+- 删掉 `main.tsx` 里的 `import { Toaster } from '@/components/ui/sonner'` 与 `<Toaster />`（`main.tsx` 只保留 `MobileApp`/`MobileProviders`/`initializeMobileI18n` 的接线）；
+- 只保留 `providers.tsx` 中从 `sonner` 直接引入的那个；
+- 复测首屏时**不能用包名字符串**做判据（内联后 `@hugeicons` 字样会消失），要用符号/路径数据，例如 `grep -c 'HugeiconsIcon\|CheckmarkCircle02Icon\|theme-provider' mobile-dist/static/js/<首屏 chunk>` 必须为 0，并对比删除前后的 gzip 总量。
 
 - [ ] **Step 4: 运行测试确认通过**
 

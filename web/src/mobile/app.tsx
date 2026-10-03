@@ -20,11 +20,14 @@ import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
 import { MobileLoading } from '@/mobile/components/mobile-loading'
+import { MobileTabBar } from '@/mobile/components/mobile-tab-bar'
 import { PatGate } from '@/mobile/components/pat-gate'
+import { useActiveTab } from '@/mobile/lib/router'
 import { mobileStatusQueryOptions } from '@/mobile/lib/status'
 
 export function MobileApp() {
   const { t } = useTranslation()
+  const [activeTab, selectTab] = useActiveTab()
   // formatQuotaWithCurrency and the other money helpers read the currency
   // settings from the system-config store, which /api/status hydrates. Without
   // this query every amount would be rendered with the USD defaults.
@@ -36,11 +39,13 @@ export function MobileApp() {
 
   return (
     <PatGate onReady={() => {}}>
-      <main className='bg-background text-foreground min-h-dvh'>
+      <main className='min-h-dvh bg-background pb-16 text-foreground'>
         <header className='px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-2'>
           <h1 className='text-lg font-semibold'>{t('Mobile console')}</h1>
         </header>
+        <section data-testid='mobile-panel' data-tab={activeTab} />
       </main>
+      <MobileTabBar active={activeTab} onChange={selectTab} />
     </PatGate>
   )
 }

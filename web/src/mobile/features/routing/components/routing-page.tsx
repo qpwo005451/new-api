@@ -234,21 +234,32 @@ export function RoutingPage() {
         <h2 className='px-3 py-1 text-sm font-medium'>
           {t('Sticky sessions')}
         </h2>
+        <ValueRow
+          label={t('Sticky sessions')}
+          value={formatNumber(stickyRequests, locale)}
+          secondary={
+            typeof affinity.data?.total === 'number'
+              ? `${formatNumber(affinity.data.total, locale)} ${t('keys')}`
+              : undefined
+          }
+        />
+        {affinityRows.length > 0 ? (
+          <div className='divide-y'>
+            {affinityRows.map((rule) => (
+              <ValueRow
+                key={rule.rule_name}
+                label={rule.rule_name}
+                value={`${formatNumber(rule.sticky_requests, locale)} ${t('requests')}`}
+                secondary={`${formatNumber(rule.distinct_keys, locale)} ${t('keys')}`}
+              />
+            ))}
+          </div>
+        ) : null}
         {affinity.isError ? (
           <p className='text-muted-foreground px-3 py-2 text-xs'>
             {t('Affinity bindings are unavailable.')}
           </p>
-        ) : (
-          <ValueRow
-            label={t('Sticky sessions')}
-            value={formatNumber(stickyRequests, locale)}
-            secondary={
-              typeof affinity.data?.total === 'number'
-                ? `${formatNumber(affinity.data.total, locale)} ${t('keys')}`
-                : undefined
-            }
-          />
-        )}
+        ) : null}
       </section>
 
       <section>

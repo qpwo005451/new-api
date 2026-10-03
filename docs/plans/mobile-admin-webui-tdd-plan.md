@@ -4836,7 +4836,31 @@ FIRST_SCREEN_GZIP_TOTAL=145680        (预算 153600，余量 7920)
 
 **遗留与说明**
 
-1. **`routing_stats.affinity_by_rule` 仍未渲染**（Task 10 已记录的欠账，本次由浏览器确认）：页面的「粘滞会话」区块读的是 `/api/log/channel_affinity_bindings`（本次为空 → 显示 0 个键），而 `routing_stats` 里已有的 `affinity_by_rule`（本次种入了 `affinity-a`）不会出现在界面上。要让「按规则」的粘滞分布可见，需要把该字段接到该区块。
+1. **`routing_stats.affinity_by_rule` 的「按规则」明细未渲染**（Task 10 已记录的欠账，本次由浏览器确认）：该区块当时只用 `affinity_by_rule` 的和值当 KPI，并读 `/api/log/channel_affinity_bindings` 取键总数（本次为空 → 显示 0 个键），所以种入的 `affinity-a` 规则名不会出现在界面上。 **→ 已修复，见附录 E。**
 2. **PAT 生成需要 2FA 安全验证**：`POST /api/user/token` 返回 `SECURITY_PROOF_REQUIRED`（需要 `X-Security-Proof` 头），因此本次冒烟的 PAT 是直接写入数据库的。这不是手机端的问题（v1 不做 2FA），但意味着**全新实例上必须先配置二次验证才能生成手机端要粘贴的 PAT**，建议在文档/交付说明里注明。
 3. **截图中的方块字是测试环境字体缺失**，与产品无关：本机原先没有 CJK 字体，已装 `~/.local/share/fonts/NotoSansSC-Regular.otf` 后中文正常渲染（截图即安装后的结果）。
 4. 第 11 步（en-US 语境）首次运行时 `#mobile-pat` 等待超时，单独复现为通过、随后全量重跑 38/38 通过 —— 判定为一次偶发（新建 context 与上一步导航竞争），非产品缺陷。
+
+---
+
+## 附录 E. 路由页粘滞规则明细（2026-10-04）
+
+附录 D 发现的欠账：路由统计页把 `routing_stats.affinity_by_rule` 的和值当 KPI 用，但**按规则**的明细从不渲染，操作员看不到是哪条绑定规则在起作用。
+
+**改动**
+- `web/src/mobile/features/routing/components/routing-page.tsx`：「粘滞会话」区块在合计行下渲染每条规则的 `ValueRow` —— label 为 `rule_name`，value 为 `<N> requests`，secondary 为 `<M> keys`。数据仍取自 `/api/log/routing_stats` 的 `affinity_by_rule`（`affinityRows` 此前已提取，只是没渲染）；`/api/log/channel_affinity_bindings` 继续提供键总数与「Affinity bindings are unavailable.」提示。
+- 新增 i18n key `requests`（7 个语言：zh「请求」/ zh-TW「請求」/ fr「requêtes」/ ru「запросов」/ ja「リクエスト」/ vi「yêu cầu」），手机端 key 集合 86 → **87**（48 字面量 + 30 间接）。
+- `web/src/mobile/features/routing/components/__tests__/routing-page.test.tsx`：新增用例「lists the sticky requests per affinity rule」——断言规则名、`7 requests`、`2 keys` 同时出现（修复前该用例失败）。
+
+**验证**
+
+| 项 | 结果 |
+| --- | --- |
+| `bun run test -- src/mobile/features/routing` | **11/11 passed**（新增用例先 RED 后 GREEN） |
+| `bun run test -- src/mobile` | **24 files / 115 tests passed** |
+| `bun run test`（全量） | **203 files / 2290 tests passed** |
+| `bun run typecheck` / `oxlint src/mobile` / `oxfmt --check` | 均通过（lint 仍只有 `main.tsx:28` 那条既存 warning） |
+| `bun run mobile:locales` | 87 keys，fail-fast 通过（新 key 已进 7 个语言） |
+| `bun run i18n:sync` | 无待同步项（新增 key 后重跑通过） |
+| `bun run build:mobile` + 首屏 gzip | **145,730 B**（预算 153,600；新增行逻辑 +50 B） |
+| 浏览器冒烟（附录 D 脚本，重建后端后重跑） | **38/38 passed**，新增检查 `routing lists the per-rule sticky breakdown :: affinity-a` 通过；截图见 `artifacts/shots/05-routing.png`（可见 `affinity-a  1 请求 / 1 个键`） |

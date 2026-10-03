@@ -264,6 +264,40 @@ describe('RoutingPage', () => {
     ).toHaveLength(1)
   })
 
+  it('lists the sticky requests per affinity rule', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (String(url).startsWith('/api/log/routing_stats')) {
+          return jsonResponse({
+            success: true,
+            data: {
+              ...routingStats,
+              affinity_by_rule: [
+                {
+                  rule_name: 'rule-alpha',
+                  sticky_requests: 7,
+                  distinct_keys: 2,
+                },
+              ],
+            },
+          })
+        }
+        return jsonResponse({ success: true, data: { entries: [], total: 5 } })
+      })
+    )
+
+    renderPage()
+
+    // The per-rule breakdown comes from routing_stats; without it only the
+    // summed KPI is visible and the rule name never reaches the operator.
+    await waitFor(() =>
+      expect(screen.getByText('rule-alpha')).toBeInTheDocument()
+    )
+    expect(screen.getByText('7 requests')).toBeInTheDocument()
+    expect(screen.getByText('2 keys')).toBeInTheDocument()
+  })
+
   it('shows an empty state when the window has no routing rows', async () => {
     vi.stubGlobal(
       'fetch',

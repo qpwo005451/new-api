@@ -22,10 +22,12 @@ import { useTranslation } from 'react-i18next'
 import { MobileLoading } from '@/mobile/components/mobile-loading'
 import { MobileTabBar } from '@/mobile/components/mobile-tab-bar'
 import { PatGate } from '@/mobile/components/pat-gate'
+import { PullToRefresh } from '@/mobile/components/pull-to-refresh'
 import { ChannelsPage } from '@/mobile/features/channels/components/channels-page'
 import { ModelsPage } from '@/mobile/features/models/components/models-page'
 import { RoutingPage } from '@/mobile/features/routing/components/routing-page'
 import { UsagePage } from '@/mobile/features/usage/components/usage-page'
+import { mobileQueryClient } from '@/mobile/lib/query-client'
 import { useActiveTab } from '@/mobile/lib/router'
 import { mobileStatusQueryOptions } from '@/mobile/lib/status'
 
@@ -41,17 +43,41 @@ export function MobileApp() {
     return <MobileLoading />
   }
 
+  // Every mobile feature keys its queries under ['mobile', ...], so one prefix
+  // invalidates the four tabs without racing their in-flight requests.
+  const refreshAll = () =>
+    mobileQueryClient.invalidateQueries({ queryKey: ['mobile'] })
+
+  const openDesktopConsole = () => {
+    // The backend reads this cookie on the next load and serves the desktop
+    // shell instead of redirecting back to /m (see router/web-router.go).
+    document.cookie =
+      'newapi_prefer_desktop=1; path=/; max-age=31536000; samesite=lax'
+    window.location.href = '/'
+  }
+
   return (
     <PatGate onReady={() => {}}>
-      <main className='bg-background text-foreground min-h-dvh pb-16'>
-        <header className='px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-2'>
-          <h1 className='text-lg font-semibold'>{t('Mobile console')}</h1>
-        </header>
-        {activeTab === 'usage' ? <UsagePage /> : null}
-        {activeTab === 'models' ? <ModelsPage /> : null}
-        {activeTab === 'routing' ? <RoutingPage /> : null}
-        {activeTab === 'channels' ? <ChannelsPage /> : null}
-      </main>
+      <PullToRefresh onRefresh={refreshAll}>
+        <main className='bg-background text-foreground min-h-dvh pb-[calc(4rem+env(safe-area-inset-bottom))]'>
+          <header className='px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-2'>
+            <h1 className='text-lg font-semibold'>{t('Mobile console')}</h1>
+          </header>
+          {activeTab === 'usage' ? <UsagePage /> : null}
+          {activeTab === 'models' ? <ModelsPage /> : null}
+          {activeTab === 'routing' ? <RoutingPage /> : null}
+          {activeTab === 'channels' ? <ChannelsPage /> : null}
+          <div className='px-3 pb-2'>
+            <button
+              type='button'
+              className='text-muted-foreground text-xs underline'
+              onClick={openDesktopConsole}
+            >
+              {t('Desktop version')}
+            </button>
+          </div>
+        </main>
+      </PullToRefresh>
       <MobileTabBar active={activeTab} onChange={selectTab} />
     </PatGate>
   )

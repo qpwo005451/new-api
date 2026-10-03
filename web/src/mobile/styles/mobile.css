@@ -36,3 +36,10 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+@media (display-mode: standalone) {
+  /* Installed consoles have no browser chrome, so the top inset must come from the header itself. */
+  header {
+    padding-top: max(1rem, env(safe-area-inset-top, 0px));
+  }
+}

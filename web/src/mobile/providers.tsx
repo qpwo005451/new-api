@@ -20,19 +20,30 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 import { Toaster } from 'sonner'
 
+import { ThemeProvider, useTheme } from '@/context/theme-provider'
 import { mobileQueryClient } from '@/mobile/lib/query-client'
 
 interface MobileProvidersProps {
   children: ReactNode
 }
 
+// Must render inside ThemeProvider: the mobile console follows the resolved
+// system/desktop preference, so a dark system gets dark toasts.
+function ThemedToaster() {
+  const { resolvedTheme } = useTheme()
+
+  return <Toaster theme={resolvedTheme} />
+}
+
 export function MobileProviders(props: MobileProvidersProps) {
   return (
     <QueryClientProvider client={mobileQueryClient}>
-      {props.children}
-      {/* Plain sonner, not @/components/ui/sonner: that wrapper pulls
-          @hugeicons/* and the desktop theme provider into the mobile bundle. */}
-      <Toaster />
+      <ThemeProvider>
+        {props.children}
+        {/* Plain sonner, not @/components/ui/sonner: that wrapper pulls
+            @hugeicons/* and the desktop theme provider into the mobile bundle. */}
+        <ThemedToaster />
+      </ThemeProvider>
     </QueryClientProvider>
   )
 }

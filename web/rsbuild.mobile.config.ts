@@ -33,6 +33,12 @@ export default defineConfig(({ envMode }) => {
       // them straight from web/mobile-dist.
       assetPrefix: '/m',
       distPath: { root: 'mobile-dist' },
+      // `server.publicDir` only accepts options objects; passing the
+      // mobile-only directory as a plain string is ignored and `public/` keeps
+      // being copied. Copy public-mobile explicitly instead so the PWA
+      // manifest lands at the dist root (served as /m/manifest.webmanifest)
+      // while public/ still provides favicon.ico and the shared images.
+      copy: [{ from: './public-mobile', to: '.' }],
     },
   }
 })

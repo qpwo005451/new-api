@@ -83,7 +83,11 @@ export interface PagedResult<T> {
   page_size: number
 }
 
-export type AvailabilityHealth = 'normal' | 'degraded' | 'unavailable' | 'unknown'
+export type AvailabilityHealth =
+  | 'normal'
+  | 'degraded'
+  | 'unavailable'
+  | 'unknown'
 
 export interface MonitorSiteModel {
   model_name: string
@@ -199,3 +203,22 @@ export interface AvailabilityRow {
   latestErrorSummary?: string
   stale: boolean
 }
+
+export interface ChannelRow {
+  id: number
+  name: string
+  type: number
+  status: number
+  group: string
+  balance: number
+  used_quota: number
+  priority: number
+  weight: number
+}
+
+export interface ChannelFilters {
+  name: string
+  statusFilter: number
+}
+
+export type ChannelListResult = PagedResult<ChannelRow>

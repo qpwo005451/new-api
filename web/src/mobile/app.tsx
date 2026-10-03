@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next'
 import { MobileLoading } from '@/mobile/components/mobile-loading'
 import { MobileTabBar } from '@/mobile/components/mobile-tab-bar'
 import { PatGate } from '@/mobile/components/pat-gate'
+import { ChannelsPage } from '@/mobile/features/channels/components/channels-page'
 import { ModelsPage } from '@/mobile/features/models/components/models-page'
 import { RoutingPage } from '@/mobile/features/routing/components/routing-page'
 import { UsagePage } from '@/mobile/features/usage/components/usage-page'
@@ -42,16 +43,14 @@ export function MobileApp() {
 
   return (
     <PatGate onReady={() => {}}>
-      <main className='min-h-dvh bg-background pb-16 text-foreground'>
+      <main className='bg-background text-foreground min-h-dvh pb-16'>
         <header className='px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-2'>
           <h1 className='text-lg font-semibold'>{t('Mobile console')}</h1>
         </header>
         {activeTab === 'usage' ? <UsagePage /> : null}
         {activeTab === 'models' ? <ModelsPage /> : null}
         {activeTab === 'routing' ? <RoutingPage /> : null}
-        {activeTab === 'channels' ? (
-          <section data-testid='mobile-panel' data-tab={activeTab} />
-        ) : null}
+        {activeTab === 'channels' ? <ChannelsPage /> : null}
       </main>
       <MobileTabBar active={activeTab} onChange={selectTab} />
     </PatGate>

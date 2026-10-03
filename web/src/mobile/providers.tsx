@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
+import { Toaster } from 'sonner'
 
 import { mobileQueryClient } from '@/mobile/lib/query-client'
 
@@ -26,5 +27,12 @@ interface MobileProvidersProps {
 }
 
 export function MobileProviders(props: MobileProvidersProps) {
-  return <QueryClientProvider client={mobileQueryClient}>{props.children}</QueryClientProvider>
+  return (
+    <QueryClientProvider client={mobileQueryClient}>
+      {props.children}
+      {/* Plain sonner, not @/components/ui/sonner: that wrapper pulls
+          @hugeicons/* and the desktop theme provider into the mobile bundle. */}
+      <Toaster />
+    </QueryClientProvider>
+  )
 }

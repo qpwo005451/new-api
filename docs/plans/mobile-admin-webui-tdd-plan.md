@@ -3310,7 +3310,7 @@ export function MiniBar(props: MiniBarProps) {
 `web/src/mobile/features/routing/api.ts`：
 
 ```ts
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 
 import { mobileApiGet } from '@/mobile/lib/api-client'
 import { MOBILE_STALE_TIME } from '@/mobile/lib/query-client'

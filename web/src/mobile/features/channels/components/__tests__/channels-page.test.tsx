@@ -24,6 +24,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ChannelsPage } from '@/mobile/features/channels/components/channels-page'
 import { mobileQueryClient } from '@/mobile/lib/query-client'
+import type { ChannelListResult } from '@/mobile/types'
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -50,6 +51,11 @@ const CHANNEL = {
   priority: 0,
   weight: 10,
 }
+
+// `/api/channel/search` answers with `items`/`total`/`type_counts` only, so the
+// result type has to tolerate a response without the pagination fields. This
+// assignment is checked by `bun run typecheck`.
+const SEARCH_PAGE: ChannelListResult = { items: [CHANNEL], total: 1 }
 
 function renderPage() {
   render(
@@ -196,8 +202,169 @@ describe('ChannelsPage', () => {
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   })
 
-  it('filters the list by channel name', async () => {
+  it('sends the server status values for every filter chip', async () => {
     const fetchMock = vi.fn(async (_url: string) => listResponse([CHANNEL]))
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+
+    renderPage()
+    await waitFor(() =>
+      expect(screen.getByText('primary-openai')).toBeInTheDocument()
+    )
+
+    // `All` is the initial chip; the list request must not filter by status.
+    expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain('status=')
+
+    await user.click(screen.getByRole('button', { name: 'Enabled' }))
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([url]) => String(url).includes('status=1'))
+      ).toBe(true)
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Disabled' }))
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([url]) => String(url).includes('status=0'))
+      ).toBe(true)
+    )
+  })
+
+  it('refetches the list after a successful toggle', async () => {
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (String(url).startsWith('/api/channel/7/status')) {
+        return jsonResponse({ success: true, data: true })
+      }
+      return listResponse([CHANNEL])
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+
+    renderPage()
+    await waitFor(() =>
+      expect(screen.getByText('primary-openai')).toBeInTheDocument()
+    )
+    const listCalls = () =>
+      fetchMock.mock.calls.filter(([url]) =>
+        String(url).includes('page_size=50')
+      ).length
+    const before = listCalls()
+
+    await user.click(
+      screen.getByRole('switch', { name: 'Enabled primary-openai' })
+    )
+    await user.click(
+      await screen.findByRole('button', { name: 'Disable channel' })
+    )
+
+    await waitFor(() => expect(listCalls()).toBeGreaterThan(before))
+  })
+
+  it('cannot submit twice while the write is in flight', async () => {
+    let resolvePost: ((response: Response) => void) | undefined
+    const postPromise = new Promise<Response>((resolve) => {
+      resolvePost = resolve
+    })
+    const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
+      if (String(url).startsWith('/api/channel/7/status')) {
+        return postPromise
+      }
+      return Promise.resolve(listResponse([CHANNEL]))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+
+    renderPage()
+    await waitFor(() =>
+      expect(screen.getByText('primary-openai')).toBeInTheDocument()
+    )
+
+    await user.click(
+      screen.getByRole('switch', { name: 'Enabled primary-openai' })
+    )
+    const confirmButton = await screen.findByRole('button', {
+      name: 'Disable channel',
+    })
+    await user.click(confirmButton)
+
+    const postCalls = () =>
+      fetchMock.mock.calls.filter(([url]) =>
+        String(url).startsWith('/api/channel/7/status')
+      ).length
+    await waitFor(() => expect(postCalls()).toBe(1))
+    await waitFor(() => expect(confirmButton).toBeDisabled())
+
+    // A second confirm while the POST is pending must not issue another write.
+    await user.click(confirmButton)
+    expect(postCalls()).toBe(1)
+
+    resolvePost?.(jsonResponse({ success: true, data: true }))
+    await waitFor(() =>
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    )
+  })
+
+  it('asks for a new token when the write is rejected with 401', async () => {
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (String(url).startsWith('/api/channel/7/status')) {
+        return jsonResponse({ success: false, message: 'token rejected' }, 401)
+      }
+      return listResponse([CHANNEL])
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+
+    renderPage()
+    await waitFor(() =>
+      expect(screen.getByText('primary-openai')).toBeInTheDocument()
+    )
+
+    await user.click(
+      screen.getByRole('switch', { name: 'Enabled primary-openai' })
+    )
+    await user.click(
+      await screen.findByRole('button', { name: 'Disable channel' })
+    )
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          'Your access token was rejected. Paste a new token to continue.'
+        )
+      ).toBeInTheDocument()
+    )
+  })
+
+  it('keeps the previous rows while a new search is loading', async () => {
+    let callCount = 0
+    const fetchMock = vi.fn((_url: string, _init?: RequestInit) => {
+      callCount += 1
+      if (callCount === 1) {
+        return Promise.resolve(listResponse([CHANNEL]))
+      }
+      // Never resolves: models a slow search request.
+      return new Promise<Response>(() => {})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+
+    renderPage()
+    await waitFor(() =>
+      expect(screen.getByText('primary-openai')).toBeInTheDocument()
+    )
+
+    await user.type(screen.getByLabelText('Search channels'), 'o')
+
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(1))
+    // The in-flight search must not replace the rows with the loading state.
+    expect(screen.getByText('primary-openai')).toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('filters the list by channel name', async () => {
+    const fetchMock = vi.fn(async (_url: string) =>
+      jsonResponse({ success: true, data: SEARCH_PAGE })
+    )
     vi.stubGlobal('fetch', fetchMock)
     const user = userEvent.setup()
 

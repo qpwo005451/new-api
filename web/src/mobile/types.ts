@@ -221,4 +221,12 @@ export interface ChannelFilters {
   statusFilter: number
 }
 
-export type ChannelListResult = PagedResult<ChannelRow>
+// `/api/channel/search` answers with `items`/`total`/`type_counts` and no
+// pagination fields, so those two are optional here.
+export type ChannelListResult = Omit<
+  PagedResult<ChannelRow>,
+  'page' | 'page_size'
+> & {
+  page?: number
+  page_size?: number
+}

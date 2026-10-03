@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { Toaster } from '@/components/ui/sonner'
+
 import '@/mobile/styles/mobile.css'
 
 import { MobileApp } from '@/mobile/app'
@@ -35,7 +35,6 @@ if (container) {
     <StrictMode>
       <MobileProviders>
         <MobileApp />
-        <Toaster />
       </MobileProviders>
     </StrictMode>
   )

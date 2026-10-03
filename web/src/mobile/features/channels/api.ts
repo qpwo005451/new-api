@@ -16,7 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 
 import { CHANNEL_STATUS_FILTER } from '@/mobile/features/channels/lib/channel-status'
 import { mobileApiGet, mobileApiPost } from '@/mobile/lib/api-client'
@@ -49,6 +54,9 @@ export function useChannels(filters: ChannelFilters) {
             page_size: CHANNEL_PAGE_SIZE,
             status,
           }),
+    // Every keystroke changes the query key; keep the previous page on screen
+    // so the list is not replaced by the loading state while typing.
+    placeholderData: keepPreviousData,
     staleTime: MOBILE_STALE_TIME.channels,
   })
 }

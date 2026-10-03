@@ -73,13 +73,17 @@ export function ChannelsPage() {
           : t('Channel disabled')
       )
     } catch (error) {
-      // A 403 is a role problem, not a transient failure; say so instead of
-      // showing the generic retry message.
-      toast.error(
-        error instanceof ApiError && error.code === 'forbidden'
-          ? t('Administrator access required')
-          : t('Could not update the channel status.')
-      )
+      // A 403 is a role problem, a 401 means the stored token is stale and the
+      // api client has already cleared it; say so instead of showing the
+      // generic retry message.
+      let messageKey = 'Could not update the channel status.'
+      if (error instanceof ApiError && error.code === 'forbidden') {
+        messageKey = 'Administrator access required'
+      } else if (error instanceof ApiError && error.code === 'unauthorized') {
+        messageKey =
+          'Your access token was rejected. Paste a new token to continue.'
+      }
+      toast.error(t(messageKey))
     } finally {
       setPending(null)
     }
@@ -184,6 +188,7 @@ export function ChannelsPage() {
             : t('Disable this channel? Traffic will stop routing to it.')
         }
         confirmText={enabling ? t('Enable channel') : t('Disable channel')}
+        isLoading={toggle.isPending}
         handleConfirm={confirmToggle}
       />
     </div>

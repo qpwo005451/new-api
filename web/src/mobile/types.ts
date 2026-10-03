@@ -114,6 +114,79 @@ export interface ModelMonitorSummary {
   sites: MonitorSiteResponse[]
 }
 
+export interface RoutingModelChannelStat {
+  model_name: string
+  channel_id: number
+  channel_name: string
+  requests: number
+  errors: number
+  avg_use_time: number
+  priority?: number
+  weight?: number
+}
+
+export interface RoutingSwitchStat {
+  from: number
+  to: number
+  count: number
+}
+
+export interface RoutingReasonStat {
+  reason: string
+  count: number
+}
+
+export interface RoutingAffinityStat {
+  rule_name: string
+  sticky_requests: number
+  distinct_keys: number
+}
+
+export interface RoutingStatsWindow {
+  start: number
+  end: number
+  bucket_seconds: number
+}
+
+export interface RoutingTrendPoint {
+  timestamp: number
+  requests: number
+  switched: number
+}
+
+export interface RoutingStats {
+  requests: number
+  errors: number
+  by_model_channel: RoutingModelChannelStat[]
+  window: RoutingStatsWindow
+  trend: RoutingTrendPoint[]
+  switched: number
+  switched_success: number
+  switched_failed: number
+  sticky: number
+  switches: RoutingSwitchStat[]
+  switch_reasons: RoutingReasonStat[]
+  affinity_by_rule: RoutingAffinityStat[]
+}
+
+export interface ChannelAffinityBinding {
+  rule_name: string
+  model_name: string
+  using_group: string
+  key_hint: string
+  key_fingerprint: string
+  channel_id: number
+  channel_name: string
+}
+
+export interface ChannelAffinityBindings {
+  enabled: boolean
+  total: number
+  unknown: number
+  truncated: boolean
+  entries: ChannelAffinityBinding[]
+}
+
 export interface AvailabilityRow {
   siteName: string
   modelName: string

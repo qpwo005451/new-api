@@ -23,6 +23,7 @@ import { MobileLoading } from '@/mobile/components/mobile-loading'
 import { MobileTabBar } from '@/mobile/components/mobile-tab-bar'
 import { PatGate } from '@/mobile/components/pat-gate'
 import { ModelsPage } from '@/mobile/features/models/components/models-page'
+import { RoutingPage } from '@/mobile/features/routing/components/routing-page'
 import { UsagePage } from '@/mobile/features/usage/components/usage-page'
 import { useActiveTab } from '@/mobile/lib/router'
 import { mobileStatusQueryOptions } from '@/mobile/lib/status'
@@ -47,7 +48,8 @@ export function MobileApp() {
         </header>
         {activeTab === 'usage' ? <UsagePage /> : null}
         {activeTab === 'models' ? <ModelsPage /> : null}
-        {activeTab !== 'usage' && activeTab !== 'models' ? (
+        {activeTab === 'routing' ? <RoutingPage /> : null}
+        {activeTab === 'channels' ? (
           <section data-testid='mobile-panel' data-tab={activeTab} />
         ) : null}
       </main>

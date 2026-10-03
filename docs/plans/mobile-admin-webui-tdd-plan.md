@@ -14,7 +14,8 @@
 - 不新增后端业务接口、不改数据库、不改 relay/计费路径。后端改动只允许出现在 `main.go`、`router/web-router.go`、`router/web_router_test.go`、`router/testdata/**`、`makefile`、`Dockerfile`、`.github/workflows/*.yml`、`.gitignore`。
 - 实施工作树是新建 checkout，没有任何 `node_modules`：首次运行前端命令前先执行 `cd web && bun install --frozen-lockfile`。
 - 不在生产主机 `10.0.0.251` 上执行 `bun install`、前端构建、`go build` 或测试；全部在本地工作站执行。发布候选使用 `scripts/build_release_candidate_local.ps1`。
-- 所有新增前端文件必须带 AGPL 版权头（`bun run copyright` 生成），文件名 kebab-case；测试必须放在被测模块的 `__tests__/` 目录，命名为 `<职责>.test.ts(x)`。
+- 所有新增前端文件必须带 AGPL 版权头（用 `bun run copyright` 生成，它会重写命中文件；不要让它改写无关文件），文件名 kebab-case；测试必须放在被测模块的 `__tests__/` 目录，命名为 `<职责>.test.ts(x)`。
+- 基线 `bun run copyright:check` **本来就是红的**（`prod/251` 有 25 个既有文件缺版权头）。验收标准是「新增的 `src/mobile/**` + `rsbuild.mobile.config.ts` 不在失败名单里」，不是整条命令退出码为 0；不要为了让它变绿去改既有文件。
 - 用户可见文案必须走 i18n：`useTranslation()` + `t('English source key')`，key 写入 `web/src/i18n/locales/{en,zh,zh-TW,fr,ru,ja,vi}.json`。
 - **手机端代码禁止 `import '@/i18n/config'`**：该模块静态 import 七个语言包（合计 ~4 MB 源码 / ~1.1 MB gzip），静态引入它会直接击穿首屏预算。手机端固定用 `web/src/mobile/lib/i18n.ts` 的 `initializeMobileI18n()`，语言包按需 `import()` 成独立异步 chunk。
 - 数字、紧凑数字、金额必须复用 `@/lib/format`（`formatNumber` / `formatCompactNumber` / `formatTokens` / `formatUseTime` / `formatLogQuota`）与 `@/lib/currency`；任何传给 `Intl.*` 的语言码必须先经 `@/i18n/languages` 的 `toIntlLocale()`。禁止自己写 `zhCN` 映射。
@@ -862,7 +863,9 @@ cd /home/ra/orca/workspaces/Newapi/codex-mobile-admin-webui/web
 bun run test -- src/mobile
 bun run typecheck
 bunx oxlint -c .oxlintrc.json src/mobile
-bun run copyright:check
+# The check is red at the baseline (25 pre-existing files); only the new mobile
+# files matter here.
+bun run copyright:check 2>&1 | grep -E 'src/mobile|rsbuild\.mobile' && exit 1 || true
 bun run build:mobile
 ls mobile-dist/index.html
 grep -o '/m/[^"]*\.js' mobile-dist/index.html | head -3
@@ -4277,7 +4280,7 @@ bun run test
 bun run typecheck
 bun run lint
 bun run format:check
-bun run copyright:check
+bun run copyright:check 2>&1 | grep -E 'src/mobile|rsbuild\.mobile' && exit 1 || true
 bun run i18n:sync && git diff --exit-code src/i18n/locales
 bun run build:mobile
 du -sh mobile-dist && find mobile-dist -name '*.js' -exec du -h {} + | sort -h | tail -5
@@ -4350,7 +4353,7 @@ git commit -m "docs(web-mobile): record the mobile console verification evidence
 | 前端纯逻辑 | `bun run test -- src/mobile/lib src/mobile/features` | PAT 校验与持久化、fetch 封装与错误码、时间范围、聚合与排行、可用性排序、实测/配置占比、渠道状态映射 |
 | 前端组件 | `bun run test -- src/mobile/components` | Tab 栏 ARIA 与选中态、KPI 卡格式化、PAT 门校验与错误提示、MiniBar 比例、下拉刷新阈值与顶部判定 |
 | 前端页面 | `bun run test -- "src/mobile/features/*/components/__tests__"` | 四个页签的加载/空/错误/成功路径与请求参数 |
-| 静态检查 | `bun run typecheck && bun run lint && bun run format:check && bun run copyright:check && bun run knip` | 类型、lint（含 `project/intl-locale`）、格式、版权头、未使用导出 |
+| 静态检查 | `bun run typecheck && bun run lint && bun run format:check && bun run knip`；`bun run copyright:check 2>&1 \| grep -E 'src/mobile\|rsbuild\.mobile'` 必须为空 | 类型、lint（含 `project/intl-locale`）、格式、未使用导出；版权头只需覆盖本次新增文件（基线有 25 个既有文件失败，与本计划无关） |
 | i18n | `bun run i18n:sync && git diff --exit-code src/i18n/locales` | 七个语言文件 key 完整且无待同步项 |
 | 构建 | `bun run build:mobile && go build ./...` | 手机产物体积与 embed 装配 |
 

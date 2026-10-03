@@ -16,15 +16,40 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
+import { STATUS_QUERY_KEY } from '@/lib/status-query'
 import { MobileApp } from '@/mobile/app'
 
-describe('MobileApp', () => {
-  it('renders the mobile console heading', () => {
-    render(<MobileApp />)
+const testQueryClient = new QueryClient({
+  defaultOptions: { queries: { retry: false } },
+})
 
-    expect(screen.getByRole('heading', { name: 'Mobile console' })).toBeInTheDocument()
+function renderApp() {
+  return render(
+    <QueryClientProvider client={testQueryClient}>
+      <MobileApp />
+    </QueryClientProvider>
+  )
+}
+
+describe('MobileApp', () => {
+  beforeEach(() => {
+    window.localStorage.clear()
+    window.localStorage.setItem('newapi_mobile_pat', 'a'.repeat(29))
+    testQueryClient.clear()
+    // Seeding the shared status query keeps the shell from calling /api/status
+    // while the currency helpers fall back to their documented USD defaults.
+    testQueryClient.setQueryData(STATUS_QUERY_KEY, {})
+  })
+
+  it('renders the mobile console heading', () => {
+    renderApp()
+
+    expect(
+      screen.getByRole('heading', { name: 'Mobile console' })
+    ).toBeInTheDocument()
   })
 })

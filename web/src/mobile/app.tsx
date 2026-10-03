@@ -16,16 +16,31 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+
+import { LoadingState } from '@/components/loading-state'
+import { statusQueryOptions } from '@/lib/status-query'
+import { PatGate } from '@/mobile/components/pat-gate'
 
 export function MobileApp() {
   const { t } = useTranslation()
+  // formatQuotaWithCurrency and the other money helpers read the currency
+  // settings from the system-config store, which /api/status hydrates. Without
+  // this query every amount would be rendered with the USD defaults.
+  const status = useQuery(statusQueryOptions)
+
+  if (status.isPending) {
+    return <LoadingState />
+  }
 
   return (
-    <main className='min-h-dvh bg-background text-foreground'>
-      <header className='px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-2'>
-        <h1 className='text-lg font-semibold'>{t('Mobile console')}</h1>
-      </header>
-    </main>
+    <PatGate onReady={() => {}}>
+      <main className='bg-background text-foreground min-h-dvh'>
+        <header className='px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-2'>
+          <h1 className='text-lg font-semibold'>{t('Mobile console')}</h1>
+        </header>
+      </main>
+    </PatGate>
   )
 }

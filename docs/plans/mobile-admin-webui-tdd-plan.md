@@ -1814,7 +1814,7 @@ Expected: 全部 PASS。
 
 ```bash
 cd /home/ra/orca/workspaces/Newapi/codex-mobile-admin-webui
-git add web/src/mobile/components web/src/mobile/lib/status.ts web/src/mobile/lib/__tests__/status.test.ts web/src/mobile/app.tsx web/src/mobile/__tests__/app.test.tsx web/src/lib/status-config.ts web/src/lib/status-query.ts
+git add web/src/mobile/components web/src/mobile/lib web/src/mobile/app.tsx web/src/mobile/__tests__/app.test.tsx web/src/lib/status-config.ts web/src/lib/status-query.ts
 git commit -m "feat(web-mobile): gate the console behind a personal access token"
 ```
 

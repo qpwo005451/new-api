@@ -1763,7 +1763,7 @@
     "Define API endpoints for this model (JSON format)": "このモデルのAPIエンドポイントを定義します (JSON形式)",
     "Define endpoint mappings for each provider.": "各プロバイダーごとにエンドポイントのマッピングを定義してください。",
     "Define per-group rules to add, remove, or append selectable groups for specific user groups.": "特定のユーザーグループに対して選択可能なグループを追加、削除、または追加するグループごとのルールを定義します。",
-    "degraded": "降级",
+    "degraded": "劣化",
     "Degraded": "劣化",
     "Degraded performance recently": "最近パフォーマンスが低下しています",
     "Delete": "削除",

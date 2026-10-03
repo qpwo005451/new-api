@@ -2341,7 +2341,7 @@
     "Error Message (required)": "Сообщение об ошибке (обязательно)",
     "Error parsing response data": "Ошибка при разборе данных ответа",
     "Error Type (optional)": "Тип ошибки (необязательно)",
-    "errors": "ошибки",
+    "errors": "ошибок",
     "Errors": "Ошибки",
     "Estimated cost": "Примерная стоимость",
     "Estimated quota cost": "Ориентир стоимости квоты",

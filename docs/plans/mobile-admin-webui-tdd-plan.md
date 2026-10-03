@@ -4703,7 +4703,7 @@ mobile UA   GET /m/routing             → 200 text/html（SPA 回落）
 ### A.5 未完成 / 阻塞
 
 1. **浏览器人工冒烟（Step 3 的 7 项）未执行**：需要真实浏览器与一个真实 PAT（本环境无浏览器、不应记录令牌）。待人工逐项确认：令牌门、刷新保持登录、撤销 PAT 后下拉刷新回到令牌页、用量页三范围、模型可用性、路由占比条、渠道开关（确认框与桌面端一致）、底部「桌面版」跳转。
-2. **桌面端没有可点击的「返回手机版」入口**：现仅支持手动访问 `/?desktop=0`（已实现并有 Go 测试）。桌面 UI 加链接超出本计划文件范围，列为后续项。
+2. **桌面端没有可点击的「返回手机版」入口**：现仅支持手动访问 `/?desktop=0`（已实现并有 Go 测试）。桌面 UI 加链接超出本计划文件范围，列为后续项。 **→ 已于 2026-10-04 补齐（个人菜单新增「手机版」入口），见附录 C。**
 3. **真实首屏流量仍受语言包支配**：`main.tsx` 启动即动态 import 当前语言包（en 105,421 B / zh 163,819 B / zh-TW 195,249 B gzip），因此网络层首屏约 230–320 KB；要压低需生成手机端专用语言包（v1 不做）。**→ 已由 Task 15 解决（2026-10-04），见附录 B；上表数值保留为 Task 14 当时的事实记录。**
 4. **既存跨语言泄漏**（桌面端历史欠账，本次未动）：fr 77、ru 74、vi 71、ja 38（中文专用字形）、zh-TW 48、zh 1；另小写 key `degraded` 在 6 个语言里仍为中文「降级」。
 
@@ -4775,3 +4775,31 @@ FIRST_SCREEN_GZIP_TOTAL=145680        (预算 153600，余量 7920)
 
 1. 裁剪语言包文件名不含内容哈希，而 `middleware.Cache` 对非根路径下发 `max-age=604800`，升级后浏览器最长 7 天可能沿用旧语言包（只会在缺少新 key 时退化成英文，不会白屏）。彻底消除可给文件名加内容哈希。
 2. 生成器只扫描 `src/mobile` 源码；若将来出现运行时拼接的 key（模板字符串），字面量正则覆盖不到 —— 但「任意字符串字面量 ∈ 基础语言 key」这条规则仍会兜住绝大多数查表用法，且 fail-fast 只校验字面量 `t()`。
+
+---
+
+## 附录 C. 桌面端「手机版」入口（2026-10-04）
+
+附录 A.5.2 记录的缺口——桌面端没有可点击的返回手机版入口——已补齐。
+
+**改动**
+- `web/src/components/profile-dropdown.tsx`：在「System Settings」与「Sign out」之间新增一个渲染为 `<a href='/m'>` 的 `DropdownMenuItem`（base-ui `render` + `nativeButton={false}`，图标 `Smartphone`），文案 `t('Mobile version')`。
+- 点击时顺带清除 `newapi_prefer_desktop` cookie（`path=/; max-age=0; samesite=lax`），与手机端「桌面版」按钮设置该 cookie 的动作对称：手机端切到桌面版后点这个入口既能回到 `/m`，也不会在下次访问 `/` 时被 cookie 再送回桌面壳。
+- `/m` 不在桌面 SPA 的路由树内（它由 Go 直接服务），所以这里用真实导航（`<a>`），不走 TanStack Router 的 `navigate`。
+- 七个语言文件新增 key `Mobile version`：en `Mobile version` / zh `手机版` / zh-TW `手機版` / fr `Version mobile` / ru `Мобильная версия` / ja `モバイル版` / vi `Bản di động`。
+
+**验证**
+
+| 命令 | 结果 |
+| --- | --- |
+| `bun run typecheck` | exit 0（`render` + `nativeButton` 通过 base-ui `Menu.Item.Props` 类型检查） |
+| `bun run test` | **203 files / 2287 tests passed**（含全部桌面端用例） |
+| `bunx oxlint -c .oxlintrc.json src/components/profile-dropdown.tsx` | exit 0，无输出 |
+| `bunx oxfmt -c .oxfmtrc.json --check src/components/profile-dropdown.tsx` | `All matched files use the correct format.` |
+| `bun run build`（桌面 rsbuild） | 成功：`dist/index.html` 于 00:33:30 重新生成，日志无 error |
+| `bun run i18n:sync && git diff --stat src/i18n/locales` | 只有本次新增的 7 行（每语言 1 行），无其它待同步项 |
+| `bun run mobile:locales` | 仍为 **86 keys**（桌面专用 key 未进入手机端裁剪语言包） |
+
+**遗留**
+1. 该入口没有单元测试。桌面 chrome 组件在本仓库普遍没有测试，而 `profile-dropdown` 需要 router + auth store + sidebar 配置等上下文；本次改动是纯静态链接 + 一次 cookie 清理，已由 typecheck / 桌面构建 / 代码阅读覆盖，故未新增测试（符合项目「不做仅提升覆盖率的测试」的约定）。
+2. `document.cookie` 删除「由后端以 HttpOnly 下发的同名 cookie」在浏览器实现上存在差异（规范允许删除，Firefox 历史上偏保守）。若清理失败，唯一表现是手机端下次访问 `/` 仍进桌面壳，再次点击该入口即可回到 `/m`，不影响可用性。

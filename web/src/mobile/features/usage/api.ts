@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 
 import { mobileApiGet } from '@/mobile/lib/api-client'
 import { MOBILE_STALE_TIME } from '@/mobile/lib/query-client'
@@ -56,6 +56,9 @@ export function useUsageAggregate(scope: UsageScope, range: TimeRange) {
         }
       ),
     staleTime: MOBILE_STALE_TIME.usage,
+    // Keep the last aggregate while a new range loads so switching the scope
+    // or the preset does not blank the KPIs and rankings.
+    placeholderData: keepPreviousData,
   })
 }
 
@@ -72,6 +75,7 @@ export function useUsageRanking(
         end_timestamp: range.end,
       }),
     staleTime: MOBILE_STALE_TIME.usage,
+    placeholderData: keepPreviousData,
     enabled: scope === 'all' && enabled,
   })
 }

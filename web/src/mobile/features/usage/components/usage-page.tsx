@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { toIntlLocale } from '@/i18n/languages'
@@ -51,7 +51,21 @@ export function UsagePage() {
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const [scope, setScope] = useState<UsageScope>('self')
   const [preset, setPreset] = useState<TimeRangePreset>('today')
-  const range = resolveTimeRange(preset, Math.floor(Date.now() / 1000))
+  // The window is frozen to an anchor captured on mount and on every preset
+  // switch. `range` feeds the query keys, so resolving `Date.now()` during
+  // render makes every response arrival mint a new key (new cache entry ->
+  // pending again -> another request). On a slow network that shows as
+  // "loading, flash of data, loading" while hammering the backend, and each
+  // new key resets the retry budget. Task 8 review Important-1.
+  const [anchor, setAnchor] = useState(() => Math.floor(Date.now() / 1000))
+  const range = useMemo(
+    () => resolveTimeRange(preset, anchor),
+    [preset, anchor]
+  )
+  const selectPreset = (next: TimeRangePreset) => {
+    setPreset(next)
+    setAnchor(Math.floor(Date.now() / 1000))
+  }
 
   const aggregate = useUsageAggregate(scope, range)
   const rate = useLiveRate(scope, range)
@@ -94,7 +108,7 @@ export function UsagePage() {
             key={option}
             type='button'
             aria-pressed={preset === option}
-            onClick={() => setPreset(option)}
+            onClick={() => selectPreset(option)}
             className={
               preset === option
                 ? 'text-foreground text-sm font-medium'
@@ -151,7 +165,7 @@ export function UsagePage() {
         <KpiCard
           label='Current rate'
           value={
-            rate.data
+            typeof rate.data?.rpm === 'number'
               ? `${formatNumber(rate.data.rpm, locale)} / ${formatTokens(rate.data.tpm)}`
               : '—'
           }

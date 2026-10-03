@@ -25,6 +25,8 @@ import {
   formatUseTime,
 } from '@/lib/format'
 import { MobileEmpty } from '@/mobile/components/mobile-empty'
+import { MobileError } from '@/mobile/components/mobile-error'
+import { MobileLoading } from '@/mobile/components/mobile-loading'
 import { ValueRow } from '@/mobile/components/value-row'
 import { useRecentLogs } from '@/mobile/features/usage/api'
 import type { TimeRange, UsageScope } from '@/mobile/types'
@@ -43,11 +45,16 @@ export function RecentRequests(props: RecentRequestsProps) {
   const items = Array.isArray(logs.data?.items) ? logs.data.items : []
 
   if (logs.isPending) {
+    return <MobileLoading />
+  }
+  // A failed log request must not be reported as "no requests": that reads as
+  // a healthy empty range while the panel is actually broken.
+  if (logs.isError) {
     return (
-      <p className='text-muted-foreground px-3 py-4 text-sm'>{t('Loading')}</p>
+      <MobileError title={t('Load failed')} description={t('Retry later.')} />
     )
   }
-  if (logs.isError || items.length === 0) {
+  if (items.length === 0) {
     return (
       <MobileEmpty
         title={t('No recent requests')}

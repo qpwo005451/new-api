@@ -20,13 +20,17 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Toaster } from '@/components/ui/sonner'
 import { ThemeProvider } from '@/context/theme-provider'
-import '@/i18n/config'
 import '@/mobile/styles/mobile.css'
 
 import { MobileApp } from '@/mobile/app'
+import { initializeMobileI18n } from '@/mobile/lib/i18n'
 
 const container = document.getElementById('root')
 if (container) {
+  // Not awaited: the shell renders with the English source keys first and
+  // re-renders once the active locale chunk arrives.
+  void initializeMobileI18n()
+
   createRoot(container).render(
     <StrictMode>
       <ThemeProvider>

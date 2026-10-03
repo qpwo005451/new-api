@@ -4568,3 +4568,83 @@ git commit -m "docs(web-mobile): record the mobile console verification evidence
 6. **`FRONTEND_BASE_URL` 不为空时**：`SetWebRouter` 不会被调用，`/m` 随整个前端一起重定向到外部地址；这是现有部署语义，v1 不改变。
 7. **首屏体积目标**：口径为「`mobile-dist/index.html` 直接引用的 chunk + 当前激活页签的 chunk」的 gzip 合计，预算 **< 150 KB（153,600 B）**（原定 120 KB 在强制复用 `@/components/ui/*`（base-ui）+ `@tanstack/react-query` + `i18next` 的前提下不可达，控制器按 Task 8 实测重定；详见 Global Constraints）。当前实测：Task 13 结束时 146,781 B。若超预算，优先检查是否误引入了 `@/components/ui` 中带重依赖的组件（如 `chart.tsx`、`markdown.tsx`），以及是否把 hugeicons/桌面主题之类的包装层带进了首屏（**判据必须用符号与图标 path 数据，不能用包名字符串**，Task 11 的假阴性教训）。
 8. **启动即加载的语言包不在首屏 JS 口径内，但真实首屏流量远大于 146 KB**：`main.tsx` 启动时 `initializeMobileI18n()` 会动态 import 当前语言包，实测 en 105,421 B / zh 163,819 B / zh-TW 195,249 B（gzip）。若要压低真实首屏，需要按 `src/mobile` 实际用到的 key 生成手机端专用语言包（v1 不做，属后续优化项）。
+
+---
+
+## 附录 A. 验证记录（2026-10-03 实际执行）
+
+本节由 Task 14 实际执行后追加；上面 Task 14 Step 4 中的同名小节是模板，保留不动。
+
+### A.1 前端全量检查
+
+| 命令 | 结果 |
+| --- | --- |
+| `bun run test` | **202 files / 2279 tests passed**（全仓，含桌面端） |
+| `bun run test -- src/mobile` | **23 files / 104 tests passed**（手机端） |
+| `bun run typecheck`（`tsgo -b`） | exit 0，无输出 |
+| `bunx oxlint -c .oxlintrc.json src/mobile` | exit 0，仅 1 条既存 warning：`src/mobile/main.tsx:28:28 unicorn(prefer-query-selector)` |
+| `bun run lint` | **失败**：均为本分支之外的既存错误（`src/components/layout/components/footer.tsx:276/282`、`src/features/home/components/gateway-card.tsx:62` 的 `react(no-array-index-key)` 等）；`src/mobile` 只有上面那条 warning |
+| `bun run format:check` | 仓库级失败（既存桌面/脚本文件）。本次已用 `bunx oxfmt -c .oxfmtrc.json --write src/mobile rsbuild.mobile.config.ts` 把**手机端 10 个文件**格式化到 `--check` 通过（`All matched files use the correct format.`），未触碰桌面端文件 |
+| `bun run copyright:check` | exit 1，失败列表 **25 个文件，全部在 `src/mobile` 之外**（`grep -c src/mobile` = 0），符合验收口径 |
+| `bun run i18n:sync && git diff --exit-code src/i18n/locales` | `i18n_sync_exit=0`，`web/src/i18n/locales` 无 diff（无待同步项） |
+
+首屏体积（口径：`mobile-dist/index.html` 直接引用的 chunk 的 gzip 合计）：
+
+```
+/m/static/js/lib-react.c603f97b2f.js gzip=59664
+/m/static/js/291.19d10fbd57.js       gzip=72596
+/m/static/js/index.63771a6db9.js     gzip=14113
+FIRST_SCREEN_GZIP_TOTAL=146373        (预算 153600，余量 7227)
+```
+
+禁用依赖扫描（**符号与图标 path 判据**，不用包名字符串——Task 11 的假阴性教训）：
+
+```
+lib-react.c603f97b2f.js: hugeicons=0 router=0 lucide=0 axios=0 motion=0
+291.19d10fbd57.js:       hugeicons=0 router=0 lucide=0 axios=0 motion=0
+index.63771a6db9.js:     hugeicons=0 router=0 lucide=0 axios=0 motion=0
+```
+
+`mobile-dist` 中的 PWA 产物：`manifest.webmanifest`（585 B）、`icon-192.png`（22,087 B）、`icon-512.png`（100,204 B）、`icon-maskable-512.png`（28,611 B）。构建输出总计 5,198.4 kB / gzip 1,771.5 kB（含全部语言包与桌面共用资源）。
+
+### A.2 后端全量检查
+
+| 命令 | 结果 |
+| --- | --- |
+| `gofmt -l router main.go` | 无输出（exit 0） |
+| `go vet ./router/ ./...` | exit 0 |
+| `go build ./...` | exit 0 |
+| `go test ./router/ -v` | **PASS**：44 个 `--- PASS`，其中手机端相关 8 个：`TestIsMobileUserAgent`、`TestDesktopShellRedirectsMobileRootToMobileConsole`、`TestDesktopShellCases`、`TestMobileShellServesIndexAndFallsBackForDeepLinks`、`TestWebRouterServesMobileConsole`、`TestWebRouterRegistersMobileConsoleForGETOnly`、`TestWebChainStaysOffTheEngineScope`、`TestWebChainCachesMobileAssetsButNotTheMobileIndex` |
+
+### A.3 本地冒烟（`go run .` + curl，端口 3000）
+
+```
+mobile UA   GET /                     → 302 http://localhost:3000/m
+desktop UA  GET /                     → 200
+mobile UA   GET / (Cookie: prefer_desktop=1) → 200（桌面壳）
+mobile UA   GET /?desktop=0 (cookie=1) → 302 Found, Location: /m,
+                                         Set-Cookie: newapi_prefer_desktop=; Path=/; Max-Age=0; HttpOnly
+mobile UA   GET /m/routing             → 200 text/html（SPA 回落）
+            GET /m                     → Cache-Control: no-cache
+            GET /m/static/js/index.63771a6db9.js → 200 text/javascript, Cache-Control: max-age=604800
+            GET /m/static/css/index.fe735d0d38.css → 200 text/css
+            GET /m/static/missing.js   → 404（不再回落成 HTML）
+            GET /m/manifest.webmanifest → 200 application/manifest+json
+            GET /m/icon-192.png        → 200 image/png
+```
+
+### A.4 验证阶段发现并修掉的问题
+
+1. **`/m/manifest.webmanifest` 被当作 `text/plain` 下发**（Go 的 mime 表没有 `.webmanifest`，`http.FileServer` 会 sniff 成文本）→ `buildMobileShell` 显式设置 `Content-Type: application/manifest+json`，并加测试用例与 `router/testdata/mobile-dist/manifest.webmanifest` 夹具。
+2. **`/m/static/` 下缺失的文件回落成 HTML**（浏览器会把 index 当 JS/CSS 解析）→ 前缀为 `/static/` 且文件不存在时返回 404，并加测试用例。
+3. **桌面端测试硬编码了旧的 zh 译文** `无法展示`（Task 12 已把它改成 `不可用`）→ 更新 `src/features/models/__tests__/model-listing.test.tsx` 的两处断言。
+4. 手机端 10 个文件未过项目格式化 → 用 oxfmt 就地格式化（仅 `src/mobile` + `rsbuild.mobile.config.ts`）。
+
+以上四项与提交 `16f3d97ec`。
+
+### A.5 未完成 / 阻塞
+
+1. **浏览器人工冒烟（Step 3 的 7 项）未执行**：需要真实浏览器与一个真实 PAT（本环境无浏览器、不应记录令牌）。待人工逐项确认：令牌门、刷新保持登录、撤销 PAT 后下拉刷新回到令牌页、用量页三范围、模型可用性、路由占比条、渠道开关（确认框与桌面端一致）、底部「桌面版」跳转。
+2. **桌面端没有可点击的「返回手机版」入口**：现仅支持手动访问 `/?desktop=0`（已实现并有 Go 测试）。桌面 UI 加链接超出本计划文件范围，列为后续项。
+3. **真实首屏流量仍受语言包支配**：`main.tsx` 启动即动态 import 当前语言包（en 105,421 B / zh 163,819 B / zh-TW 195,249 B gzip），因此网络层首屏约 230–320 KB；要压低需生成手机端专用语言包（v1 不做）。
+4. **既存跨语言泄漏**（桌面端历史欠账，本次未动）：fr 77、ru 74、vi 71、ja 38（中文专用字形）、zh-TW 48、zh 1；另小写 key `degraded` 在 6 个语言里仍为中文「降级」。

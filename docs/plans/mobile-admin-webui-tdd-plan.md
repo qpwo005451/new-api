@@ -2126,8 +2126,8 @@ describe('aggregateTotals', () => {
 describe('rankRows', () => {
   it('groups by model, sums, sorts by quota and truncates', () => {
     expect(rankRows(rows, 'model_name', 2)).toEqual([
-      { key: 'gpt-5', requests: 15, tokens: 1500, quota: 750 },
       { key: 'claude-5', requests: 1, tokens: 30, quota: 900 },
+      { key: 'gpt-5', requests: 15, tokens: 1500, quota: 750 },
     ])
   })
 
@@ -2339,7 +2339,7 @@ export function rankRows(rows: QuotaDataRow[], key: 'model_name' | 'username', l
 `web/src/mobile/features/usage/api.ts`：
 
 ```ts
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 
 import { mobileApiGet } from '@/mobile/lib/api-client'
 import { MOBILE_STALE_TIME } from '@/mobile/lib/query-client'
@@ -2366,6 +2366,7 @@ export function useUsageAggregate(scope: UsageScope, range: TimeRange) {
         end_timestamp: range.end,
       }),
     staleTime: MOBILE_STALE_TIME.usage,
+    placeholderData: keepPreviousData,
   })
 }
 
@@ -2374,6 +2375,7 @@ export function useUsageRanking(scope: UsageScope, range: TimeRange, enabled: bo
     queryKey: ['mobile', 'usage', 'ranking', range.start, range.end],
     queryFn: () => mobileApiGet<QuotaDataRow[]>('/api/data/users', { start_timestamp: range.start, end_timestamp: range.end }),
     staleTime: MOBILE_STALE_TIME.usage,
+    placeholderData: keepPreviousData,
     enabled: scope === 'all' && enabled,
   })
 }
@@ -2415,9 +2417,12 @@ export function RecentRequests(props: RecentRequestsProps) {
   const logs = useRecentLogs(props.scope, props.range, 2)
 
   if (logs.isPending) {
-    return <p className='text-muted-foreground px-3 py-4 text-sm'>{t('Loading')}</p>
+    return <MobileLoading />
   }
-  if (logs.isError || logs.data.items.length === 0) {
+  if (logs.isError) {
+    return <MobileError title={t('Load failed')} description={t('Retry later.')} />
+  }
+  if (logs.data.items.length === 0) {
     return <MobileEmpty title={t('No recent requests')} description={t('Nothing to show for this range.')} />
   }
 
@@ -2440,6 +2445,7 @@ export function RecentRequests(props: RecentRequestsProps) {
 
 ```tsx
 import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { MobileError } from '@/mobile/components/mobile-error'
@@ -2465,7 +2471,15 @@ export function UsagePage() {
   const locale = i18n.resolvedLanguage || i18n.language
   const [scope, setScope] = useState<UsageScope>('self')
   const [preset, setPreset] = useState<TimeRangePreset>('today')
-  const range = resolveTimeRange(preset, Math.floor(Date.now() / 1000))
+  // 时间窗只在挂载与切换预设时冻结：range 会进 queryKey，渲染期取 Date.now() 会让
+  // 每次响应到达都产生新 key（新缓存条目 → 再次 pending → 再次请求），在真实移动网络上
+  // 表现为「加载—闪数据—加载」并持续打后端。Task 8 review Important-1。
+  const [anchor, setAnchor] = useState(() => Math.floor(Date.now() / 1000))
+  const range = useMemo(() => resolveTimeRange(preset, anchor), [preset, anchor])
+  const selectPreset = (next: TimeRangePreset) => {
+    setPreset(next)
+    setAnchor(Math.floor(Date.now() / 1000))
+  }
 
   const aggregate = useUsageAggregate(scope, range)
   const rate = useLiveRate(scope, range)
@@ -2504,7 +2518,7 @@ export function UsagePage() {
             key={option}
             type='button'
             aria-pressed={preset === option}
-            onClick={() => setPreset(option)}
+            onClick={() => selectPreset(option)}
             className={preset === option ? 'text-foreground text-sm font-medium' : 'text-muted-foreground text-sm'}
           >
             {t(PRESET_LABEL_KEY[option])}
@@ -2518,7 +2532,7 @@ export function UsagePage() {
         <KpiCard label='Cost' value={formatQuotaWithCurrency(totals.quota, locale)} hint={PRESET_LABEL_KEY[preset]} />
         <KpiCard
           label='Current rate'
-          value={rate.data ? `${formatNumber(rate.data.rpm, locale)} / ${formatTokens(rate.data.tpm)}` : '—'}
+          value={typeof rate.data?.rpm === 'number' ? `${formatNumber(rate.data.rpm, locale)} / ${formatTokens(rate.data.tpm)}` : '—'}
           hint='Last 60 seconds'
         />
       </div>
@@ -3311,6 +3325,7 @@ export function useRoutingStats(range: TimeRange) {
         end_timestamp: range.end,
       }),
     staleTime: MOBILE_STALE_TIME.routing,
+    placeholderData: keepPreviousData,
   })
 }
 
@@ -3327,6 +3342,7 @@ export function useAffinityBindings() {
 
 ```tsx
 import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { MobileError } from '@/mobile/components/mobile-error'
@@ -3351,7 +3367,15 @@ export function RoutingPage() {
   const { t, i18n } = useTranslation()
   const locale = i18n.resolvedLanguage || i18n.language
   const [preset, setPreset] = useState<TimeRangePreset>('today')
-  const range = resolveTimeRange(preset, Math.floor(Date.now() / 1000))
+  // 时间窗只在挂载与切换预设时冻结：range 会进 queryKey，渲染期取 Date.now() 会让
+  // 每次响应到达都产生新 key（新缓存条目 → 再次 pending → 再次请求），在真实移动网络上
+  // 表现为「加载—闪数据—加载」并持续打后端。Task 8 review Important-1。
+  const [anchor, setAnchor] = useState(() => Math.floor(Date.now() / 1000))
+  const range = useMemo(() => resolveTimeRange(preset, anchor), [preset, anchor])
+  const selectPreset = (next: TimeRangePreset) => {
+    setPreset(next)
+    setAnchor(Math.floor(Date.now() / 1000))
+  }
   const stats = useRoutingStats(range)
   const affinity = useAffinityBindings()
 
@@ -3374,7 +3398,7 @@ export function RoutingPage() {
             key={option}
             type='button'
             aria-pressed={preset === option}
-            onClick={() => setPreset(option)}
+            onClick={() => selectPreset(option)}
             className={preset === option ? 'text-foreground text-sm font-medium' : 'text-muted-foreground text-sm'}
           >
             {t(PRESET_LABEL_KEY[option])}

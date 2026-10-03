@@ -4566,4 +4566,5 @@ git commit -m "docs(web-mobile): record the mobile console verification evidence
 4. **PAT 无 SessionID**：本 UI 不提供会话管理、安全验证类操作；PAT 轮换后需在手机上重新粘贴。
 5. **手机端不注入 Umami/GA**：`main.go` 的注入函数只改写桌面 `indexPage`；如需统计手机端访问，需要单点扩展 `InjectUmamiAnalytics`/`InjectGoogleAnalytics` 同时处理 `mobileIndexPage`。
 6. **`FRONTEND_BASE_URL` 不为空时**：`SetWebRouter` 不会被调用，`/m` 随整个前端一起重定向到外部地址；这是现有部署语义，v1 不改变。
-7. **首屏体积目标**：若 `bun run build:mobile` 后的首屏 JS（gzip）超过 120 KB，优先检查是否误引入了 `@/components/ui` 中带重依赖的组件（如 `chart.tsx`、`markdown.tsx`）。
+7. **首屏体积目标**：口径为「`mobile-dist/index.html` 直接引用的 chunk + 当前激活页签的 chunk」的 gzip 合计，预算 **< 150 KB（153,600 B）**（原定 120 KB 在强制复用 `@/components/ui/*`（base-ui）+ `@tanstack/react-query` + `i18next` 的前提下不可达，控制器按 Task 8 实测重定；详见 Global Constraints）。当前实测：Task 13 结束时 146,781 B。若超预算，优先检查是否误引入了 `@/components/ui` 中带重依赖的组件（如 `chart.tsx`、`markdown.tsx`），以及是否把 hugeicons/桌面主题之类的包装层带进了首屏（**判据必须用符号与图标 path 数据，不能用包名字符串**，Task 11 的假阴性教训）。
+8. **启动即加载的语言包不在首屏 JS 口径内，但真实首屏流量远大于 146 KB**：`main.tsx` 启动时 `initializeMobileI18n()` 会动态 import 当前语言包，实测 en 105,421 B / zh 163,819 B / zh-TW 195,249 B（gzip）。若要压低真实首屏，需要按 `src/mobile` 实际用到的 key 生成手机端专用语言包（v1 不做，属后续优化项）。

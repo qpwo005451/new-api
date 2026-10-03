@@ -693,9 +693,15 @@ async function loadLocale(code: MobileLocaleCode): Promise<void> {
     code === 'en' ? undefined : localeLoaders.en(),
   ])
 
-  i18n.addResourceBundle(code, 'translation', bundle.default, true, true)
+  // A locale file is its own namespace map (`{ translation: { ... } }`), the same
+  // shape `@/i18n/config` feeds to i18next's `resources` option.
+  for (const [namespace, strings] of Object.entries(bundle.default)) {
+    i18n.addResourceBundle(code, namespace, strings, true, true)
+  }
   if (fallback) {
-    i18n.addResourceBundle('en', 'translation', fallback.default, true, true)
+    for (const [namespace, strings] of Object.entries(fallback.default)) {
+      i18n.addResourceBundle('en', namespace, strings, true, true)
+    }
   }
   await i18n.changeLanguage(code)
 }

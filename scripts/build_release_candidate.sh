@@ -83,6 +83,7 @@ build_embed_assets() {
   local target_root="$2"
   local frontend_root="$target_root/web"
   local dist="$frontend_root/dist"
+  local mobile_dist="$frontend_root/mobile-dist"
 
   [ -f "$frontend_root/package.json" ] || fail "missing frontend workspace package.json: $frontend_root/package.json"
   [ -f "$frontend_root/bun.lock" ] || fail "missing frontend lockfile: $frontend_root/bun.lock"
@@ -91,10 +92,13 @@ build_embed_assets() {
     cd "$frontend_root"
     "$bun_bin" install --frozen-lockfile
     "$bun_bin" run build
+    "$bun_bin" run build:mobile
   )
 
   validate_embed_assets "$dist" ||
     fail "frontend build did not produce valid embedded assets"
+  validate_embed_assets "$mobile_dist" ||
+    fail "mobile frontend build did not produce valid embedded assets"
 }
 
 restore_embed_assets_from_cache() {
@@ -102,12 +106,17 @@ restore_embed_assets_from_cache() {
   local target_root="$2"
   local frontend_root="$target_root/web"
   local dist="$frontend_root/dist"
+  local mobile_dist="$frontend_root/mobile-dist"
   local cached_dist="$cache_entry/dist"
+  local cached_mobile_dist="$cache_entry/mobile-dist"
 
   [ -d "$cached_dist" ] || return 1
-  rm -rf "$dist"
+  [ -d "$cached_mobile_dist" ] || return 1
+  rm -rf "$dist" "$mobile_dist"
   cp -a "$cached_dist" "$dist"
-  validate_embed_assets "$dist"
+  cp -a "$cached_mobile_dist" "$mobile_dist"
+  validate_embed_assets "$dist" || return 1
+  validate_embed_assets "$mobile_dist"
 }
 
 store_embed_assets_in_cache() {
@@ -122,9 +131,14 @@ store_embed_assets_in_cache() {
   mkdir -p "$cache_root"
   cache_tmp="$(mktemp -d "$cache_root/.${cache_key}.tmp.XXXXXX")"
   cp -a "$frontend_root/dist" "$cache_tmp/dist"
+  cp -a "$frontend_root/mobile-dist" "$cache_tmp/mobile-dist"
   validate_embed_assets "$cache_tmp/dist" || {
     rm -rf "$cache_tmp"
     fail "refusing to cache invalid frontend build artifacts"
+  }
+  validate_embed_assets "$cache_tmp/mobile-dist" || {
+    rm -rf "$cache_tmp"
+    fail "refusing to cache invalid mobile frontend build artifacts"
   }
 
   if [ -e "$cache_entry" ]; then
@@ -236,7 +250,7 @@ if restore_embed_assets_from_cache "$frontend_cache_entry" "$src_dir"; then
   frontend_cache_hit="1"
 else
   rm -rf "$frontend_cache_entry"
-  rm -rf "$src_dir/web/dist"
+  rm -rf "$src_dir/web/dist" "$src_dir/web/mobile-dist"
   build_embed_assets "$bun_bin" "$src_dir"
   store_embed_assets_in_cache "$frontend_cache_root" "$frontend_cache_key" "$src_dir"
 fi

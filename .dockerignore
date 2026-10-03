@@ -9,4 +9,5 @@ docs
 .gocache
 /web/node_modules
 /web/dist
+/web/mobile-dist
 !THIRD-PARTY-LICENSES.md

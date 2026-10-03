@@ -597,6 +597,12 @@ describe('resolveMobileLocale', () => {
     expect(resolveMobileLocale('fr-FR')).toBe('fr')
     expect(resolveMobileLocale('de-DE')).toBe('en')
   })
+
+  it('keeps interface language codes the desktop already cached', () => {
+    expect(resolveMobileLocale('zhTW')).toBe('zhTW')
+    expect(resolveMobileLocale('zhCN')).toBe('zhCN')
+    expect(resolveMobileLocale('ja')).toBe('ja')
+  })
 })
 
 describe('initializeMobileI18n', () => {
@@ -615,6 +621,16 @@ describe('initializeMobileI18n', () => {
     expect(i18n.hasResourceBundle('en', 'translation')).toBe(true)
     expect(i18n.hasResourceBundle('ja', 'translation')).toBe(false)
     expect(i18n.t('Usage')).not.toBe('Usage')
+  })
+
+  it('keeps a cached Traditional Chinese preference across reloads', async () => {
+    localStorage.setItem('i18nextLng', 'zhTW')
+
+    await initializeMobileI18n()
+    await initializeMobileI18n()
+
+    expect(i18n.resolvedLanguage).toBe('zhTW')
+    expect(localStorage.getItem('i18nextLng')).toBe('zhTW')
   })
 })
 ```
@@ -669,13 +685,20 @@ type MobileLocaleCode = keyof typeof localeLoaders
 const mobileLocaleCodes = Object.keys(localeLoaders) as MobileLocaleCode[]
 
 function isMobileLocaleCode(value: string): value is MobileLocaleCode {
-  return value in localeLoaders
+  return Object.hasOwn(localeLoaders, value)
 }
 
-// Reuse the project's browser-tag mapping (`zh` -> `zhCN`, `zh-Hant-TW` ->
-// `zhTW`), then narrow region tags onto their primary code (`fr-FR` -> `fr`).
+// The shared `i18nextLng` cache the desktop writes already holds interface codes
+// (`zhTW`), so an exact match has to win before the BCP-47 mapping runs:
+// `convertDetectedLanguage('zhTW')` reads that code as a plain `zh` tag and
+// would downgrade it to `zhCN`. Only then reuse the project's browser-tag
+// mapping (`zh` -> `zhCN`, `zh-Hant-TW` -> `zhTW`) and narrow region tags onto
+// their primary code (`fr-FR` -> `fr`).
 export function resolveMobileLocale(value: string): MobileLocaleCode {
-  const converted = convertDetectedLanguage(value)
+  const trimmed = value.trim()
+  if (isMobileLocaleCode(trimmed)) return trimmed
+
+  const converted = convertDetectedLanguage(trimmed.toLowerCase())
   if (isMobileLocaleCode(converted)) return converted
 
   const primary = converted.split('-')[0]

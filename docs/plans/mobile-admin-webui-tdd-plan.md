@@ -4702,7 +4702,7 @@ mobile UA   GET /m/routing             → 200 text/html（SPA 回落）
 
 ### A.5 未完成 / 阻塞
 
-1. **浏览器人工冒烟（Step 3 的 7 项）未执行**：需要真实浏览器与一个真实 PAT（本环境无浏览器、不应记录令牌）。待人工逐项确认：令牌门、刷新保持登录、撤销 PAT 后下拉刷新回到令牌页、用量页三范围、模型可用性、路由占比条、渠道开关（确认框与桌面端一致）、底部「桌面版」跳转。
+1. **浏览器人工冒烟（Step 3 的 7 项）未执行**：需要真实浏览器与一个真实 PAT。 **→ 已于 2026-10-04 用 Playwright + 本机 Chromium（iPhone 模拟 + zh-CN）自动执行，7 项全部通过（38/38 检查），见附录 D。**
 2. **桌面端没有可点击的「返回手机版」入口**：现仅支持手动访问 `/?desktop=0`（已实现并有 Go 测试）。桌面 UI 加链接超出本计划文件范围，列为后续项。 **→ 已于 2026-10-04 补齐（个人菜单新增「手机版」入口），见附录 C。**
 3. **真实首屏流量仍受语言包支配**：`main.tsx` 启动即动态 import 当前语言包（en 105,421 B / zh 163,819 B / zh-TW 195,249 B gzip），因此网络层首屏约 230–320 KB；要压低需生成手机端专用语言包（v1 不做）。**→ 已由 Task 15 解决（2026-10-04），见附录 B；上表数值保留为 Task 14 当时的事实记录。**
 4. **既存跨语言泄漏**（桌面端历史欠账，本次未动）：fr 77、ru 74、vi 71、ja 38（中文专用字形）、zh-TW 48、zh 1；另小写 key `degraded` 在 6 个语言里仍为中文「降级」。
@@ -4804,3 +4804,39 @@ FIRST_SCREEN_GZIP_TOTAL=145680        (预算 153600，余量 7920)
 **遗留**
 1. 该入口没有单元测试。桌面 chrome 组件在本仓库普遍没有测试，而 `profile-dropdown` 需要 router + auth store + sidebar 配置等上下文；本次改动是纯静态链接 + 一次 cookie 清理，已由 typecheck / 桌面构建 / 代码阅读覆盖，故未新增测试（符合项目「不做仅提升覆盖率的测试」的约定）。
 2. `document.cookie` 删除「由后端以 HttpOnly 下发的同名 cookie」在浏览器实现上存在差异（规范允许删除，Firefox 历史上偏保守）。若清理失败，唯一表现是手机端下次访问 `/` 仍进桌面壳，再次点击该入口即可回到 `/m`，不影响可用性。
+
+---
+
+## 附录 D. 浏览器冒烟（Playwright + 本机 Chromium，2026-10-04）
+
+附录 A.5.1 记录的「7 项浏览器人工冒烟」已用真实浏览器自动执行，覆盖 Step 3 的清单。环境为本机 Arch Linux + `~/.cache/ms-playwright/chromium-1243`（headless，iPhone UA/视口 390×844/isMobile/hasTouch，`locale=zh-CN`，另跑一遍 `en-US`）。
+
+**被测实例**：本地 `go run .`（SQLite `one-api.db`）+ 本分支构建出的 `web/dist`（桌面壳）与 `web/mobile-dist`（手机端，含 Task 15 的裁剪语言包）。数据用 `POST /api/setup` 建 root、直写 DB 种入 1 个渠道 / 5+1 条日志 / 3 条 `quota_data` / 1 个 model-monitor 站点+3 个模型，并直接写入 `users.access_token` 作为 PAT（**注意**：正常生成 PAT 需要 2FA 安全验证，见下）。
+
+**脚本**：`.superpowers/sdd/mobile-admin-webui-tdd-plan/artifacts/smoke.mjs`（gitignored 目录，需 `playwright-core` + 已播种的本地实例）；结果 `report.json`、首屏传输 `first-load.json`、截图 `artifacts/shots/*.png`（11 张）。
+
+**结果：38/38 检查通过**（含 4 页的中文泄漏扫描全为 0；浏览器控制台除第 8 步刻意制造的 401 外无任何报错；无非 API 请求失败）
+
+| # | Step 3 清单项 | 判定方式 | 结果 |
+| --- | --- | --- | --- |
+| 1 | 首次打开 `/m` 显示令牌页；粘贴 PAT 进入控制台；刷新保持登录 | 手机 UA 访问 `/` → 断言落到 `/m`；`#mobile-pat` + zh 标题；粘贴 PAT 后出现 tablist；`page.reload()` 后仍在控制台 | PASS |
+| 2 | 撤销 PAT 后回到令牌页 | 清空 `users.access_token` 后 reload：断言 `localStorage.newapi_mobile_pat` 被清空且令牌门重现；复原后重新进入 | PASS（以 reload 代替下拉刷新手势） |
+| 3 | 用量页「我的/全站」+ 三个时间范围有数据；显示汇总延迟提示 | KPI 请求数 84 / Token 260.0K / 费用 $3.84（= 种入的 `quota_data` 汇总）；切「全部」出现「按用户」排行；切「近 7 天」无 NaN；「汇总数据每几分钟更新一次。」可见 | PASS |
+| 4 | 模型可用性页显示站点健康计数与异常模型 | 断言 `smoke-site`、`站点` KPI、`降级` 计数、`最近失败` 含 `claude-5` | PASS |
+| 5 | 路由统计页显示实测占比与配置权重 | 断言 `发生切换的请求`=1、`按模型流量`、`配置权重` 与实测百分比并排、切换对 `1 → 2` | PASS |
+| 6 | 渠道页搜索 + 开关 + 确认框 + 桌面端一致 | 搜索 `smoke` 过滤；点开关 → 确认框；确认后 **API 复核 `GET /api/channel/` 的 status=2**（再切回为 1）；toast「渠道已禁用」可见 | PASS |
+| 7 | 底部「桌面版」回到桌面 dashboard 且刷新不被弹回 | 点击后 URL=`/`、手机令牌门消失、`newapi_prefer_desktop=1` cookie 存在；reload 仍在桌面壳 | PASS |
+
+**额外验证**
+
+- **首屏真实传输（浏览器编码字节）**：JS 151,002 B + CSS 65,723 B + 语言包 3,486 B = **220,211 B**；其中语言包在修复前会是 ~163,819 B（zh）→ 现在是 3.5 KB（zh 1,710 + en 回退 1,163）。资源瀑布确认只请求了当前语言的裁剪包 + en 回退（`/m/locales/zh.json`、`/m/locales/en.json`）。
+- **i18n 泄漏扫描**：以「en 与 zh 文案不同的 key」为集合，对令牌页、用量页、模型可用性页、路由统计页、渠道页的可见文本逐个匹配 —— **0 命中**，说明 zh 裁剪语言包对实际渲染是完整的。
+- **无 NaN 兜底**：速率卡在 rpm=0 时显示 `0 / -`（不显示 NaNM）。
+- **渠道 #id 回退**：切换对里不存在的渠道 2 显示为 `#2`（`channelName` 为空时），符合 Task 10 修复的预期。
+
+**遗留与说明**
+
+1. **`routing_stats.affinity_by_rule` 仍未渲染**（Task 10 已记录的欠账，本次由浏览器确认）：页面的「粘滞会话」区块读的是 `/api/log/channel_affinity_bindings`（本次为空 → 显示 0 个键），而 `routing_stats` 里已有的 `affinity_by_rule`（本次种入了 `affinity-a`）不会出现在界面上。要让「按规则」的粘滞分布可见，需要把该字段接到该区块。
+2. **PAT 生成需要 2FA 安全验证**：`POST /api/user/token` 返回 `SECURITY_PROOF_REQUIRED`（需要 `X-Security-Proof` 头），因此本次冒烟的 PAT 是直接写入数据库的。这不是手机端的问题（v1 不做 2FA），但意味着**全新实例上必须先配置二次验证才能生成手机端要粘贴的 PAT**，建议在文档/交付说明里注明。
+3. **截图中的方块字是测试环境字体缺失**，与产品无关：本机原先没有 CJK 字体，已装 `~/.local/share/fonts/NotoSansSC-Regular.otf` 后中文正常渲染（截图即安装后的结果）。
+4. 第 11 步（en-US 语境）首次运行时 `#mobile-pat` 等待超时，单独复现为通过、随后全量重跑 38/38 通过 —— 判定为一次偶发（新建 context 与上一步导航竞争），非产品缺陷。

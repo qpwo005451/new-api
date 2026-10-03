@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -29,19 +29,17 @@ const SCRIPT_PATH = join(process.cwd(), 'scripts', 'build-mobile-locales.mjs')
 
 interface MobileLocalesModule {
   MOBILE_LOCALE_FILES: Record<string, string>
-  assertLiteralsCovered: (
-    literalKeys: string[],
-    englishKeys: Set<string>
-  ) => void
+  assertKeysCovered: (keys: string[], englishKeys: Set<string>) => void
   buildMobileLocales: (options: { root: string; outDir?: string }) => Promise<{
     keys: number
     literalKeys: number
+    dynamicKeys: number
     report: Array<{ code: string; file: string; keys: number; bytes: number }>
   }>
   collectMobileLocaleKeys: (
     sources: Array<[string, string]>,
     englishKeys: Set<string>
-  ) => { keys: string[]; literalKeys: string[] }
+  ) => { keys: string[]; literalKeys: string[]; dynamicKeys: string[] }
   subsetLocale: (
     localeMap: Record<string, string>,
     keys: string[]
@@ -60,23 +58,61 @@ describe('collectMobileLocaleKeys', () => {
       [
         'src/mobile/lib/example.ts',
         `
-        const TAB_LABEL_KEY = { usage: 'Usage', models: 'Models by site' }
-        export function label(tab, t) {
+        const TAB_LABEL_KEY: Record<string, string> = {
+          usage: 'Usage',
+          other: 'Mine',
+        }
+        export function label(tab: string, t: (key: string) => string) {
           return t(TAB_LABEL_KEY[tab])
         }
-        export function page(t) {
-          return t('Healthy') + t("Mine") + 'text-sm text-foreground'
+        export function page(t: (key: string) => string) {
+          return t('Healthy') + t('Mine') + 'text-sm text-foreground'
         }
         `,
       ],
     ]
 
-    const { keys, literalKeys } = collectMobileLocaleKeys(sources, englishKeys)
+    const { keys, literalKeys, dynamicKeys } = collectMobileLocaleKeys(
+      sources,
+      englishKeys
+    )
 
     expect(literalKeys).toEqual(['Healthy', 'Mine'])
     // 'Mine' is both a literal and a label-map value, 'Usage' only appears as a
     // map value, and the Tailwind classes are not locale keys.
+    expect(dynamicKeys).toEqual(['Mine', 'Usage'])
     expect(keys).toEqual(['Healthy', 'Mine', 'Usage'])
+  })
+
+  it('keeps fallbacks, key variables and text props', async () => {
+    const { collectMobileLocaleKeys } = await loadScript()
+    const sources: Array<[string, string]> = [
+      [
+        'src/mobile/lib/example.ts',
+        `
+        export function empty(title: string | undefined, t: (key: string) => string) {
+          let messageKey = 'Channel enabled'
+          const bucket = value ?? 'unknown'
+          return t(title ?? 'No Data') + t(messageKey) + bucket
+        }
+        export const card = <KpiCard label='Requests' hint='Last 60 seconds' />
+        `,
+      ],
+    ]
+
+    const { dynamicKeys, literalKeys } = collectMobileLocaleKeys(
+      sources,
+      new Set()
+    )
+
+    expect(literalKeys).toEqual([])
+    // `?? 'unknown'` is an enum fallback, not console text.
+    expect(dynamicKeys).toEqual([
+      'Channel enabled',
+      'Last 60 seconds',
+      'No Data',
+      'Requests',
+    ])
   })
 
   it('ignores template interpolation and placeholder keys', async () => {
@@ -95,21 +131,19 @@ describe('collectMobileLocaleKeys', () => {
   })
 })
 
-describe('assertLiteralsCovered', () => {
-  it('names every literal key without a base translation', async () => {
-    const { assertLiteralsCovered } = await loadScript()
+describe('assertKeysCovered', () => {
+  it('names every key without a base translation', async () => {
+    const { assertKeysCovered } = await loadScript()
 
     expect(() =>
-      assertLiteralsCovered(['Usage', 'Ghost'], new Set(['Usage']))
+      assertKeysCovered(['Usage', 'Ghost'], new Set(['Usage']))
     ).toThrowError(/Ghost/)
   })
 
   it('accepts a fully translated set', async () => {
-    const { assertLiteralsCovered } = await loadScript()
+    const { assertKeysCovered } = await loadScript()
 
-    expect(() =>
-      assertLiteralsCovered(['Usage'], new Set(['Usage']))
-    ).not.toThrow()
+    expect(() => assertKeysCovered(['Usage'], new Set(['Usage']))).not.toThrow()
   })
 })
 
@@ -131,7 +165,8 @@ describe('buildMobileLocales', () => {
     const result = await buildMobileLocales({ root: process.cwd(), outDir })
 
     expect(result.literalKeys).toBeGreaterThan(30)
-    expect(result.keys).toBeGreaterThanOrEqual(result.literalKeys)
+    expect(result.dynamicKeys).toBeGreaterThan(20)
+    expect(result.keys).toBeGreaterThan(30)
 
     const english = JSON.parse(
       readFileSync(join(outDir, MOBILE_LOCALE_FILES.en), 'utf8')
@@ -157,5 +192,35 @@ describe('buildMobileLocales', () => {
       bytes: number
     }
     expect(englishEntry.bytes).toBeLessThan(20_000)
+  })
+
+  it('fails the build when an indirectly reached key has no base translation', async () => {
+    const { MOBILE_LOCALE_FILES, buildMobileLocales } = await loadScript()
+    const root = mkdtempSync(join(tmpdir(), 'mobile-locales-root-'))
+    const localesDir = join(root, 'src', 'i18n', 'locales')
+    const mobileDir = join(root, 'src', 'mobile', 'lib')
+    mkdirSync(localesDir, { recursive: true })
+    mkdirSync(mobileDir, { recursive: true })
+
+    writeFileSync(
+      join(mobileDir, 'labels.ts'),
+      `const STATUS_LABEL_KEY: Record<string, string> = {
+         enabled: 'Enabled',
+         disabled: 'Ghost label',
+       }
+       export const pick = (status: string, t: (key: string) => string) =>
+         t(STATUS_LABEL_KEY[status])
+      `
+    )
+    for (const file of Object.values(MOBILE_LOCALE_FILES)) {
+      writeFileSync(
+        join(localesDir, file),
+        JSON.stringify({ translation: { Enabled: 'Enabled' } })
+      )
+    }
+
+    await expect(
+      buildMobileLocales({ root, outDir: join(root, 'out') })
+    ).rejects.toThrowError(/Ghost label/)
   })
 })

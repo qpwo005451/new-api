@@ -4563,7 +4563,7 @@ git commit -m "docs(web-mobile): record the mobile console verification evidence
 
 **关键约束**
 - key 采集必须同时覆盖两类来源：(1) 字面量 `t('...')`；(2) 任意出现在 `src/mobile` 里、且是基础语言 key 的字符串字面量（覆盖 `t(TAB_LABEL_KEY[tab])`、`t(props.label)`、`t(PRESET_LABEL_KEY[option])` 这类经 label map / props 的查表）。
-- 构建必须 fail-fast：字面量 `t('...')` 在基础语言里没有译文时直接报错退出（否则会静默退化成英文 key）。
+- 构建必须 fail-fast：任何**会被渲染**的 key 在基础语言里没有译文时直接报错退出（否则会静默退化成英文文案）。覆盖四类来源：字面量 `t('...')`、`*LABEL_KEY` 值映射、`?? 'X'` 空值兜底（枚举值如 `?? 'unknown'` 除外）、`<KpiCard label='X' />` 这类文本 prop，以及 `let messageKey = 'X'` 这类 key 变量。
 - 抓取失败不得致命：`fetch` 抛错或非 2xx 时控制台继续用英文源 key 渲染（与 i18next 的 `fallbackLng: 'en'` 一致），`initializeMobileI18n()` 必须 resolve。
 - 生成物不提交（构建/CI 重新生成），因此不会与被改动的语言文件脱节。
 
@@ -4714,7 +4714,7 @@ mobile UA   GET /m/routing             → 200 text/html（SPA 回落）
 ### B.1 生成器输出（`bun run mobile:locales`）
 
 ```
-mobile locales: 86 keys (47 literal t() calls)
+mobile locales: 86 keys (47 literal t() calls, 30 indirect)
   en.json     86 keys  3871 B
   zh.json     86 keys  3718 B
   zh-TW.json  86 keys  3742 B
@@ -4756,7 +4756,7 @@ FIRST_SCREEN_GZIP_TOTAL=145680        (预算 153600，余量 7920)
 | 命令 | 结果 |
 | --- | --- |
 | `bun run test` | **203 files / 2287 tests passed**（+1 file / +8 tests：`mobile-locales.test.ts` 6 个 + `i18n.test.ts` 新增 3 个并改写既存 1 个） |
-| `bun run test -- src/mobile` | **24 files / 112 tests passed** |
+| `bun run test -- src/mobile` | **24 files / 114 tests passed** |
 | `bun run typecheck` | exit 0 |
 | `bunx oxlint -c .oxlintrc.json src/mobile scripts/build-mobile-locales.mjs` | exit 0，仅既存 1 条 warning（`src/mobile/main.tsx:28`） |
 | `bunx oxfmt --check src/mobile scripts/build-mobile-locales.mjs` | `All matched files use the correct format.` |
@@ -4768,13 +4768,14 @@ FIRST_SCREEN_GZIP_TOTAL=145680        (预算 153600，余量 7920)
 1. 解析出的语言决定抓取地址：`i18nextLng=zh` → `fetch('/m/locales/zh.json')`，且不抓 `ja.json`。
 2. 非英文语言额外抓 `en.json` 作为回退；未命中的 key 仍回落到英文 key 本身。
 3. `fetch` 抛错（离线 / 404）时 `initializeMobileI18n()` 正常 resolve，页面用英文源 key 渲染（`i18n.t('Usage') === 'Usage'`）。注意 i18next 的语义：没有译文时 `resolvedLanguage` 为 `undefined`，而 `i18n.language` 仍是请求的语言码。
-4. 生成器：label map 里的 key（`t(TAB_LABEL_KEY[tab])`）必须被采集；字面量 `t('...')` 缺基础语言译文时必须抛错（fail-fast）；Tailwind 类名不得混入 key 集合；七个语言裁剪包 key 数一致。
+4. 生成器：label map 里的 key（`t(TAB_LABEL_KEY[tab])`）必须被采集；**任何**会被渲染的 key（字面量 `t()`、`*LABEL_KEY` 映射值、`??` 兜底文案、文本 prop、key 变量）缺基础语言译文时必须抛错（fail-fast）；Tailwind 类名与枚举兜底（`?? 'unknown'`）不得混入 key 集合；七个语言裁剪包 key 数一致。
+5. 生成器 fail-fast 的独立验证（控制器复核时用 `/tmp` 副本逐项删除 `en.json` 中的 key，确认进程 exit=1 且错误信息点名该 key）：`Usage`（`TAB_LABEL_KEY` 值，**修复前会静默通过并产出 85 个 key 的裁剪包**）、`Auto disabled`（`STATUS_LABEL_KEY` 值）、`No Data`（`??` 兜底）、`Requests`（文本 prop）、`Could not update the channel status.`（`messageKey` 变量）。
 5. 生成器端到端跑真实源码 + 真实语言文件：`en['Mobile console'] === 'Mobile console'`、`zh === '手机控制台'`、`zh-TW === '手機控制台'`，`en.json` < 20,000 B。
 
 ### B.5 遗留小项
 
 1. 裁剪语言包文件名不含内容哈希，而 `middleware.Cache` 对非根路径下发 `max-age=604800`，升级后浏览器最长 7 天可能沿用旧语言包（只会在缺少新 key 时退化成英文，不会白屏）。彻底消除可给文件名加内容哈希。
-2. 生成器只扫描 `src/mobile` 源码；若将来出现运行时拼接的 key（模板字符串），字面量正则覆盖不到 —— 但「任意字符串字面量 ∈ 基础语言 key」这条规则仍会兜住绝大多数查表用法，且 fail-fast 只校验字面量 `t()`。
+2. 生成器只扫描 `src/mobile` 源码，且 fail-fast 依赖「会渲染的 key 的四种来源形态」这些约定：若将来出现运行时拼接的 key（模板字符串）或第五种间接形态，正则覆盖不到 —— 「任意字符串字面量 ∈ 基础语言 key」这条规则仍会兜住绝大多数查表用法，但这类新形态不会被 fail-fast 拦下（会退化成英文文案）。新增 UI 文案时优先写成字面量 `t('...')`，即可被 fail-fast 覆盖。
 
 ---
 

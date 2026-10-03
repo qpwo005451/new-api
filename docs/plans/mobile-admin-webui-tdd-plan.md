@@ -3193,12 +3193,21 @@ export interface RoutingTrendPoint {
 }
 
 export interface RoutingStats {
+  requests: number
+  errors: number
   by_model_channel: RoutingModelChannelStat[]
-  switches: RoutingSwitchStat[]
-  reasons: RoutingReasonStat[]
-  affinity: RoutingAffinityStat[]
   window: RoutingStatsWindow
   trend: RoutingTrendPoint[]
+  // trail 扫描会截断，switched/scanned/switches 只覆盖被扫到的部分（Task 10 review Minor-2）
+  scanned: number
+  truncated: boolean
+  switched: number
+  switched_success: number
+  switched_failed: number
+  sticky: number
+  switches: RoutingSwitchStat[]
+  switch_reasons: RoutingReasonStat[]
+  affinity_by_rule: RoutingAffinityStat[]
 }
 
 export interface ChannelAffinityBinding {
@@ -3408,8 +3417,12 @@ export function RoutingPage() {
 
       <div className='grid grid-cols-2 gap-2'>
         <KpiCard label='Requests' value={models.reduce((total, model) => total + model.requests, 0)} hint={PRESET_LABEL_KEY[preset]} />
-        <KpiCard label='Channel switches' value={switches.reduce((total, row) => total + row.count, 0)} hint={PRESET_LABEL_KEY[preset]} />
+        <KpiCard label='Channel switches' value={formatNumber(stats.data.switched, locale)} hint={PRESET_LABEL_KEY[preset]} />
       </div>
+
+      {stats.data.truncated ? (
+        <p className='text-muted-foreground text-[11px]'>{t('Some switches in this window were not scanned.')}</p>
+      ) : null}
 
       {models.length === 0 ? (
         <p className='text-muted-foreground text-sm'>{t('Run requests, or widen the time window, to collect routing statistics.')}</p>
@@ -3433,7 +3446,7 @@ export function RoutingPage() {
                 {model.channels.map((channel) => (
                   <ValueRow
                     key={channel.channelId}
-                    label={channel.channelName}
+                    label={channel.channelName || `#${channel.channelId}`}
                     secondary={
                       channel.configuredShare === null
                         ? t('Configured weight unknown')

@@ -3504,7 +3504,7 @@ git commit -m "feat(web-mobile): add the routing statistics tab"
 - Modify: `web/src/mobile/types.ts`
 - Create: `web/src/mobile/features/channels/lib/channel-status.ts`、`web/src/mobile/features/channels/api.ts`、`web/src/mobile/features/channels/components/channels-page.tsx`
 - Create: `web/src/mobile/features/channels/lib/__tests__/channel-status.test.ts`、`web/src/mobile/features/channels/components/__tests__/channels-page.test.tsx`
-- Modify: `web/src/mobile/app.tsx`
+- Modify: `web/src/mobile/app.tsx`、`web/src/mobile/providers.tsx`
 
 **Interfaces:**
 - Produces:
@@ -3848,6 +3848,21 @@ export function ChannelsPage() {
 
 `web/src/mobile/app.tsx`：把兜底面板替换为 `{activeTab === 'channels' ? <ChannelsPage /> : null}`。
 
+**`toast` 需要在手机端挂载 `<Toaster />`（否则 `toast.success`/`toast.error` 是静默空操作）**：在 `web/src/mobile/providers.tsx` 里从 **`sonner` 直接**引入并渲染：
+
+```tsx
+import { Toaster } from 'sonner'
+// ...
+return (
+  <QueryClientProvider client={mobileQueryClient}>
+    {props.children}
+    <Toaster />
+  </QueryClientProvider>
+)
+```
+
+**不要**用 `@/components/ui/sonner`：那个包装层会引入 `@hugeicons/core-free-icons`、`@hugeicons/react` 与 `@/context/theme-provider`（桌面主题），把手机首屏拖大（Global Constraints 的禁用依赖口径）。
+
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `cd /home/ra/orca/workspaces/Newapi/codex-mobile-admin-webui/web && bun run test -- src/mobile && bun run typecheck && bunx oxlint -c .oxlintrc.json src/mobile`
@@ -3857,7 +3872,7 @@ Expected: 全部 PASS。
 
 ```bash
 cd /home/ra/orca/workspaces/Newapi/codex-mobile-admin-webui
-git add web/src/mobile/types.ts web/src/mobile/features/channels web/src/mobile/app.tsx
+git add web/src/mobile/types.ts web/src/mobile/features/channels web/src/mobile/app.tsx web/src/mobile/providers.tsx
 git commit -m "feat(web-mobile): add the channels tab with enable and disable controls"
 ```
 

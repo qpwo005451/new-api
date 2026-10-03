@@ -19,14 +19,25 @@ For commercial licensing, please contact support@quantumnous.com
 import { queryOptions, type QueryClient } from '@tanstack/react-query'
 
 import { getStatus } from '@/lib/api'
-import { DEFAULT_SYSTEM_NAME, DEFAULT_LOGO } from '@/lib/constants'
 import {
-  useSystemConfigStore,
-  type CurrencyConfig,
-  type CurrencyDisplayType,
-  type SystemConfig,
-  DEFAULT_CURRENCY_CONFIG,
-} from '@/stores/system-config-store'
+  STATUS_QUERY_KEY,
+  STATUS_STORAGE_KEY,
+  mapStatusDataToConfig,
+  readCachedStatus,
+  syncStatusToSystemConfig,
+  type StatusData,
+} from '@/lib/status-config'
+
+// The transport-free half of the status contract lives in `status-config.ts`
+// so the mobile console can reuse it without pulling axios in. Re-exported here
+// so existing desktop consumers keep the `@/lib/status-query` import path.
+export {
+  STATUS_QUERY_KEY,
+  STATUS_STORAGE_KEY,
+  mapStatusDataToConfig,
+  readCachedStatus,
+}
+export type { StatusData }
 
 /**
  * Single source of truth for `/api/status`.
@@ -40,110 +51,11 @@ import {
  * Query can dedupe. Calling `getStatus()` directly re-introduces the duplicate
  * requests this module exists to collapse.
  */
-export const STATUS_QUERY_KEY = ['status'] as const
-
-export const STATUS_STORAGE_KEY = 'status'
-
-/** Status payload shape — loose on purpose; the backend map is open-ended. */
-export type StatusData = Record<string, unknown>
-
-/** Coerce a status field to a number, keeping `fallback` for unusable values. */
-function toNumber(value: unknown, fallback: number): number {
-  if (typeof value === 'number' && !Number.isNaN(value)) return value
-  if (typeof value === 'string') {
-    const parsed = Number(value)
-    if (!Number.isNaN(parsed)) return parsed
-  }
-  return fallback
-}
-
-/**
- * Map `/api/status` response data to our persisted system config structure
- */
-export function mapStatusDataToConfig(
-  data: StatusData | undefined | null
-): Partial<SystemConfig> {
-  if (!data) return {}
-
-  const quotaDisplayType =
-    (data.quota_display_type as CurrencyDisplayType | undefined) ??
-    DEFAULT_CURRENCY_CONFIG.quotaDisplayType
-
-  const currency: CurrencyConfig = {
-    displayInCurrency:
-      (data.display_in_currency as boolean | undefined) ??
-      DEFAULT_CURRENCY_CONFIG.displayInCurrency,
-    quotaDisplayType,
-    quotaPerUnit: toNumber(
-      data.quota_per_unit,
-      DEFAULT_CURRENCY_CONFIG.quotaPerUnit
-    ),
-    usdExchangeRate: toNumber(
-      data.usd_exchange_rate,
-      DEFAULT_CURRENCY_CONFIG.usdExchangeRate
-    ),
-    customCurrencySymbol:
-      (data.custom_currency_symbol as string | undefined)?.trim() ||
-      DEFAULT_CURRENCY_CONFIG.customCurrencySymbol,
-    customCurrencyExchangeRate: toNumber(
-      data.custom_currency_exchange_rate,
-      DEFAULT_CURRENCY_CONFIG.customCurrencyExchangeRate
-    ),
-  }
-
-  return {
-    systemName: (data.system_name as string | undefined) || DEFAULT_SYSTEM_NAME,
-    logo: (data.logo as string | undefined) || DEFAULT_LOGO,
-    footerHtml: data.footer_html as string | undefined,
-    demoSiteEnabled: data.demo_site_enabled as boolean | undefined,
-    displayTokenStatEnabled: data.display_token_stat_enabled as
-      | boolean
-      | undefined,
-    currency,
-  }
-}
-
-/** Read the last known status from localStorage (survives reload, may be stale). */
-export function readCachedStatus(): StatusData | null {
-  try {
-    if (typeof window === 'undefined') return null
-    const raw = window.localStorage.getItem(STATUS_STORAGE_KEY)
-    return raw ? (JSON.parse(raw) as StatusData) : null
-  } catch {
-    return null
-  }
-}
-
-/** Persist the latest status so the next cold start can render before fetching. */
-function writeCachedStatus(status: StatusData | null): void {
-  try {
-    if (typeof window !== 'undefined' && status) {
-      window.localStorage.setItem(STATUS_STORAGE_KEY, JSON.stringify(status))
-    }
-  } catch {
-    /* Storage can be unavailable in private mode. */
-  }
-}
-
-/**
- * The single `/api/status` request.
- *
- * Owns both side effects of a successful read — syncing the system-config store
- * and writing the localStorage snapshot — so consumers never repeat either one.
- */
 async function fetchStatus(): Promise<StatusData | null> {
   const status = (await getStatus()) as StatusData | null
 
   if (status) {
-    try {
-      useSystemConfigStore.getState().setConfig(mapStatusDataToConfig(status))
-    } catch (err) {
-      if (import.meta.env.DEV) {
-        // eslint-disable-next-line no-console
-        console.warn('[status] Failed to sync status to system config', err)
-      }
-    }
-    writeCachedStatus(status)
+    syncStatusToSystemConfig(status)
   }
 
   return status

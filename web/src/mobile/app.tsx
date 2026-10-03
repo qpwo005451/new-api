@@ -19,19 +19,19 @@ For commercial licensing, please contact support@quantumnous.com
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
-import { LoadingState } from '@/components/loading-state'
-import { statusQueryOptions } from '@/lib/status-query'
+import { MobileLoading } from '@/mobile/components/mobile-loading'
 import { PatGate } from '@/mobile/components/pat-gate'
+import { mobileStatusQueryOptions } from '@/mobile/lib/status'
 
 export function MobileApp() {
   const { t } = useTranslation()
   // formatQuotaWithCurrency and the other money helpers read the currency
   // settings from the system-config store, which /api/status hydrates. Without
   // this query every amount would be rendered with the USD defaults.
-  const status = useQuery(statusQueryOptions)
+  const status = useQuery(mobileStatusQueryOptions)
 
   if (status.isPending) {
-    return <LoadingState />
+    return <MobileLoading />
   }
 
   return (

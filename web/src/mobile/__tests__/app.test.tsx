@@ -20,8 +20,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { STATUS_QUERY_KEY } from '@/lib/status-query'
 import { MobileApp } from '@/mobile/app'
+import { STATUS_QUERY_KEY } from '@/mobile/lib/status'
 
 const testQueryClient = new QueryClient({
   defaultOptions: { queries: { retry: false } },

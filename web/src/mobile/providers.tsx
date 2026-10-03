@@ -16,27 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-import { Toaster } from '@/components/ui/sonner'
-import '@/mobile/styles/mobile.css'
+import { QueryClientProvider } from '@tanstack/react-query'
+import type { ReactNode } from 'react'
 
-import { MobileApp } from '@/mobile/app'
-import { initializeMobileI18n } from '@/mobile/lib/i18n'
-import { MobileProviders } from '@/mobile/providers'
+import { mobileQueryClient } from '@/mobile/lib/query-client'
 
-const container = document.getElementById('root')
-if (container) {
-  // Not awaited: the shell renders with the English source keys first and
-  // re-renders once the active locale chunk arrives.
-  void initializeMobileI18n()
+interface MobileProvidersProps {
+  children: ReactNode
+}
 
-  createRoot(container).render(
-    <StrictMode>
-      <MobileProviders>
-        <MobileApp />
-        <Toaster />
-      </MobileProviders>
-    </StrictMode>
-  )
+export function MobileProviders(props: MobileProvidersProps) {
+  return <QueryClientProvider client={mobileQueryClient}>{props.children}</QueryClientProvider>
 }

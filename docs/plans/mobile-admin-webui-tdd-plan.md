@@ -346,16 +346,19 @@ func desktopShellHandler(indexPage []byte) gin.HandlerFunc {
 	}
 }
 
+// SetWebRouter serves the desktop shell. gzip, rate limiting and caching stay
+// inside the web chain instead of being registered with router.Use, so the set
+// and order of middleware running for other routes on the engine is unchanged.
 func SetWebRouter(router *gin.Engine, assets WebAssets, pluginDispatcher gin.HandlerFunc) {
 	frontendFS := common.EmbedFolder(assets.BuildFS, "web/dist")
 
-	router.Use(gzip.Gzip(gzip.DefaultCompression))
-	router.Use(middleware.GlobalWebRateLimit())
-	router.Use(middleware.Cache())
 	router.NoRoute(
 		pluginDispatcher,
 		middleware.RouteTag("web"),
+		gzip.Gzip(gzip.DefaultCompression),
 		middleware.AccessTokenAudit(),
+		middleware.GlobalWebRateLimit(),
+		middleware.Cache(),
 		static.Serve("/", frontendFS),
 		desktopShellHandler(assets.IndexPage),
 	)
@@ -473,14 +476,19 @@ type WebAssets struct {
 	MobileIndexPage []byte
 }
 
-// withWebChain builds the per-request middleware chain shared by every web
-// shell. A fresh slice is allocated per call so appending never mutates a
-// sibling route's chain.
+// withWebChain builds the per-request middleware chain shared by the desktop
+// fallback and the mobile console. The order matches the pre-existing desktop
+// chain exactly, and the chain is never registered with router.Use, so adding
+// the mobile routes cannot widen gzip, caching or rate limiting to other
+// routes on the engine.
 func withWebChain(pluginDispatcher gin.HandlerFunc, extra ...gin.HandlerFunc) []gin.HandlerFunc {
 	chain := []gin.HandlerFunc{
 		pluginDispatcher,
 		middleware.RouteTag("web"),
+		gzip.Gzip(gzip.DefaultCompression),
 		middleware.AccessTokenAudit(),
+		middleware.GlobalWebRateLimit(),
+		middleware.Cache(),
 	}
 	return append(chain, extra...)
 }
@@ -510,9 +518,6 @@ func SetWebRouter(router *gin.Engine, assets WebAssets, pluginDispatcher gin.Han
 	mobileFS := common.EmbedFolder(assets.MobileBuildFS, "web/mobile-dist")
 	mobileShell := buildMobileShell(mobileFS, assets.MobileIndexPage)
 
-	router.Use(gzip.Gzip(gzip.DefaultCompression))
-	router.Use(middleware.GlobalWebRateLimit())
-	router.Use(middleware.Cache())
 	router.GET("/m", withWebChain(pluginDispatcher, mobileShell)...)
 	router.GET("/m/*path", withWebChain(pluginDispatcher, mobileShell)...)
 	router.NoRoute(

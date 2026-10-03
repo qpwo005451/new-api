@@ -37,8 +37,8 @@ jobs:
 
       - name: Create frontend embed placeholder
         run: |
-          mkdir -p web/dist
-          touch web/dist/index.html
+          mkdir -p web/dist web/mobile-dist
+          touch web/dist/index.html web/mobile-dist/index.html
 
       - name: Vet root module
         run: go vet ./...

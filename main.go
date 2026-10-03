@@ -47,6 +47,12 @@ var buildFS embed.FS
 //go:embed web/dist/index.html
 var indexPage []byte
 
+//go:embed web/mobile-dist
+var mobileBuildFS embed.FS
+
+//go:embed web/mobile-dist/index.html
+var mobileIndexPage []byte
+
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "plugin" {
 		os.Exit(jsplugin.RunCLI(os.Args[2:], os.Stdout, os.Stderr))
@@ -205,8 +211,10 @@ func main() {
 
 	// 设置路由
 	router.SetRouter(server, router.WebAssets{
-		BuildFS:   buildFS,
-		IndexPage: indexPage,
+		BuildFS:         buildFS,
+		IndexPage:       indexPage,
+		MobileBuildFS:   mobileBuildFS,
+		MobileIndexPage: mobileIndexPage,
 	})
 	var port = os.Getenv("PORT")
 	if port == "" {

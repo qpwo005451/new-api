@@ -20,6 +20,7 @@ package router
 
 import (
 	"embed"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -160,6 +161,174 @@ func TestMobileShellServesIndexAndFallsBackForDeepLinks(t *testing.T) {
 			} else {
 				assert.Empty(t, recorder.Header().Get("Cache-Control"))
 			}
+		})
+	}
+}
+
+const (
+	testMobileUserAgent  = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) Mobile/15E148 Safari/604.1"
+	testDesktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+
+// noopPluginDispatcher stands in for the real plugin dispatcher so the tests
+// can assemble the production web router without any plugin state.
+func noopPluginDispatcher(c *gin.Context) { c.Next() }
+
+// newTestWebEngine assembles the production web router, chain included, on an
+// empty test engine. The embedded file systems are the zero value (an embed.FS
+// cannot be fabricated), so every asset lookup misses, but both index pages are
+// supplied directly, which lets the response body prove which handler ran.
+func newTestWebEngine(t *testing.T) *gin.Engine {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	SetWebRouter(engine, WebAssets{
+		IndexPage:       []byte(testDesktopIndex),
+		MobileIndexPage: []byte(testMobileIndex),
+	}, noopPluginDispatcher)
+	return engine
+}
+
+// TestWebRouterServesMobileConsole exercises the real SetWebRouter assembly
+// rather than a hand-built /m route, so the route, chain, index-page binding
+// and fallback decisions are covered together.
+func TestWebRouterServesMobileConsole(t *testing.T) {
+	cases := []struct {
+		name             string
+		method           string
+		target           string
+		userAgent        string
+		wantStatus       int
+		wantLocation     string
+		wantBody         string
+		wantCacheControl string
+	}{
+		{name: "GET /m serves the mobile index", method: http.MethodGet, target: "/m", wantStatus: http.StatusOK, wantBody: testMobileIndex, wantCacheControl: "no-cache"},
+		{name: "deep link falls back to the mobile index", method: http.MethodGet, target: "/m/deep/link", wantStatus: http.StatusOK, wantBody: testMobileIndex, wantCacheControl: "no-cache"},
+		{name: "non GET methods fall through to the shared NoRoute shell", method: http.MethodPost, target: "/m", wantStatus: http.StatusOK, wantBody: testDesktopIndex, wantCacheControl: "no-cache"},
+		{name: "mobile root redirects to the console", method: http.MethodGet, target: "/", userAgent: testMobileUserAgent, wantStatus: http.StatusFound, wantLocation: "/m", wantCacheControl: "no-cache"},
+		{name: "desktop root still falls back to the desktop shell", method: http.MethodGet, target: "/", userAgent: testDesktopUserAgent, wantStatus: http.StatusOK, wantBody: testDesktopIndex, wantCacheControl: "no-cache"},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			engine := newTestWebEngine(t)
+			request := httptest.NewRequest(testCase.method, testCase.target, nil)
+			if testCase.userAgent != "" {
+				request.Header.Set("User-Agent", testCase.userAgent)
+			}
+			recorder := httptest.NewRecorder()
+			engine.ServeHTTP(recorder, request)
+
+			require.Equal(t, testCase.wantStatus, recorder.Code)
+			if testCase.wantLocation != "" {
+				assert.Equal(t, testCase.wantLocation, recorder.Header().Get("Location"))
+			}
+			if testCase.wantStatus == http.StatusOK {
+				assert.Equal(t, testCase.wantBody, recorder.Body.String())
+			}
+			assert.Equal(t, testCase.wantCacheControl, recorder.Header().Get("Cache-Control"))
+		})
+	}
+}
+
+// TestWebRouterRegistersMobileConsoleForGETOnly is the structural counterpart to
+// the HTTP-table test. It reads the engine route table directly, so widening /m
+// to another method fails here even though NoRoute would still answer every
+// unmatched request with 200.
+func TestWebRouterRegistersMobileConsoleForGETOnly(t *testing.T) {
+	engine := newTestWebEngine(t)
+
+	methodsByPath := map[string]map[string]bool{}
+	for _, route := range engine.Routes() {
+		if route.Path != "/m" && route.Path != "/m/*path" {
+			continue
+		}
+		if methodsByPath[route.Path] == nil {
+			methodsByPath[route.Path] = map[string]bool{}
+		}
+		methodsByPath[route.Path][route.Method] = true
+	}
+
+	require.Contains(t, methodsByPath, "/m")
+	require.Contains(t, methodsByPath, "/m/*path")
+	for _, path := range []string{"/m", "/m/*path"} {
+		assert.Equal(t, map[string]bool{http.MethodGet: true}, methodsByPath[path], "%s must only be registered for GET", path)
+	}
+}
+
+// TestWebChainStaysOffTheEngineScope guards the binding decision that the web
+// middleware must only ever be attached per route. Registering gzip, rate
+// limiting or caching with router.Use would leak them onto every other route on
+// the engine, which this probe detects.
+func TestWebChainStaysOffTheEngineScope(t *testing.T) {
+	engine := newTestWebEngine(t)
+	engine.GET("/__probe", func(c *gin.Context) { c.String(http.StatusOK, "probe") })
+
+	request := httptest.NewRequest(http.MethodGet, "/__probe", nil)
+	request.Header.Set("Accept-Encoding", "gzip")
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "probe", recorder.Body.String())
+	assert.Empty(t, recorder.Header().Get("Cache-Control"), "router.Use(Cache) would leak a one-week cache header onto unrelated routes")
+	assert.Empty(t, recorder.Header().Get("Cache-Version"), "router.Use(Cache) would leak the cache version onto unrelated routes")
+	assert.Empty(t, recorder.Header().Get("Content-Encoding"), "router.Use(gzip) would compress unrelated routes")
+}
+
+// testMobileAssetFS adapts the testdata embed.FS to static.ServeFileSystem. The
+// fixture keys carry the testdata/ prefix, so common.EmbedFolder cannot point
+// the mobile build at them; this test-only type lets the real withWebChain serve
+// a real mobile asset.
+type testMobileAssetFS struct {
+	http.FileSystem
+}
+
+func (f testMobileAssetFS) Exists(prefix string, name string) bool {
+	_, err := f.Open(name)
+	return err == nil
+}
+
+func (f testMobileAssetFS) Open(name string) (http.File, error) {
+	if name == "/" {
+		return nil, fs.ErrNotExist
+	}
+	return f.FileSystem.Open(name)
+}
+
+// TestWebChainCachesMobileAssetsButNotTheMobileIndex runs a real mobile asset
+// and the mobile index through withWebChain, so the interaction between
+// middleware.Cache (one week max-age) and the shell's no-cache override is
+// asserted on the real chain instead of on a bare engine.
+func TestWebChainCachesMobileAssetsButNotTheMobileIndex(t *testing.T) {
+	sub, err := fs.Sub(testMobileFS, "testdata/mobile-dist")
+	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	shell := buildMobileShell(testMobileAssetFS{FileSystem: http.FS(sub)}, []byte(testMobileIndex))
+	engine.GET("/m", withWebChain(noopPluginDispatcher, shell)...)
+	engine.GET("/m/*path", withWebChain(noopPluginDispatcher, shell)...)
+
+	cases := []struct {
+		name             string
+		target           string
+		wantBody         string
+		wantCacheControl string
+	}{
+		{name: "mobile index overrides the one week max-age", target: "/m", wantBody: testMobileIndex, wantCacheControl: "no-cache"},
+		{name: "real asset keeps the one week max-age from the web chain", target: "/m/static/app.js", wantBody: "console.log('mobile shell asset')\n", wantCacheControl: "max-age=604800"},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, testCase.target, nil))
+
+			require.Equal(t, http.StatusOK, recorder.Code)
+			assert.Equal(t, testCase.wantBody, recorder.Body.String())
+			assert.Equal(t, testCase.wantCacheControl, recorder.Header().Get("Cache-Control"))
 		})
 	}
 }

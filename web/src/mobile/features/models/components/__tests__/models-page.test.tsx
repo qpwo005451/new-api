@@ -97,4 +97,26 @@ describe('ModelsPage', () => {
 
     await waitFor(() => expect(screen.getByText('Model monitoring is disabled on this instance.')).toBeInTheDocument())
   })
+
+  it('shows an error state when the token is rejected', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ success: false, message: 'forbidden' }), {
+            status: 403,
+            headers: { 'Content-Type': 'application/json' },
+          })
+      )
+    )
+
+    render(
+      <QueryClientProvider client={mobileQueryClient}>
+        <ModelsPage />
+      </QueryClientProvider>
+    )
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
+    expect(screen.getByText('Load failed')).toBeInTheDocument()
+  })
 })

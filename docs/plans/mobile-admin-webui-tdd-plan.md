@@ -4430,6 +4430,14 @@ export function MobileProviders(props: MobileProvidersProps) {
 1. **底部安全区**：`app.tsx` 的内容容器当前是 `pb-16`（64px），而底栏实际高 `48px + env(safe-area-inset-bottom)`；在刘海机型上最后一行会被栏遮住。把内容容器的底部内边距改成 `pb-[calc(4rem+env(safe-area-inset-bottom))]`（或让底栏高度参与同一变量），并保留 `PullToRefresh` 的滚动容器语义（滚动发生在内容容器上时才触发下拉）。
 2. **Toast 跟随主题**：`providers.tsx` 挂的明文 `<Toaster />` 目前没有 `theme`，暗色系统下 toast 会渲染成浅色。既然 `ThemeProvider` 已经在这一层，就把解析后的主题传进去（`const { resolvedTheme } = useTheme()` → `<Toaster theme={resolvedTheme} />`），不要改回 `@/components/ui/sonner`。
 
+**Task 13 review 追加要求（第二轮，控制器裁决）**：
+
+3. **桌面版入口不能是单行道**：`router/web-router.go` 的 `prefersDesktopShell` 只认 `?desktop=1` 与 cookie。请支持 `?desktop=0`：命中时**清掉** `newapi_prefer_desktop` cookie（`max-age=0`）并**重定向到 `/m`**，放在与 `?desktop=1` 相同的分支附近；`router/web_router_test.go` 补两个用例（`?desktop=0` 时手机 UA 请求 `/` 得到 302 → `/m` 且回包带清除 cookie 的 `Set-Cookie`；`?desktop=0` 不影响非手机 UA 的正常渲染）。这是本任务唯一允许的后端改动，文件仅限 `router/web-router.go` 与 `router/web_router_test.go`。
+4. **首屏不能闪白**：`ThemeProvider` 只在 `useEffect` 里加 `dark`/`light` 类，深色系统下首帧必然是浅色。请在 `web/src/mobile/index.html` 的 `<head>` 里加一段**内联** bootstrap 脚本（在模块加载前同步执行）：读 `localStorage` 的主题偏好（key 见 `@/lib/theme-storage`）与 `matchMedia('(prefers-color-scheme: dark)')`，用与 `ThemeProvider` 相同的规则给 `document.documentElement` 加 `dark`/`light` 类。内联脚本里要写明它是 `theme-provider.tsx` 的镜像，改动一处必须同步另一处。
+5. **PWA 图标**：`manifest.webmanifest` 需要 `icons`（含 192 与 512），否则浏览器不会给出安装提示。用本机 ImageMagick 从 `web/public/logo.png`（180×180）生成 `web/public-mobile/icon-192.png`、`icon-512.png`，以及一个含安全边距的 `icon-maskable-512.png`（`purpose: 'maskable'`）；并在 `index.html` 里加 `<link rel='apple-touch-icon' href='/m/icon-192.png' />`。**不要**把 180×180 的文件谎报成 512。
+6. **下拉刷新的收尾**：补 `onTouchCancel`（复位 `startY`/`pulledFarEnough`）；刷新中给可见指示与 `role='status'`/`aria-live='polite'` 的无障碍通告（不要只用 `data-refreshing`）；修正或落实 `pull-to-refresh.tsx` 中「queries keep their own toast」的注释（`invalidateQueries` 不会弹 toast）；`mobile.css` 里 `body { padding-bottom: env(safe-area-inset-bottom) }` 与外层 `h-dvh` 滚动容器叠加会产生页面级回弹，去掉该 `body` 内边距，让内容容器与底栏各自承担安全区。
+7. **新增的 `t('Desktop version')` 必须补进 7 个语言文件**（Task 12 的 key 扫描发生在该文案出现之前）：`bun run i18n:sync` 后按项目 i18n 技能翻译，并自查 `src/mobile` 里所有 `t('...')` 字面量在 7 个语言的缺失数为 0。
+
 - [ ] **Step 4: 运行测试与构建确认通过**
 
 Run:

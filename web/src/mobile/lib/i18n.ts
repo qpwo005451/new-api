@@ -21,24 +21,27 @@ import { initReactI18next } from 'react-i18next'
 
 import { convertDetectedLanguage } from '@/i18n/languages'
 
-// Each locale file holds every desktop string, so locales are only ever loaded
-// as separate async chunks: the console ships no locale data in its first screen.
-const localeLoaders = {
-  en: () => import('@/i18n/locales/en.json'),
-  zhCN: () => import('@/i18n/locales/zh.json'),
-  zhTW: () => import('@/i18n/locales/zh-TW.json'),
-  fr: () => import('@/i18n/locales/fr.json'),
-  ru: () => import('@/i18n/locales/ru.json'),
-  ja: () => import('@/i18n/locales/ja.json'),
-  vi: () => import('@/i18n/locales/vi.json'),
+// Each locale file holds every desktop string (~7k keys), so the console
+// fetches its own trimmed bundles from `/m/locales` instead: they are generated
+// from the keys these sources reference (`scripts/build-mobile-locales.mjs`) and
+// copied into the mobile build by `public-mobile`. No locale data is bundled
+// into the console's JavaScript, and only the active language is downloaded.
+const MOBILE_LOCALE_FILES = {
+  en: 'en.json',
+  zhCN: 'zh.json',
+  zhTW: 'zh-TW.json',
+  fr: 'fr.json',
+  ru: 'ru.json',
+  ja: 'ja.json',
+  vi: 'vi.json',
 } as const
 
-type MobileLocaleCode = keyof typeof localeLoaders
+type MobileLocaleCode = keyof typeof MOBILE_LOCALE_FILES
 
-const mobileLocaleCodes = Object.keys(localeLoaders) as MobileLocaleCode[]
+const mobileLocaleCodes = Object.keys(MOBILE_LOCALE_FILES) as MobileLocaleCode[]
 
 function isMobileLocaleCode(value: string): value is MobileLocaleCode {
-  return Object.hasOwn(localeLoaders, value)
+  return Object.hasOwn(MOBILE_LOCALE_FILES, value)
 }
 
 // The shared `i18nextLng` cache the desktop writes already holds interface codes
@@ -63,21 +66,34 @@ function detectedLocaleValue(): string {
   return stored ?? navigator.language
 }
 
+/**
+ * Fetches one trimmed locale bundle. A failed fetch is not fatal: the console
+ * then renders the English source keys, which is also what i18next falls back
+ * to for any key a bundle does not carry.
+ */
+async function fetchLocaleStrings(
+  code: MobileLocaleCode
+): Promise<Record<string, string> | null> {
+  try {
+    const response = await fetch(`/m/locales/${MOBILE_LOCALE_FILES[code]}`)
+    if (!response.ok) return null
+    return (await response.json()) as Record<string, string>
+  } catch {
+    return null
+  }
+}
+
 async function loadLocale(code: MobileLocaleCode): Promise<void> {
-  const [bundle, fallback] = await Promise.all([
-    localeLoaders[code](),
-    code === 'en' ? undefined : localeLoaders.en(),
+  const [strings, fallback] = await Promise.all([
+    fetchLocaleStrings(code),
+    code === 'en' ? Promise.resolve(null) : fetchLocaleStrings('en'),
   ])
 
-  // A locale file is its own namespace map (`{ translation: { ... } }`), the
-  // same shape `@/i18n/config` feeds to i18next's `resources` option.
-  for (const [namespace, strings] of Object.entries(bundle.default)) {
-    i18n.addResourceBundle(code, namespace, strings, true, true)
+  if (strings) {
+    i18n.addResourceBundle(code, 'translation', strings, true, true)
   }
   if (fallback) {
-    for (const [namespace, strings] of Object.entries(fallback.default)) {
-      i18n.addResourceBundle('en', namespace, strings, true, true)
-    }
+    i18n.addResourceBundle('en', 'translation', fallback, true, true)
   }
   await i18n.changeLanguage(code)
 }

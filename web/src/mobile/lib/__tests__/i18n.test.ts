@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import i18n from 'i18next'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { initializeMobileI18n, resolveMobileLocale } from '@/mobile/lib/i18n'
 
@@ -38,25 +38,84 @@ describe('resolveMobileLocale', () => {
 })
 
 describe('initializeMobileI18n', () => {
+  const localePayload: Record<string, Record<string, string>> = {
+    'en.json': { Usage: 'Usage', 'Mobile console': 'Mobile console' },
+    'zh.json': { Usage: '用量', 'Mobile console': '手机控制台' },
+    'zh-TW.json': { Usage: '用量', 'Mobile console': '手機控制台' },
+  }
+
+  function stubLocaleFetch() {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const file = String(input).split('/').pop() as string
+      const body = localePayload[file]
+      if (!body) return new Response('', { status: 404 })
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
   beforeEach(async () => {
     localStorage.clear()
+    vi.unstubAllGlobals()
     await i18n.changeLanguage('en')
   })
 
-  it('loads only the active locale bundle', async () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('fetches the trimmed locale bundle for the resolved language', async () => {
     localStorage.setItem('i18nextLng', 'zh')
+    const fetchMock = stubLocaleFetch()
 
     await initializeMobileI18n()
 
+    expect(fetchMock).toHaveBeenCalledWith('/m/locales/zh.json')
     expect(i18n.resolvedLanguage).toBe('zhCN')
-    expect(i18n.hasResourceBundle('zhCN', 'translation')).toBe(true)
-    expect(i18n.hasResourceBundle('en', 'translation')).toBe(true)
-    expect(i18n.hasResourceBundle('ja', 'translation')).toBe(false)
-    expect(i18n.t('Usage')).not.toBe('Usage')
+    expect(i18n.t('Usage')).toBe('用量')
+    expect(i18n.t('Mobile console')).toBe('手机控制台')
+    expect(fetchMock).not.toHaveBeenCalledWith('/m/locales/ja.json')
+  })
+
+  it('keeps English as the fallback language for untranslated keys', async () => {
+    localStorage.setItem('i18nextLng', 'zhTW')
+    const fetchMock = stubLocaleFetch()
+
+    await initializeMobileI18n()
+
+    expect(fetchMock).toHaveBeenCalledWith('/m/locales/zh-TW.json')
+    expect(fetchMock).toHaveBeenCalledWith('/m/locales/en.json')
+    expect(i18n.t('Mobile console')).toBe('手機控制台')
+    // Nothing in the trimmed bundle is missing, so the key itself is the last
+    // line of defence for strings the console adds later.
+    expect(i18n.t('Not translated anywhere')).toBe('Not translated anywhere')
+  })
+
+  it('renders the English source keys when the locale file cannot be fetched', async () => {
+    localStorage.setItem('i18nextLng', 'zh')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('network down')
+      })
+    )
+
+    await expect(initializeMobileI18n()).resolves.toBeUndefined()
+
+    // i18next only sets `resolvedLanguage` once a language holds a translation,
+    // so a missing bundle leaves the requested language in place and renders
+    // the English source keys.
+    expect(i18n.language).toBe('zhCN')
+    expect(i18n.t('Usage')).toBe('Usage')
   })
 
   it('keeps a cached Traditional Chinese preference across reloads', async () => {
     localStorage.setItem('i18nextLng', 'zhTW')
+    stubLocaleFetch()
 
     await initializeMobileI18n()
     await initializeMobileI18n()

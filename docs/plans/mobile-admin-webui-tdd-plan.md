@@ -903,13 +903,14 @@ bun run copyright:check 2>&1 | grep -E 'src/mobile|rsbuild\.mobile' && exit 1 ||
 bun run build:mobile
 ls mobile-dist/index.html
 grep -o '/m/[^"]*\.js' mobile-dist/index.html | head -3
-# First-screen JS budget (< 120 KB gzip): sum the gzip size of every script the
-# built index.html loads eagerly. Locale files must be async chunks instead.
+# First-screen JS budget (< 150 KB gzip): sum the gzip size of every script the
+# built index.html loads eagerly. No locale data may be bundled at all: the
+# console fetches a trimmed bundle from /m/locales (Task 15).
 for f in $(grep -o '/m/static/js/[^"]*\.js' mobile-dist/index.html); do
   gzip -c "mobile-dist${f#/m}" | wc -c
 done
 ```
-Expected: 测试 PASS；typecheck 无错误；lint 无 error；`mobile-dist/index.html` 存在；`grep` 输出至少一行以 `/m/` 开头的 JS 资源路径；上面 `gzip -c | wc -c` 各值之和 < 122880（120 KB）。超标时先确认语言包没被打进首屏 chunk：`grep -l 'locales/' -r mobile-dist/static/js` 应当只命中异步 chunk（`index.html` 里没有引用它们）。
+Expected: 测试 PASS；typecheck 无错误；lint 无 error；`mobile-dist/index.html` 存在；`grep` 输出至少一行以 `/m/` 开头的 JS 资源路径；上面 `gzip -c | wc -c` 各值之和 < 153600（150 KB）。超标时先确认语言包没被打进首屏 chunk：`grep -rl 'locales/' mobile-dist/static/js` 必须为空（Task 15 后语言包改为运行时 `fetch('/m/locales/*.json')`，不再产生任何语言 chunk）。
 
 - [ ] **Step 5: 提交**
 
@@ -4546,6 +4547,63 @@ git commit -m "docs(web-mobile): record the mobile console verification evidence
 
 ---
 
+## Task 15：手机端专用语言包（Task 14 之后追加，2026-10-04）
+
+**背景**：附录 A.5.3 记录了真实首屏流量被启动语言包支配。Task 14 的实现里 `initializeMobileI18n()` 直接动态 `import('@/i18n/locales/*.json')`，把桌面端 7,000+ 个 key 的完整语言包拉进手机端：gzip en 105,421 B / zh 163,819 B / zh-TW 195,249 B，网络层首屏因此约 230–320 KB，而首屏 JS 预算口径（146,373 B）把语言包排除在外、看不见这个问题。手机端实际只渲染 86 个 key。
+
+**方案**：构建期按 `src/mobile` 源码实际引用的 key 生成裁剪语言包（`web/public-mobile/locales/*.json`，体积极小），运行时 `fetch` 一次；语言数据完全不进 JS bundle，也不再产生任何语言 chunk。
+
+**Files**
+- 新增 `web/scripts/build-mobile-locales.mjs`（key 采集 + 裁剪 + 落盘；导出的纯函数可测）
+- 新增 `web/src/mobile/lib/__tests__/mobile-locales.test.ts`
+- 修改 `web/src/mobile/lib/i18n.ts`（`localeLoaders` 动态 import → `MOBILE_LOCALE_FILES` + `fetchLocaleStrings`）
+- 修改 `web/src/mobile/lib/__tests__/i18n.test.ts`（stub `fetch`，断言请求地址、译文生效、抓取失败时的降级）
+- 修改 `web/package.json`（新增 `mobile:locales`，并让 `build:mobile` 先跑它）
+- 修改 `web/.gitignore`（忽略生成物 `public-mobile/locales/`）
+
+**关键约束**
+- key 采集必须同时覆盖两类来源：(1) 字面量 `t('...')`；(2) 任意出现在 `src/mobile` 里、且是基础语言 key 的字符串字面量（覆盖 `t(TAB_LABEL_KEY[tab])`、`t(props.label)`、`t(PRESET_LABEL_KEY[option])` 这类经 label map / props 的查表）。
+- 构建必须 fail-fast：字面量 `t('...')` 在基础语言里没有译文时直接报错退出（否则会静默退化成英文 key）。
+- 抓取失败不得致命：`fetch` 抛错或非 2xx 时控制台继续用英文源 key 渲染（与 i18next 的 `fallbackLng: 'en'` 一致），`initializeMobileI18n()` 必须 resolve。
+- 生成物不提交（构建/CI 重新生成），因此不会与被改动的语言文件脱节。
+
+**Step 1: 写测试（RED）**
+```bash
+cd /home/ra/orca/workspaces/Newapi/codex-mobile-admin-webui/web
+bun run test -- src/mobile/lib/__tests__/i18n.test.ts src/mobile/lib/__tests__/mobile-locales.test.ts
+```
+Expected: 新用例失败（loader 仍 import 语言包；生成器尚不存在）。
+
+**Step 2: 实现生成器与 loader**
+
+判据：
+- 采集结果里必须有 `Usage`/`Mobile console` 这类字面量 key，以及只出现在 label map 里的 `Mine`/`Healthy` 这类 key；Tailwind 类名（`text-sm`）不得进入。
+- 七个语言的裁剪包 key 数量一致；`en['Mobile console'] == 'Mobile console'`、`zh['Mobile console'] == '手机控制台'`。
+- 生成的 `en.json` 必须远小于桌面语言包（实测 3,871 B vs 桌面 en.json ~700 KB）。
+
+**Step 3: 接线、构建与体积验证**
+```bash
+bun run mobile:locales            # 打印每个语言文件的 key 数与字节数
+bun run test -- src/mobile
+bun run typecheck
+bunx oxlint -c .oxlintrc.json src/mobile
+bun run build:mobile
+for f in mobile-dist/locales/*.json; do printf '%s %s\n' "$(basename $f)" "$(gzip -c $f | wc -c)"; done
+for f in $(grep -o '/m/static/js/[^"]*\.js' mobile-dist/index.html); do gzip -c "mobile-dist${f#/m}" | wc -c; done
+ls mobile-dist/static/js/async 2>/dev/null    # 必须不存在：语言 chunk 已彻底消失
+```
+Expected: 每个裁剪语言文件 gzip < 2.5 KB；首屏 JS 合计 < 153,600 B（且因去掉 i18n 语言包 import 而略降）；`mobile-dist/static/js/async` 不存在。
+
+**Step 4: 提交**
+```bash
+git add web/scripts/build-mobile-locales.mjs web/src/mobile/lib web/package.json web/.gitignore docs/plans/mobile-admin-webui-tdd-plan.md
+git commit -m "perf(web-mobile): ship a trimmed mobile locale bundle per language"
+```
+
+**证据**：见「附录 B. 后续优化（Task 15）」。
+
+---
+
 ## 17. 测试矩阵与运行命令
 
 | 层 | 命令 | 覆盖 |
@@ -4567,7 +4625,7 @@ git commit -m "docs(web-mobile): record the mobile console verification evidence
 5. **手机端不注入 Umami/GA**：`main.go` 的注入函数只改写桌面 `indexPage`；如需统计手机端访问，需要单点扩展 `InjectUmamiAnalytics`/`InjectGoogleAnalytics` 同时处理 `mobileIndexPage`。
 6. **`FRONTEND_BASE_URL` 不为空时**：`SetWebRouter` 不会被调用，`/m` 随整个前端一起重定向到外部地址；这是现有部署语义，v1 不改变。
 7. **首屏体积目标**：口径为「`mobile-dist/index.html` 直接引用的 chunk + 当前激活页签的 chunk」的 gzip 合计，预算 **< 150 KB（153,600 B）**（原定 120 KB 在强制复用 `@/components/ui/*`（base-ui）+ `@tanstack/react-query` + `i18next` 的前提下不可达，控制器按 Task 8 实测重定；详见 Global Constraints）。当前实测：Task 13 结束时 146,781 B。若超预算，优先检查是否误引入了 `@/components/ui` 中带重依赖的组件（如 `chart.tsx`、`markdown.tsx`），以及是否把 hugeicons/桌面主题之类的包装层带进了首屏（**判据必须用符号与图标 path 数据，不能用包名字符串**，Task 11 的假阴性教训）。
-8. **启动即加载的语言包不在首屏 JS 口径内，但真实首屏流量远大于 146 KB**：`main.tsx` 启动时 `initializeMobileI18n()` 会动态 import 当前语言包，实测 en 105,421 B / zh 163,819 B / zh-TW 195,249 B（gzip）。若要压低真实首屏，需要按 `src/mobile` 实际用到的 key 生成手机端专用语言包（v1 不做，属后续优化项）。
+8. **启动语言包对真实首屏的影响（已由 Task 15 解决）**：Task 14 结束时 `main.tsx` 启动即动态 import 桌面语言包（gzip en 105,421 / zh 163,819 / zh-TW 195,249 B），网络层首屏约 230–320 KB。Task 15 改为构建期生成按 `src/mobile` key 裁剪的语言包 + 运行时 `fetch('/m/locales/*.json')`：实测 en 1,163 / zh 1,710 / zh-TW 1,736 B（gzip），首屏 JS 145,680 B，真实首屏约 147 KB。**遗留小项**：裁剪包文件名无内容哈希，而 `middleware.Cache` 对非根路径下发 `max-age=604800`，因此升级后浏览器可能最长 7 天沿用旧语言包（缺 key 只会退化成英文，不会白屏）；如需彻底消除可给文件名加内容哈希或在 fetch 上带构建版本 query。
 
 ---
 
@@ -4646,5 +4704,74 @@ mobile UA   GET /m/routing             → 200 text/html（SPA 回落）
 
 1. **浏览器人工冒烟（Step 3 的 7 项）未执行**：需要真实浏览器与一个真实 PAT（本环境无浏览器、不应记录令牌）。待人工逐项确认：令牌门、刷新保持登录、撤销 PAT 后下拉刷新回到令牌页、用量页三范围、模型可用性、路由占比条、渠道开关（确认框与桌面端一致）、底部「桌面版」跳转。
 2. **桌面端没有可点击的「返回手机版」入口**：现仅支持手动访问 `/?desktop=0`（已实现并有 Go 测试）。桌面 UI 加链接超出本计划文件范围，列为后续项。
-3. **真实首屏流量仍受语言包支配**：`main.tsx` 启动即动态 import 当前语言包（en 105,421 B / zh 163,819 B / zh-TW 195,249 B gzip），因此网络层首屏约 230–320 KB；要压低需生成手机端专用语言包（v1 不做）。
+3. **真实首屏流量仍受语言包支配**：`main.tsx` 启动即动态 import 当前语言包（en 105,421 B / zh 163,819 B / zh-TW 195,249 B gzip），因此网络层首屏约 230–320 KB；要压低需生成手机端专用语言包（v1 不做）。**→ 已由 Task 15 解决（2026-10-04），见附录 B；上表数值保留为 Task 14 当时的事实记录。**
 4. **既存跨语言泄漏**（桌面端历史欠账，本次未动）：fr 77、ru 74、vi 71、ja 38（中文专用字形）、zh-TW 48、zh 1；另小写 key `degraded` 在 6 个语言里仍为中文「降级」。
+
+---
+
+## 附录 B. 后续优化（Task 15 手机端专用语言包，2026-10-04 实际执行）
+
+### B.1 生成器输出（`bun run mobile:locales`）
+
+```
+mobile locales: 86 keys (47 literal t() calls)
+  en.json     86 keys  3871 B
+  zh.json     86 keys  3718 B
+  zh-TW.json  86 keys  3742 B
+  fr.json     86 keys  4289 B
+  ru.json     86 keys  5570 B
+  ja.json     86 keys  4832 B
+  vi.json     86 keys  4672 B
+```
+
+86 个 key = 47 个字面量 `t('...')` + label map / props 查表用到的 key；桌面语言包为 7,000+ key。
+
+### B.2 裁剪语言包与实际首屏流量
+
+| 语言 | 旧（桌面语言包，动态 import，gzip） | 新（`/m/locales/*.json`，gzip） | 降幅 |
+| --- | --- | --- | --- |
+| en | 105,421 B | **1,163 B** | -98.9% |
+| zh | 163,819 B | **1,710 B** | -99.0% |
+| zh-TW | 195,249 B | **1,736 B** | -99.1% |
+| fr | — | 1,785 B | — |
+| ja | — | 1,963 B | — |
+| ru | — | 2,131 B | — |
+| vi | — | 1,902 B | — |
+
+首屏 JS（口径：`index.html` 直接引用的 chunk 的 gzip 合计）：
+
+```
+/m/static/js/lib-react.c603f97b2f.js gzip=59664
+/m/static/js/291.19d10fbd57.js       gzip=72596
+/m/static/js/index.754eed8230.js     gzip=13420
+FIRST_SCREEN_GZIP_TOTAL=145680        (预算 153600，余量 7920)
+```
+
+真实首屏 ≈ 145,680 B（JS）+ 语言包：en **146,843 B**、zh **147,390 B**、zh-TW **147,416 B**（对比 Task 14 的 en 251,794 B / zh 310,192 B / zh-TW 341,622 B，即网络层 -42% ~ -57%）。
+
+`mobile-dist/static/js/async/` 已不存在：语言数据不再产生任何 JS chunk；生成物落在 `mobile-dist/locales/*.json`（由 `public-mobile` 拷贝，`public-mobile/locales/` 已被 `.gitignore` 忽略，构建期重新生成）。
+
+### B.3 检查结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `bun run test` | **203 files / 2287 tests passed**（+1 file / +8 tests：`mobile-locales.test.ts` 6 个 + `i18n.test.ts` 新增 3 个并改写既存 1 个） |
+| `bun run test -- src/mobile` | **24 files / 112 tests passed** |
+| `bun run typecheck` | exit 0 |
+| `bunx oxlint -c .oxlintrc.json src/mobile scripts/build-mobile-locales.mjs` | exit 0，仅既存 1 条 warning（`src/mobile/main.tsx:28`） |
+| `bunx oxfmt --check src/mobile scripts/build-mobile-locales.mjs` | `All matched files use the correct format.` |
+| `bun run build:mobile` | 成功；`mobile-dist/locales/{en,zh,zh-TW,fr,ru,ja,vi}.json` 齐备 |
+| 禁用依赖符号扫描（三个首屏 chunk） | `hugeicons=0 router=0 lucide=0 axios=0`，`motion=1` 且为 sonner 注入 CSS 里的 `prefers-reduced-motion` media query（非 `motion/react` 包） |
+
+### B.4 行为断言（新增测试覆盖）
+
+1. 解析出的语言决定抓取地址：`i18nextLng=zh` → `fetch('/m/locales/zh.json')`，且不抓 `ja.json`。
+2. 非英文语言额外抓 `en.json` 作为回退；未命中的 key 仍回落到英文 key 本身。
+3. `fetch` 抛错（离线 / 404）时 `initializeMobileI18n()` 正常 resolve，页面用英文源 key 渲染（`i18n.t('Usage') === 'Usage'`）。注意 i18next 的语义：没有译文时 `resolvedLanguage` 为 `undefined`，而 `i18n.language` 仍是请求的语言码。
+4. 生成器：label map 里的 key（`t(TAB_LABEL_KEY[tab])`）必须被采集；字面量 `t('...')` 缺基础语言译文时必须抛错（fail-fast）；Tailwind 类名不得混入 key 集合；七个语言裁剪包 key 数一致。
+5. 生成器端到端跑真实源码 + 真实语言文件：`en['Mobile console'] === 'Mobile console'`、`zh === '手机控制台'`、`zh-TW === '手機控制台'`，`en.json` < 20,000 B。
+
+### B.5 遗留小项
+
+1. 裁剪语言包文件名不含内容哈希，而 `middleware.Cache` 对非根路径下发 `max-age=604800`，升级后浏览器最长 7 天可能沿用旧语言包（只会在缺少新 key 时退化成英文，不会白屏）。彻底消除可给文件名加内容哈希。
+2. 生成器只扫描 `src/mobile` 源码；若将来出现运行时拼接的 key（模板字符串），字面量正则覆盖不到 —— 但「任意字符串字面量 ∈ 基础语言 key」这条规则仍会兜住绝大多数查表用法，且 fail-fast 只校验字面量 `t()`。

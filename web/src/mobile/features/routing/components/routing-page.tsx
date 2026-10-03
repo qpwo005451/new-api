@@ -168,10 +168,16 @@ export function RoutingPage() {
         />
         <KpiCard
           label='Channel switches'
-          value={switches.reduce((total, row) => total + row.count, 0)}
+          value={formatNumber(stats.data.switched, locale)}
           hint={PRESET_LABEL_KEY[preset]}
         />
       </div>
+
+      {stats.data.truncated ? (
+        <p className='text-muted-foreground px-3 text-[11px]'>
+          {t('Some switches in this window were not scanned.')}
+        </p>
+      ) : null}
 
       <section className='space-y-3'>
         <h2 className='px-3 py-1 text-sm font-medium'>
@@ -207,7 +213,7 @@ export function RoutingPage() {
                 {model.channels.map((channel) => (
                   <ValueRow
                     key={channel.channelId}
-                    label={channel.channelName}
+                    label={channel.channelName || `#${channel.channelId}`}
                     secondary={
                       channel.configuredShare === null
                         ? t('Configured weight unknown')

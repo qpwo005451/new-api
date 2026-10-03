@@ -160,6 +160,10 @@ export interface RoutingStats {
   by_model_channel: RoutingModelChannelStat[]
   window: RoutingStatsWindow
   trend: RoutingTrendPoint[]
+  // The trail scan truncates, so switched/scanned/switches only cover the rows
+  // that were scanned (Task 10 review Minor-2).
+  scanned: number
+  truncated: boolean
   switched: number
   switched_success: number
   switched_failed: number

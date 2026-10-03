@@ -4425,6 +4425,11 @@ export function MobileProviders(props: MobileProvidersProps) {
 }
 ```
 
+**Task 13 review 追加要求（控制器裁决，来自 Task 7/11 评审的欠账）**：
+
+1. **底部安全区**：`app.tsx` 的内容容器当前是 `pb-16`（64px），而底栏实际高 `48px + env(safe-area-inset-bottom)`；在刘海机型上最后一行会被栏遮住。把内容容器的底部内边距改成 `pb-[calc(4rem+env(safe-area-inset-bottom))]`（或让底栏高度参与同一变量），并保留 `PullToRefresh` 的滚动容器语义（滚动发生在内容容器上时才触发下拉）。
+2. **Toast 跟随主题**：`providers.tsx` 挂的明文 `<Toaster />` 目前没有 `theme`，暗色系统下 toast 会渲染成浅色。既然 `ThemeProvider` 已经在这一层，就把解析后的主题传进去（`const { resolvedTheme } = useTheme()` → `<Toaster theme={resolvedTheme} />`），不要改回 `@/components/ui/sonner`。
+
 - [ ] **Step 4: 运行测试与构建确认通过**
 
 Run:

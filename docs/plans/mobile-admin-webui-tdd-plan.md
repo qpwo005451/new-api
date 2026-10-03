@@ -20,7 +20,7 @@
 - 用户可见文案必须走 i18n：`useTranslation()` + `t('English source key')`，key 写入 `web/src/i18n/locales/{en,zh,zh-TW,fr,ru,ja,vi}.json`。
 - **手机端代码禁止 `import '@/i18n/config'`**：该模块静态 import 七个语言包（合计 ~4 MB 源码 / ~1.1 MB gzip），静态引入它会直接击穿首屏预算。手机端固定用 `web/src/mobile/lib/i18n.ts` 的 `initializeMobileI18n()`，语言包按需 `import()` 成独立异步 chunk。
 - 数字、紧凑数字、金额必须复用 `@/lib/format`（`formatNumber` / `formatCompactNumber` / `formatTokens` / `formatUseTime` / `formatLogQuota`）与 `@/lib/currency`；任何传给 `Intl.*` 的语言码必须先经 `@/i18n/languages` 的 `toIntlLocale()`。禁止自己写 `zhCN` 映射。
-- 组件优先复用 `@/components/ui/*` 与 `@/components/{confirm-dialog,empty-state,loading-state,error-state}.tsx`；本项目没有底部 Tab 栏组件，这是唯一需要新增的通用交互控件，需在变更说明中记录该能力缺口。
+- 组件优先复用 `@/components/ui/*`（button/input/label/card/switch 等只依赖 `@base-ui/react` + `cva` + `cn`，可用）与 `@/components/confirm-dialog.tsx`。**但不得复用** `@/components/{loading-state,error-state,empty-state}.tsx`、`@/components/page-transition.tsx`、`@/lib/{api,http-client,status-query}.ts`：它们（直接或传递性）引入 `@tanstack/react-router`、`motion/react`、`axios`、`lucide-react`，既违反禁用清单，也会把首屏 JS gzip 从 96 KB 抬到 ~138 KB。手机端用自己的等价物：`@/mobile/components/{mobile-loading,mobile-empty,mobile-error}.tsx`（props 与桌面同名 `title`/`description`/`className`）与 `@/mobile/lib/status.ts`。本项目没有底部 Tab 栏组件，这是唯一需要新增的通用交互控件；手机端展示基元同属新增能力，需在变更说明中记录该能力缺口。
 - 手机端**不引入**：TanStack Router、recharts/vchart、axios、lucide-react、CodeMirror、shiki、katex、auto-skeleton。首屏 JS（gzip）目标 < 120 KB。
 - 图表一律自绘 SVG（迷你折线 + 堆叠占比条），不引入图表库。
 - 后端测试只用 `github.com/stretchr/testify/require`（致命断言/setup）与 `assert`（非致命断言）；本次后端改动只允许新增一个测试文件 `router/web_router_test.go`。
@@ -1457,9 +1457,11 @@ git commit -m "feat(web-mobile): authenticate the mobile console with a personal
 ## Task 6：PAT 门与展示基元
 
 **Files:**
-- Create: `web/src/mobile/components/pat-gate.tsx`、`web/src/mobile/components/kpi-card.tsx`、`web/src/mobile/components/value-row.tsx`
-- Create: `web/src/mobile/components/__tests__/pat-gate.test.tsx`、`web/src/mobile/components/__tests__/kpi-card.test.tsx`
-- Modify: `web/src/mobile/app.tsx`
+- Create: `web/src/mobile/components/pat-gate.tsx`、`web/src/mobile/components/kpi-card.tsx`、`web/src/mobile/components/value-row.tsx`、`web/src/mobile/components/mobile-loading.tsx`、`web/src/mobile/components/mobile-empty.tsx`、`web/src/mobile/components/mobile-error.tsx`
+- Create: `web/src/mobile/components/__tests__/pat-gate.test.tsx`、`web/src/mobile/components/__tests__/kpi-card.test.tsx`、`web/src/mobile/components/__tests__/mobile-states.test.tsx`
+- Create: `web/src/mobile/lib/status.ts`、`web/src/mobile/lib/__tests__/status.test.ts`
+- Create: `web/src/lib/status-config.ts`（把 `web/src/lib/status-query.ts` 里与 axios 无关的纯逻辑搬出来）
+- Modify: `web/src/mobile/app.tsx`、`web/src/lib/status-query.ts`
 
 **Interfaces:**
 - Consumes: `readPat` / `writePat` / `isPlausiblePat`（Task 5）；`@/lib/format` 的 `formatNumber`。
@@ -1704,19 +1706,19 @@ export function PatGate(props: PatGateProps) {
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
-import { LoadingState } from '@/components/loading-state'
-import { statusQueryOptions } from '@/lib/status-query'
+import { MobileLoading } from '@/mobile/components/mobile-loading'
 import { PatGate } from '@/mobile/components/pat-gate'
+import { mobileStatusQueryOptions } from '@/mobile/lib/status'
 
 export function MobileApp() {
   const { t } = useTranslation()
   // formatQuotaWithCurrency and the other money helpers read the currency
   // settings from the system-config store, which /api/status hydrates. Without
   // this query every amount would be rendered with the USD defaults.
-  const status = useQuery(statusQueryOptions)
+  const status = useQuery(mobileStatusQueryOptions)
 
   if (status.isPending) {
-    return <LoadingState />
+    return <MobileLoading />
   }
 
   return (
@@ -1738,8 +1740,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { STATUS_QUERY_KEY } from '@/lib/status-query'
 import { MobileApp } from '@/mobile/app'
+import { STATUS_QUERY_KEY } from '@/mobile/lib/status'
 
 const testQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 
@@ -1769,16 +1771,33 @@ describe('MobileApp', () => {
 })
 ```
 
+- [ ] **Step 3b: 手机端展示基元与状态查询（不得复用桌面那三个状态组件）**
+
+桌面 `@/components/{loading-state,error-state,empty-state}.tsx` 会经 `@/components/page-transition.tsx` 传递性引入 `@tanstack/react-router` 与 `motion/react`，`@/lib/status-query.ts` 会经 `@/lib/api` → `@/lib/http-client` 引入 `axios`，三者还都带 `lucide-react`。它们全在手机端禁用清单里：实测静态引入后首屏 JS gzip 从 96,508 B 涨到 137,898 B（超预算 15 KB）。所以手机端要自己的等价物（**props 与桌面同名，Task 8–11 直接替换即可**）：
+
+1. `web/src/mobile/components/mobile-loading.tsx` 导出 `MobileLoading({ className }: { className?: string })`：外层 `role='status'` + `aria-live='polite'`，一个纯 Tailwind 的旋转圆环（`size-5 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-foreground`），`sr-only` 文案 `t('Loading...')`；**不使用 `lucide-react`**。
+2. `web/src/mobile/components/mobile-empty.tsx` 导出 `MobileEmpty({ title, description, className })`：居中标题（`text-sm font-medium`）与说明（`text-xs text-muted-foreground`），**不渲染图标、不接受 icon 参数**。
+3. `web/src/mobile/components/mobile-error.tsx` 导出 `MobileError({ title, description, onRetry, className })`：标题 + 说明；传 `onRetry` 时额外渲染 `@/components/ui/button` 的 `<Button className='mt-3 h-10' onClick={onRetry}>{t('Retry')}</Button>`，不传则不渲染按钮。
+4. `web/src/lib/status-config.ts`（新文件，纯搬迁）：把 `status-query.ts` 中与 axios 无关的部分搬过来——`StatusData`、`mapStatusDataToConfig`、`STATUS_QUERY_KEY`、`STATUS_STORAGE_KEY`、`readCachedStatus`、`writeCachedStatus`，再加 `syncStatusToSystemConfig(status: StatusData): void`（`useSystemConfigStore.getState().setConfig(mapStatusDataToConfig(status))` + `writeCachedStatus(status)`，保留原实现里的 try/catch 与 `import.meta.env.DEV` 日志）。该文件只允许 import `@tanstack/react-query`、`@/lib/constants`、`@/stores/system-config-store`。
+   `web/src/lib/status-query.ts` 改为从 `status-config.ts` import 这些名字并**原样 re-export**（含 `export type { StatusData }`），保证既有消费者（`@/hooks/*`、`@/lib/nav-modules`、`@/main.tsx` 等）与 `src/lib/__tests__/status-query.test.tsx` 不改一行仍通过；内部 `fetchStatus` 改为调用 `syncStatusToSystemConfig`。这是纯搬迁，桌面行为必须零变化。
+5. `web/src/mobile/lib/status.ts`：`export const mobileStatusQueryOptions = queryOptions({ queryKey: STATUS_QUERY_KEY, queryFn: async (): Promise<StatusData> => { const status = await mobileApiGet<StatusData>('/api/status'); syncStatusToSystemConfig(status); return status }, staleTime: 5 * 60 * 1000, gcTime: 30 * 60 * 1000 })`，并 re-export `STATUS_QUERY_KEY`。`/api/status` 无鉴权中间件，而 `mobileApiGet` 在未存 PAT 时不会带 `Authorization`，所以它在 PAT 门之前也能成功。
+
+先写失败测试，再写实现：
+
+- `web/src/mobile/components/__tests__/mobile-states.test.tsx`：`MobileLoading` 有 `role='status'`；`MobileEmpty` 渲染 `title` 与 `description` 且容器内**没有任何 `svg`**（`container.querySelector('svg')` 为 null）；`MobileError` 传 `onRetry` 时点击 `t('Retry')` 按钮会调用它、不传时没有任何按钮。
+- `web/src/mobile/lib/__tests__/status.test.ts`：`vi.stubGlobal('fetch', ...)` 返回 `{ success: true, data: { quota_per_unit: 500000, quota_display_type: 'USD' } }`；断言 `mobileStatusQueryOptions.queryFn`（用 `await mobileStatusQueryOptions.queryFn({} as never)` 或经 `QueryClient.fetchQuery` 调用）请求的是 `/api/status`、把 `quotaPerUnit` 写进了 `useSystemConfigStore.getState().currency.quotaPerUnit`、返回 `data`；并断言该请求的 `Authorization` 头**不存在**（未存 PAT 时不得带）。
+- 回归：`web/src/lib/__tests__/status-query.test.tsx` 必须仍然全绿。
+
 - [ ] **Step 4: 运行测试确认通过**
 
-Run: `cd /home/ra/orca/workspaces/Newapi/codex-mobile-admin-webui/web && bun run test -- src/mobile && bun run typecheck`
+Run: `cd /home/ra/orca/workspaces/Newapi/codex-mobile-admin-webui/web && bun run test -- src/mobile src/lib/__tests__/status-query.test.tsx && bun run typecheck`
 Expected: 全部 PASS。
 
 - [ ] **Step 5: 提交**
 
 ```bash
 cd /home/ra/orca/workspaces/Newapi/codex-mobile-admin-webui
-git add web/src/mobile/components web/src/mobile/app.tsx web/src/mobile/__tests__/app.test.tsx
+git add web/src/mobile/components web/src/mobile/lib/status.ts web/src/mobile/lib/__tests__/status.test.ts web/src/mobile/app.tsx web/src/mobile/__tests__/app.test.tsx web/src/lib/status-config.ts web/src/lib/status-query.ts
 git commit -m "feat(web-mobile): gate the console behind a personal access token"
 ```
 
@@ -2018,7 +2037,7 @@ git commit -m "feat(web-mobile): navigate the console with a four-tab hash route
 - Modify: `web/src/mobile/app.tsx`
 
 **Interfaces:**
-- Consumes: `mobileApiGet`（Task 5）、`MOBILE_STALE_TIME`、`KpiCard`、`ValueRow`、`EmptyState`、`LoadingState`、`ErrorState`。
+- Consumes: `mobileApiGet`（Task 5）、`MOBILE_STALE_TIME`、`KpiCard`、`ValueRow`、`MobileEmpty`、`MobileLoading`、`MobileError`。
 - Produces:
   - `resolveTimeRange(preset: TimeRangePreset, now: number): TimeRange`
   - `aggregateTotals(rows: QuotaDataRow[]): UsageTotals`
@@ -2353,7 +2372,7 @@ export function useRecentLogs(scope: UsageScope, range: TimeRange, type: number)
 ```tsx
 import { useTranslation } from 'react-i18next'
 
-import { EmptyState } from '@/components/empty-state'
+import { MobileEmpty } from '@/mobile/components/mobile-empty'
 import { formatLogQuota, formatTimestampRelative, formatTokens, formatUseTime } from '@/lib/format'
 import { ValueRow } from '@/mobile/components/value-row'
 import { useRecentLogs } from '@/mobile/features/usage/api'
@@ -2372,7 +2391,7 @@ export function RecentRequests(props: RecentRequestsProps) {
     return <p className='text-muted-foreground px-3 py-4 text-sm'>{t('Loading')}</p>
   }
   if (logs.isError || logs.data.items.length === 0) {
-    return <EmptyState title={t('No recent requests')} description={t('Nothing to show for this range.')} />
+    return <MobileEmpty title={t('No recent requests')} description={t('Nothing to show for this range.')} />
   }
 
   return (
@@ -2396,8 +2415,8 @@ export function RecentRequests(props: RecentRequestsProps) {
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { ErrorState } from '@/components/error-state'
-import { LoadingState } from '@/components/loading-state'
+import { MobileError } from '@/mobile/components/mobile-error'
+import { MobileLoading } from '@/mobile/components/mobile-loading'
 import { formatTokens, formatNumber } from '@/lib/format'
 import { formatQuotaWithCurrency } from '@/lib/currency'
 import { KpiCard } from '@/mobile/components/kpi-card'
@@ -2426,10 +2445,10 @@ export function UsagePage() {
   const ranking = useUsageRanking(scope, range, scope === 'all')
 
   if (aggregate.isPending) {
-    return <LoadingState />
+    return <MobileLoading />
   }
   if (aggregate.isError) {
-    return <ErrorState title={t('Load failed')} description={t('Retry later.')} />
+    return <MobileError title={t('Load failed')} description={t('Retry later.')} />
   }
 
   const totals = aggregateTotals(aggregate.data)
@@ -2819,8 +2838,8 @@ export function useModelAvailability() {
 ```tsx
 import { useTranslation } from 'react-i18next'
 
-import { ErrorState } from '@/components/error-state'
-import { LoadingState } from '@/components/loading-state'
+import { MobileError } from '@/mobile/components/mobile-error'
+import { MobileLoading } from '@/mobile/components/mobile-loading'
 import { formatTimestampRelative } from '@/lib/format'
 import { KpiCard } from '@/mobile/components/kpi-card'
 import { ValueRow } from '@/mobile/components/value-row'
@@ -2847,10 +2866,10 @@ export function ModelsPage() {
   const availability = useModelAvailability()
 
   if (availability.isPending) {
-    return <LoadingState />
+    return <MobileLoading />
   }
   if (availability.isError) {
-    return <ErrorState title={t('Load failed')} description={t('Retry later.')} />
+    return <MobileError title={t('Load failed')} description={t('Retry later.')} />
   }
   if (!availability.data.enabled) {
     return <p className='text-muted-foreground px-3 py-6 text-sm'>{t('Model monitoring is disabled on this instance.')}</p>
@@ -3283,8 +3302,8 @@ export function useAffinityBindings() {
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { ErrorState } from '@/components/error-state'
-import { LoadingState } from '@/components/loading-state'
+import { MobileError } from '@/mobile/components/mobile-error'
+import { MobileLoading } from '@/mobile/components/mobile-loading'
 import { formatNumber, formatPercent, formatUseTime } from '@/lib/format'
 import { KpiCard } from '@/mobile/components/kpi-card'
 import { MiniBar } from '@/mobile/components/mini-bar'
@@ -3310,10 +3329,10 @@ export function RoutingPage() {
   const affinity = useAffinityBindings()
 
   if (stats.isPending) {
-    return <LoadingState />
+    return <MobileLoading />
   }
   if (stats.isError) {
-    return <ErrorState title={t('Load failed')} description={t('Retry later.')} />
+    return <MobileError title={t('Load failed')} description={t('Retry later.')} />
   }
 
   const models = summarizeRoutingShare(stats.data.by_model_channel)
@@ -3648,7 +3667,7 @@ export function useToggleChannelStatus() {
 }
 ```
 
-`web/src/mobile/features/channels/components/channels-page.tsx`：用 `@/components/ui/switch`、`@/components/confirm-dialog`、`@/components/ui/input`、`@/components/empty-state`、`sonner`：
+`web/src/mobile/features/channels/components/channels-page.tsx`：用 `@/components/ui/switch`、`@/components/confirm-dialog`、`@/components/ui/input`、`@/mobile/components/mobile-empty`、`sonner`：
 
 ```tsx
 import { useState } from 'react'
@@ -3656,9 +3675,9 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
-import { EmptyState } from '@/components/empty-state'
-import { ErrorState } from '@/components/error-state'
-import { LoadingState } from '@/components/loading-state'
+import { MobileEmpty } from '@/mobile/components/mobile-empty'
+import { MobileError } from '@/mobile/components/mobile-error'
+import { MobileLoading } from '@/mobile/components/mobile-loading'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
@@ -3679,10 +3698,10 @@ export function ChannelsPage() {
   const toggle = useToggleChannelStatus()
 
   if (channels.isPending) {
-    return <LoadingState />
+    return <MobileLoading />
   }
   if (channels.isError) {
-    return <ErrorState title={t('Load failed')} description={t('Retry later.')} />
+    return <MobileError title={t('Load failed')} description={t('Retry later.')} />
   }
 
   const confirmToggle = async () => {
@@ -3722,7 +3741,7 @@ export function ChannelsPage() {
       </div>
 
       {channels.data.items.length === 0 ? (
-        <EmptyState title={t('No channels')} description={t('Nothing to show for this range.')} />
+        <MobileEmpty title={t('No channels')} description={t('Nothing to show for this range.')} />
       ) : (
         <ul className='divide-y'>
           {channels.data.items.map((channel) => (
@@ -4354,6 +4373,10 @@ bun run copyright:check 2>&1 | grep -E 'src/mobile|rsbuild\.mobile' && exit 1 ||
 bun run i18n:sync && git diff --exit-code src/i18n/locales
 bun run build:mobile
 du -sh mobile-dist && find mobile-dist -name '*.js' -exec du -h {} + | sort -h | tail -5
+# No forbidden dependency may reach the first-screen chunks.
+for f in $(grep -o '/m/static/js/[^"]*\.js' mobile-dist/index.html); do
+  if grep -qE 'react-router|motion/react|lucide-react|axios' "mobile-dist${f#/m}"; then echo "FORBIDDEN DEP IN FIRST SCREEN: $f"; fi
+done
 ```
 Expected: 全部通过；把 `du` 输出记录进 Step 4。
 

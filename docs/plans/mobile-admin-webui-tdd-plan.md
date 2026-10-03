@@ -21,7 +21,11 @@
 - **手机端代码禁止 `import '@/i18n/config'`**：该模块静态 import 七个语言包（合计 ~4 MB 源码 / ~1.1 MB gzip），静态引入它会直接击穿首屏预算。手机端固定用 `web/src/mobile/lib/i18n.ts` 的 `initializeMobileI18n()`，语言包按需 `import()` 成独立异步 chunk。
 - 数字、紧凑数字、金额必须复用 `@/lib/format`（`formatNumber` / `formatCompactNumber` / `formatTokens` / `formatUseTime` / `formatLogQuota`）与 `@/lib/currency`；任何传给 `Intl.*` 的语言码必须先经 `@/i18n/languages` 的 `toIntlLocale()`。禁止自己写 `zhCN` 映射。
 - 组件优先复用 `@/components/ui/*`（button/input/label/card/switch 等只依赖 `@base-ui/react` + `cva` + `cn`，可用）与 `@/components/confirm-dialog.tsx`。**但不得复用** `@/components/{loading-state,error-state,empty-state}.tsx`、`@/components/page-transition.tsx`、`@/lib/{api,http-client,status-query}.ts`：它们（直接或传递性）引入 `@tanstack/react-router`、`motion/react`、`axios`、`lucide-react`，既违反禁用清单，也会把首屏 JS gzip 从 96 KB 抬到 ~138 KB。手机端用自己的等价物：`@/mobile/components/{mobile-loading,mobile-empty,mobile-error}.tsx`（props 与桌面同名 `title`/`description`/`className`）与 `@/mobile/lib/status.ts`。本项目没有底部 Tab 栏组件，这是唯一需要新增的通用交互控件；手机端展示基元同属新增能力，需在变更说明中记录该能力缺口。
-- 手机端**不引入**：TanStack Router、recharts/vchart、axios、lucide-react、CodeMirror、shiki、katex、auto-skeleton。首屏 JS（gzip）目标 < 120 KB。
+- 手机端**不引入**：TanStack Router、recharts/vchart、axios、lucide-react、CodeMirror、shiki、katex、auto-skeleton。
+- **首屏体积口径与预算（控制器按实测调整过）**：首屏 = `index.html` 直接引用的 chunk + 当前激活页签实际加载的 chunk（含动态 import 的 chunk），全部按 gzip 计。
+  - 硬不变量：首屏 chunk 里 `react-router` / `motion/react` / `lucide-react` / `axios` 的出现次数必须为 0。
+  - 预算：**< 150 KB（153600 B）**。原定 120 KB 在「强制复用 `@/components/ui/*`（base-ui）+ `@tanstack/react-query` + `i18next`」的前提下不可达：Task 8 实测 `lib-react` 59,664 + vendor 54,808 + index 9,659 = **124,131 B**，其中 vendor 已经把 react-query/base-ui/i18next/zustand/dayjs 计入；120 KB 只剩约 114 KB 给这两块基础依赖，装不下。
+  - 每个任务都要报告实测数字与 chunk 明细；若将来需要回到 120 KB，已知的杠杆是把手机端组件里的 base-ui 换成纯 Tailwind 标记（预计可回收约 18 KB），不要在未获裁决时自行做这个替换。
 - 图表一律自绘 SVG（迷你折线 + 堆叠占比条），不引入图表库。
 - 后端测试只用 `github.com/stretchr/testify/require`（致命断言/setup）与 `assert`（非致命断言）；本次后端改动只允许新增一个测试文件 `router/web_router_test.go`。
 - Go 代码遵循本仓库现代写法：`any`、`for i := range n`、`strings.Cut/TrimPrefix/CutPrefix`、`slices.Contains`、`min/max`、`strings.Builder`、`reflect.TypeFor[T]()`；改完执行 `gofmt`。

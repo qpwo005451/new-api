@@ -6553,7 +6553,7 @@
     "Unauthorized": "未授权",
     "Unauthorized Access": "未经授权的访问",
     "unavailable": "不可用",
-    "Unavailable": "无法展示",
+    "Unavailable": "不可用",
     "Unbind": "解绑",
     "Unbind failed": "解绑失败",
     "Unbound {{provider}}": "已解绑 {{provider}}",

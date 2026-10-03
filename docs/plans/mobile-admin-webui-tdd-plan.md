@@ -1909,6 +1909,12 @@ describe('MobileTabBar', () => {
 
 - [ ] **Step 2: 运行测试确认失败**
 
+`useActiveTab` 的三条主干行为也必须进 `router.test.ts`（`renderHook` + `act`，这是本任务真正的回归网——Task 8–11 会反复改写 `app.tsx`）：
+
+1. 深链接初始化：`window.location.hash = '#/channels'` 后 `renderHook(() => useActiveTab())`，`result.current[0]` 必须是 `'channels'`。
+2. `hashchange` 同步：hook 挂载后把 `window.location.hash` 设为 `'#/routing'` 并 `window.dispatchEvent(new HashChangeEvent('hashchange'))`，`act` 之后 `result.current[0]` 必须变成 `'routing'`。
+3. 卸载清理：`unmount()` 之后 `hashchange` 不得再更新状态（用 `vi.spyOn(window, 'removeEventListener')` 断言 `'hashchange'` 监听被移除，或断言卸载后再派发事件不抛错且不更新）。
+
 Run: `cd /home/ra/orca/workspaces/Newapi/codex-mobile-admin-webui/web && bun run test -- src/mobile/lib/__tests__/router.test.ts src/mobile/components/__tests__/mobile-tab-bar.test.tsx`
 Expected: FAIL — 模块不存在。
 

@@ -25,3 +25,60 @@ export const MOBILE_TABS = [
   'routing',
   'channels',
 ] as const satisfies readonly MobileTab[]
+
+export type UsageScope = 'self' | 'all'
+
+export type TimeRangePreset = 'today' | '7d' | '30d'
+
+export interface TimeRange {
+  start: number
+  end: number
+}
+
+export interface UsageTotals {
+  requests: number
+  tokens: number
+  quota: number
+}
+
+export interface RankRow {
+  key: string
+  requests: number
+  tokens: number
+  quota: number
+}
+
+export interface QuotaDataRow {
+  model_name?: string
+  username?: string
+  created_at: number
+  count: number
+  quota: number
+  token_used: number
+}
+
+export interface LogStat {
+  quota: number
+  rpm: number
+  tpm: number
+}
+
+export interface UsageLogRow {
+  id: number
+  created_at: number
+  model_name: string
+  token_name?: string
+  prompt_tokens: number
+  completion_tokens: number
+  quota: number
+  use_time: number
+  is_stream: boolean
+  type: number
+}
+
+export interface PagedResult<T> {
+  items: T[]
+  total: number
+  page: number
+  page_size: number
+}

@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next'
 import { MobileLoading } from '@/mobile/components/mobile-loading'
 import { MobileTabBar } from '@/mobile/components/mobile-tab-bar'
 import { PatGate } from '@/mobile/components/pat-gate'
+import { UsagePage } from '@/mobile/features/usage/components/usage-page'
 import { useActiveTab } from '@/mobile/lib/router'
 import { mobileStatusQueryOptions } from '@/mobile/lib/status'
 
@@ -43,7 +44,11 @@ export function MobileApp() {
         <header className='px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-2'>
           <h1 className='text-lg font-semibold'>{t('Mobile console')}</h1>
         </header>
-        <section data-testid='mobile-panel' data-tab={activeTab} />
+        {activeTab === 'usage' ? (
+          <UsagePage />
+        ) : (
+          <section data-testid='mobile-panel' data-tab={activeTab} />
+        )}
       </main>
       <MobileTabBar active={activeTab} onChange={selectTab} />
     </PatGate>

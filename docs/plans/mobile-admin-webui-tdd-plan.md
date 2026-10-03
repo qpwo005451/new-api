@@ -16,6 +16,7 @@
 - 不在生产主机 `10.0.0.251` 上执行 `bun install`、前端构建、`go build` 或测试；全部在本地工作站执行。发布候选使用 `scripts/build_release_candidate_local.ps1`。
 - 所有新增前端文件必须带 AGPL 版权头（`bun run copyright` 生成），文件名 kebab-case；测试必须放在被测模块的 `__tests__/` 目录，命名为 `<职责>.test.ts(x)`。
 - 用户可见文案必须走 i18n：`useTranslation()` + `t('English source key')`，key 写入 `web/src/i18n/locales/{en,zh,zh-TW,fr,ru,ja,vi}.json`。
+- **手机端代码禁止 `import '@/i18n/config'`**：该模块静态 import 七个语言包（合计 ~4 MB 源码 / ~1.1 MB gzip），静态引入它会直接击穿首屏预算。手机端固定用 `web/src/mobile/lib/i18n.ts` 的 `initializeMobileI18n()`，语言包按需 `import()` 成独立异步 chunk。
 - 数字、紧凑数字、金额必须复用 `@/lib/format`（`formatNumber` / `formatCompactNumber` / `formatTokens` / `formatUseTime` / `formatLogQuota`）与 `@/lib/currency`；任何传给 `Intl.*` 的语言码必须先经 `@/i18n/languages` 的 `toIntlLocale()`。禁止自己写 `zhCN` 映射。
 - 组件优先复用 `@/components/ui/*` 与 `@/components/{confirm-dialog,empty-state,loading-state,error-state}.tsx`；本项目没有底部 Tab 栏组件，这是唯一需要新增的通用交互控件，需在变更说明中记录该能力缺口。
 - 手机端**不引入**：TanStack Router、recharts/vchart、axios、lucide-react、CodeMirror、shiki、katex、auto-skeleton。首屏 JS（gzip）目标 < 120 KB。
@@ -547,12 +548,12 @@ git commit -m "feat(web): serve the mobile console at /m with an SPA fallback"
 ## Task 3：手机端构建入口与最小可运行壳
 
 **Files:**
-- Create: `web/rsbuild.mobile.config.ts`、`web/src/mobile/index.html`、`web/src/mobile/main.tsx`、`web/src/mobile/app.tsx`、`web/src/mobile/styles/mobile.css`、`web/src/mobile/types.ts`
-- Create: `web/src/mobile/__tests__/app.test.tsx`
+- Create: `web/rsbuild.mobile.config.ts`、`web/src/mobile/index.html`、`web/src/mobile/main.tsx`、`web/src/mobile/app.tsx`、`web/src/mobile/styles/mobile.css`、`web/src/mobile/types.ts`、`web/src/mobile/lib/i18n.ts`
+- Create: `web/src/mobile/__tests__/app.test.tsx`、`web/src/mobile/lib/__tests__/i18n.test.ts`
 - Modify: `web/package.json`、`.gitignore`
 
 **Interfaces:**
-- Produces: `MobileTab`、`MOBILE_TABS`（后续 Task 7 使用）；`web/mobile-dist/` 构建产物（Task 4 的 embed 目标）。
+- Produces: `MobileTab`、`MOBILE_TABS`（后续 Task 7 使用）；`initializeMobileI18n()`、`resolveMobileLocale()`（Task 5 的 `providers.tsx` 与后续所有页面使用）；`web/mobile-dist/` 构建产物（Task 4 的 embed 目标）。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -575,6 +576,44 @@ describe('MobileApp', () => {
     render(<MobileApp />)
 
     expect(screen.getByRole('heading', { name: 'Mobile console' })).toBeInTheDocument()
+  })
+})
+```
+
+`web/src/mobile/lib/__tests__/i18n.test.ts`（语言包必须按需加载：首屏预算与 i18n 同时成立的唯一方式）：
+
+```ts
+import i18n from 'i18next'
+import { beforeEach, describe, expect, it } from 'vitest'
+
+import { initializeMobileI18n, resolveMobileLocale } from '@/mobile/lib/i18n'
+
+describe('resolveMobileLocale', () => {
+  it('maps browser tags onto the interface language codes', () => {
+    expect(resolveMobileLocale('zh')).toBe('zhCN')
+    expect(resolveMobileLocale('zh-CN')).toBe('zhCN')
+    expect(resolveMobileLocale('zh-Hant-TW')).toBe('zhTW')
+    expect(resolveMobileLocale('fr-FR')).toBe('fr')
+    expect(resolveMobileLocale('de-DE')).toBe('en')
+  })
+})
+
+describe('initializeMobileI18n', () => {
+  beforeEach(async () => {
+    localStorage.clear()
+    await i18n.changeLanguage('en')
+  })
+
+  it('loads only the active locale bundle', async () => {
+    localStorage.setItem('i18nextLng', 'zh')
+
+    await initializeMobileI18n()
+
+    expect(i18n.resolvedLanguage).toBe('zhCN')
+    expect(i18n.hasResourceBundle('zhCN', 'translation')).toBe(true)
+    expect(i18n.hasResourceBundle('en', 'translation')).toBe(true)
+    expect(i18n.hasResourceBundle('ja', 'translation')).toBe(false)
+    expect(i18n.t('Usage')).not.toBe('Usage')
   })
 })
 ```
@@ -604,10 +643,85 @@ export function MobileApp() {
 }
 ```
 
+`web/src/mobile/lib/i18n.ts`：手机端自己的 i18n 入口。桌面 `@/i18n/config` 一次性静态 import 七个语言包（~4 MB 源码 / ~1.1 MB gzip），静态引入它会直接击穿首屏预算。这里先以空 resources 初始化并立即渲染（未加载时 `t()` 返回英文源 key，本身就是可读文案），再只把当前语言一个 chunk 拉回来 `addResourceBundle`。locale 文件仍与桌面共用，语言码归一仍走 `@/i18n/languages`。
+
+```ts
+import i18n from 'i18next'
+import { initReactI18next } from 'react-i18next'
+
+import { convertDetectedLanguage } from '@/i18n/languages'
+
+// Each locale file holds every desktop string, so locales are only ever loaded
+// as separate async chunks: the console ships no locale data in its first screen.
+const localeLoaders = {
+  en: () => import('@/i18n/locales/en.json'),
+  zhCN: () => import('@/i18n/locales/zh.json'),
+  zhTW: () => import('@/i18n/locales/zh-TW.json'),
+  fr: () => import('@/i18n/locales/fr.json'),
+  ru: () => import('@/i18n/locales/ru.json'),
+  ja: () => import('@/i18n/locales/ja.json'),
+  vi: () => import('@/i18n/locales/vi.json'),
+} as const
+
+type MobileLocaleCode = keyof typeof localeLoaders
+
+const mobileLocaleCodes = Object.keys(localeLoaders) as MobileLocaleCode[]
+
+function isMobileLocaleCode(value: string): value is MobileLocaleCode {
+  return value in localeLoaders
+}
+
+// Reuse the project's browser-tag mapping (`zh` -> `zhCN`, `zh-Hant-TW` ->
+// `zhTW`), then narrow region tags onto their primary code (`fr-FR` -> `fr`).
+export function resolveMobileLocale(value: string): MobileLocaleCode {
+  const converted = convertDetectedLanguage(value)
+  if (isMobileLocaleCode(converted)) return converted
+
+  const primary = converted.split('-')[0]
+  return isMobileLocaleCode(primary) ? primary : 'en'
+}
+
+function detectedLocaleValue(): string {
+  const stored = localStorage.getItem('i18nextLng')
+  return stored ?? navigator.language
+}
+
+async function loadLocale(code: MobileLocaleCode): Promise<void> {
+  const [bundle, fallback] = await Promise.all([
+    localeLoaders[code](),
+    code === 'en' ? undefined : localeLoaders.en(),
+  ])
+
+  i18n.addResourceBundle(code, 'translation', bundle.default, true, true)
+  if (fallback) {
+    i18n.addResourceBundle('en', 'translation', fallback.default, true, true)
+  }
+  await i18n.changeLanguage(code)
+}
+
+export async function initializeMobileI18n(): Promise<void> {
+  const code = resolveMobileLocale(detectedLocaleValue())
+
+  await i18n.use(initReactI18next).init({
+    resources: {},
+    lng: code,
+    fallbackLng: 'en',
+    supportedLngs: mobileLocaleCodes,
+    load: 'currentOnly',
+    nsSeparator: false, // Allow literal colons in keys (e.g. URLs, labels)
+    debug: import.meta.env.DEV,
+    interpolation: { escapeValue: false },
+  })
+
+  localStorage.setItem('i18nextLng', code)
+  await loadLocale(code)
+}
+```
+
 `web/src/mobile/styles/mobile.css`：先复用桌面全部 token，再附加手机端基线（Tailwind v4 用 `@import`）：
 
 ```css
-@import '../styles/index.css';
+@import '../../styles/index.css';
 
 html {
   /* Avoid the double-tap zoom delay on Android; the console has no pinch-zoom content. */
@@ -636,13 +750,17 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Toaster } from '@/components/ui/sonner'
 import { ThemeProvider } from '@/context/theme-provider'
-import '@/i18n/config'
 import '@/mobile/styles/mobile.css'
 
 import { MobileApp } from '@/mobile/app'
+import { initializeMobileI18n } from '@/mobile/lib/i18n'
 
 const container = document.getElementById('root')
 if (container) {
+  // Not awaited: the shell renders with the English source keys first and
+  // re-renders once the active locale chunk arrives.
+  void initializeMobileI18n()
+
   createRoot(container).render(
     <StrictMode>
       <ThemeProvider>
@@ -741,15 +859,20 @@ web/mobile-dist
 Run:
 ```bash
 cd /home/ra/orca/workspaces/Newapi/codex-mobile-admin-webui/web
-bun run test -- src/mobile/__tests__/app.test.tsx
+bun run test -- src/mobile
 bun run typecheck
 bunx oxlint -c .oxlintrc.json src/mobile
 bun run copyright:check
 bun run build:mobile
 ls mobile-dist/index.html
 grep -o '/m/[^"]*\.js' mobile-dist/index.html | head -3
+# First-screen JS budget (< 120 KB gzip): sum the gzip size of every script the
+# built index.html loads eagerly. Locale files must be async chunks instead.
+for f in $(grep -o '/m/static/js/[^"]*\.js' mobile-dist/index.html); do
+  gzip -c "mobile-dist${f#/m}" | wc -c
+done
 ```
-Expected: 测试 PASS；typecheck 无错误；lint 无 error；`mobile-dist/index.html` 存在；`grep` 输出至少一行以 `/m/` 开头的 JS 资源路径。
+Expected: 测试 PASS；typecheck 无错误；lint 无 error；`mobile-dist/index.html` 存在；`grep` 输出至少一行以 `/m/` 开头的 JS 资源路径；上面 `gzip -c | wc -c` 各值之和 < 122880（120 KB）。超标时先确认语言包没被打进首屏 chunk：`grep -l 'locales/' -r mobile-dist/static/js` 应当只命中异步 chunk（`index.html` 里没有引用它们）。
 
 - [ ] **Step 5: 提交**
 
@@ -1215,14 +1338,18 @@ export function MobileProviders(props: MobileProvidersProps) {
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Toaster } from '@/components/ui/sonner'
-import '@/i18n/config'
 import '@/mobile/styles/mobile.css'
 
 import { MobileApp } from '@/mobile/app'
+import { initializeMobileI18n } from '@/mobile/lib/i18n'
 import { MobileProviders } from '@/mobile/providers'
 
 const container = document.getElementById('root')
 if (container) {
+  // Not awaited: the shell renders with the English source keys first and
+  // re-renders once the active locale chunk arrives.
+  void initializeMobileI18n()
+
   createRoot(container).render(
     <StrictMode>
       <MobileProviders>

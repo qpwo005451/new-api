@@ -15,8 +15,10 @@ import (
 
 // WebAssets holds the embedded dashboard frontend assets.
 type WebAssets struct {
-	BuildFS   embed.FS
-	IndexPage []byte
+	BuildFS         embed.FS
+	IndexPage       []byte
+	MobileBuildFS   embed.FS
+	MobileIndexPage []byte
 }
 
 // desktopPreferenceCookie is set by the mobile console when the operator taps
@@ -68,20 +70,58 @@ func desktopShellHandler(indexPage []byte) gin.HandlerFunc {
 	}
 }
 
-// SetWebRouter serves the desktop shell. gzip, rate limiting and caching stay
-// inside the web chain instead of being registered with router.Use, so the set
-// and order of middleware running for other routes on the engine is unchanged.
-func SetWebRouter(router *gin.Engine, assets WebAssets, pluginDispatcher gin.HandlerFunc) {
-	frontendFS := common.EmbedFolder(assets.BuildFS, "web/dist")
-
-	router.NoRoute(
+// withWebChain builds the per-request middleware chain shared by the desktop
+// fallback and the mobile console. The order matches the pre-existing desktop
+// chain exactly, and the chain is never registered with router.Use, so adding
+// the mobile routes cannot widen gzip, caching or rate limiting to other
+// routes on the engine.
+func withWebChain(pluginDispatcher gin.HandlerFunc, extra ...gin.HandlerFunc) []gin.HandlerFunc {
+	chain := []gin.HandlerFunc{
 		pluginDispatcher,
 		middleware.RouteTag("web"),
 		gzip.Gzip(gzip.DefaultCompression),
 		middleware.AccessTokenAudit(),
 		middleware.GlobalWebRateLimit(),
 		middleware.Cache(),
-		static.Serve("/", frontendFS),
-		desktopShellHandler(assets.IndexPage),
+	}
+	return append(chain, extra...)
+}
+
+// buildMobileShell serves the mobile console: real files under /m come from the
+// mobile build, everything else returns the mobile index so client-side deep
+// links keep working. Cache-Control for the index is forced to no-cache because
+// middleware.Cache sets a one-week max-age for every non-root path.
+func buildMobileShell(fs static.ServeFileSystem, indexPage []byte) gin.HandlerFunc {
+	fileServer := http.StripPrefix("/m", http.FileServer(fs))
+	return func(c *gin.Context) {
+		relativePath := strings.TrimPrefix(c.Request.URL.Path, "/m")
+		if relativePath != "" {
+			if file, err := fs.Open(relativePath); err == nil {
+				_ = file.Close()
+				fileServer.ServeHTTP(c.Writer, c.Request)
+				return
+			}
+		}
+		c.Header("Cache-Control", "no-cache")
+		c.Data(http.StatusOK, "text/html; charset=utf-8", indexPage)
+	}
+}
+
+// SetWebRouter serves the desktop shell and the mobile console. gzip, rate
+// limiting and caching stay inside the web chain instead of being registered
+// with router.Use, so the set and order of middleware running for other routes
+// on the engine is unchanged.
+func SetWebRouter(router *gin.Engine, assets WebAssets, pluginDispatcher gin.HandlerFunc) {
+	frontendFS := common.EmbedFolder(assets.BuildFS, "web/dist")
+	mobileFS := common.EmbedFolder(assets.MobileBuildFS, "web/mobile-dist")
+	mobileShell := buildMobileShell(mobileFS, assets.MobileIndexPage)
+
+	router.GET("/m", withWebChain(pluginDispatcher, mobileShell)...)
+	router.GET("/m/*path", withWebChain(pluginDispatcher, mobileShell)...)
+	router.NoRoute(
+		withWebChain(pluginDispatcher,
+			static.Serve("/", frontendFS),
+			desktopShellHandler(assets.IndexPage),
+		)...,
 	)
 }

@@ -24,6 +24,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,7 +33,12 @@ import (
 //go:embed testdata/web-dist
 var testDesktopFS embed.FS
 
+//go:embed testdata/mobile-dist
+var testMobileFS embed.FS
+
 const testDesktopIndex = "<!doctype html><title>desktop shell</title>"
+
+const testMobileIndex = "<!doctype html><title>mobile shell</title>"
 
 func newTestEngine(t *testing.T) *gin.Engine {
 	t.Helper()
@@ -113,6 +119,46 @@ func TestDesktopShellCases(t *testing.T) {
 			}
 			if testCase.wantStatus == http.StatusOK {
 				assert.Equal(t, "no-cache", recorder.Header().Get("Cache-Control"))
+			}
+		})
+	}
+}
+
+func newTestMobileEngine(t *testing.T) *gin.Engine {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	shell := buildMobileShell(common.EmbedFolder(testMobileFS, "testdata/mobile-dist"), []byte(testMobileIndex))
+	engine.GET("/m", shell)
+	engine.GET("/m/*path", shell)
+	return engine
+}
+
+func TestMobileShellServesIndexAndFallsBackForDeepLinks(t *testing.T) {
+	cases := []struct {
+		name        string
+		target      string
+		wantStatus  int
+		wantBody    string
+		wantNoCache bool
+	}{
+		{name: "root of mobile console", target: "/m", wantStatus: http.StatusOK, wantBody: testMobileIndex, wantNoCache: true},
+		{name: "deep link falls back to mobile index", target: "/m/routing", wantStatus: http.StatusOK, wantBody: testMobileIndex, wantNoCache: true},
+		{name: "hashed asset is served from the mobile build", target: "/m/static/app.js", wantStatus: http.StatusOK, wantBody: "console.log('mobile shell asset')\n", wantNoCache: false},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			engine := newTestMobileEngine(t)
+			recorder := httptest.NewRecorder()
+			engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, testCase.target, nil))
+
+			require.Equal(t, testCase.wantStatus, recorder.Code)
+			assert.Equal(t, testCase.wantBody, recorder.Body.String())
+			if testCase.wantNoCache {
+				assert.Equal(t, "no-cache", recorder.Header().Get("Cache-Control"))
+			} else {
+				assert.Empty(t, recorder.Header().Get("Cache-Control"))
 			}
 		})
 	}

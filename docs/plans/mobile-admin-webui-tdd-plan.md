@@ -4755,7 +4755,7 @@ FIRST_SCREEN_GZIP_TOTAL=145680        (预算 153600，余量 7920)
 
 | 命令 | 结果 |
 | --- | --- |
-| `bun run test` | **203 files / 2287 tests passed**（+1 file / +8 tests：`mobile-locales.test.ts` 6 个 + `i18n.test.ts` 新增 3 个并改写既存 1 个） |
+| `bun run test` | **203 files / 2289 tests passed**（+1 file / +10 tests：`mobile-locales.test.ts` 8 个 + `i18n.test.ts` 新增 3 个并改写既存 1 个） |
 | `bun run test -- src/mobile` | **24 files / 114 tests passed** |
 | `bun run typecheck` | exit 0 |
 | `bunx oxlint -c .oxlintrc.json src/mobile scripts/build-mobile-locales.mjs` | exit 0，仅既存 1 条 warning（`src/mobile/main.tsx:28`） |

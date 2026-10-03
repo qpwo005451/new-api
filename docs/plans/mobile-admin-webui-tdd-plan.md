@@ -1461,7 +1461,7 @@ git commit -m "feat(web-mobile): authenticate the mobile console with a personal
 - Create: `web/src/mobile/components/__tests__/pat-gate.test.tsx`、`web/src/mobile/components/__tests__/kpi-card.test.tsx`、`web/src/mobile/components/__tests__/mobile-states.test.tsx`
 - Create: `web/src/mobile/lib/status.ts`、`web/src/mobile/lib/__tests__/status.test.ts`
 - Create: `web/src/lib/status-config.ts`（把 `web/src/lib/status-query.ts` 里与 axios 无关的纯逻辑搬出来）
-- Modify: `web/src/mobile/app.tsx`、`web/src/lib/status-query.ts`
+- Modify: `web/src/mobile/app.tsx`、`web/src/mobile/lib/pat-store.ts`、`web/src/lib/status-query.ts`
 
 **Interfaces:**
 - Consumes: `readPat` / `writePat` / `isPlausiblePat`（Task 5）；`@/lib/format` 的 `formatNumber`。
@@ -1787,6 +1787,23 @@ describe('MobileApp', () => {
 - `web/src/mobile/components/__tests__/mobile-states.test.tsx`：`MobileLoading` 有 `role='status'`；`MobileEmpty` 渲染 `title` 与 `description` 且容器内**没有任何 `svg`**（`container.querySelector('svg')` 为 null）；`MobileError` 传 `onRetry` 时点击 `t('Retry')` 按钮会调用它、不传时没有任何按钮。
 - `web/src/mobile/lib/__tests__/status.test.ts`：`vi.stubGlobal('fetch', ...)` 返回 `{ success: true, data: { quota_per_unit: 500000, quota_display_type: 'USD' } }`；断言 `mobileStatusQueryOptions.queryFn`（用 `await mobileStatusQueryOptions.queryFn({} as never)` 或经 `QueryClient.fetchQuery` 调用）请求的是 `/api/status`、把 `quotaPerUnit` 写进了 `useSystemConfigStore.getState().currency.quotaPerUnit`、返回 `data`；并断言该请求的 `Authorization` 头**不存在**（未存 PAT 时不得带）。
 - 回归：`web/src/lib/__tests__/status-query.test.tsx` 必须仍然全绿。
+
+- [ ] **Step 3c: PAT 失效时门必须重新出现（订阅 pat-store）**
+
+`PatGate` 现在的实现只在挂载时读一次 `readPat()`，而 `api-client` 在任何 401 上都会 `clearPat()`。计划对 `pat-gate.tsx` 的职责是「未配置 PAT / **令牌失效**时的门」，所以令牌被吊销或过期后手机端必须自动回到输入页，而不是把用户锁在一堆错误页里直到手动刷新（Task 8 接入受保护接口后这是必然路径）。
+
+实现方式（订阅式，不加全局状态库）：
+
+1. `web/src/mobile/lib/pat-store.ts` 增加一个极小的订阅面：
+   - `const patListeners = new Set<() => void>()`
+   - `export function subscribePat(listener: () => void): () => void`（加入集合并返回 unsubscribe）
+   - `writePat` 与 `clearPat` 在写入成功后通知所有 listener（`readPat` 保持不变，仍是同步读取当前值——`useSyncExternalStore` 的 `getSnapshot` 就是它）。
+2. `web/src/mobile/components/pat-gate.tsx` 把 `const [storedPat] = useState(() => readPat())` 改为 `const storedPat = useSyncExternalStore(subscribePat, readPat)`，其余交互（`onReady`、错误提示、ARIA）不变。这样 `clearPat()` 会触发重渲染并把输入页放回去。
+
+先写失败测试，再写实现：
+
+- `web/src/mobile/lib/__tests__/pat-store.test.ts` 追加：`subscribePat` 在 `writePat` 与 `clearPat` 后各被通知一次；调用返回的 unsubscribe 之后不再收到通知。
+- `web/src/mobile/components/__tests__/pat-gate.test.tsx` 追加：存好一个合法 PAT 渲染 `PatGate`（children 可见）→ 调用 `clearPat()` → 断言 `t('Access token')` 输入页重新出现、children 消失。
 
 - [ ] **Step 4: 运行测试确认通过**
 

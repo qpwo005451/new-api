@@ -16,12 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { PatGate } from '@/mobile/components/pat-gate'
-import { readPat } from '@/mobile/lib/pat-store'
+import { clearPat, readPat } from '@/mobile/lib/pat-store'
 
 describe('PatGate', () => {
   beforeEach(() => {
@@ -88,5 +88,24 @@ describe('PatGate', () => {
     )
 
     expect(screen.getByText('console')).toBeInTheDocument()
+  })
+
+  it('brings the gate back when the stored token is cleared', () => {
+    window.localStorage.setItem('newapi_mobile_pat', 'b'.repeat(29))
+
+    render(
+      <PatGate onReady={vi.fn()}>
+        <p>console</p>
+      </PatGate>
+    )
+
+    expect(screen.getByText('console')).toBeInTheDocument()
+
+    act(() => {
+      clearPat()
+    })
+
+    expect(screen.getByLabelText('Access token')).toBeInTheDocument()
+    expect(screen.queryByText('console')).not.toBeInTheDocument()
   })
 })

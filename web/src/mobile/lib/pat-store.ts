@@ -18,6 +18,21 @@ For commercial licensing, please contact support@quantumnous.com
 */
 const PAT_STORAGE_KEY = 'newapi_mobile_pat'
 
+const patListeners = new Set<() => void>()
+
+function notifyPatListeners(): void {
+  for (const listener of patListeners) {
+    listener()
+  }
+}
+
+export function subscribePat(listener: () => void): () => void {
+  patListeners.add(listener)
+  return () => {
+    patListeners.delete(listener)
+  }
+}
+
 // The server generates access tokens with common.GenerateRandomKey(29 + rand(4)),
 // so anything outside 29..32 characters is a truncated paste.
 // controller.GenerateAccessToken stores base64(29..32 requested chars), which is
@@ -29,7 +44,11 @@ const PAT_LENGTH_MAX = 32
 
 export function isPlausiblePat(value: string): boolean {
   const trimmed = value.trim()
-  return trimmed.length >= PAT_LENGTH_MIN && trimmed.length <= PAT_LENGTH_MAX && !/\s/.test(trimmed)
+  return (
+    trimmed.length >= PAT_LENGTH_MIN &&
+    trimmed.length <= PAT_LENGTH_MAX &&
+    !/\s/.test(trimmed)
+  )
 }
 
 export function readPat(): string {
@@ -47,6 +66,7 @@ export function writePat(pat: string): void {
     // A browser that blocks storage still works for the current tab; the
     // operator only has to paste the token again after a reload.
   }
+  notifyPatListeners()
 }
 
 export function clearPat(): void {
@@ -55,4 +75,5 @@ export function clearPat(): void {
   } catch {
     // See writePat.
   }
+  notifyPatListeners()
 }

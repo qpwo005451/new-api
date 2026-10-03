@@ -16,13 +16,18 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { type ReactNode, useState } from 'react'
+import { type ReactNode, useState, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { isPlausiblePat, readPat, writePat } from '@/mobile/lib/pat-store'
+import {
+  isPlausiblePat,
+  readPat,
+  subscribePat,
+  writePat,
+} from '@/mobile/lib/pat-store'
 
 interface PatGateProps {
   onReady: (pat: string) => void
@@ -31,7 +36,7 @@ interface PatGateProps {
 
 export function PatGate(props: PatGateProps) {
   const { t } = useTranslation()
-  const [storedPat, setStoredPat] = useState(() => readPat())
+  const storedPat = useSyncExternalStore(subscribePat, readPat)
   const [draft, setDraft] = useState('')
   const [errorKey, setErrorKey] = useState<string | null>(null)
 
@@ -47,7 +52,6 @@ export function PatGate(props: PatGateProps) {
     const token = draft.trim()
     writePat(token)
     setErrorKey(null)
-    setStoredPat(token)
     props.onReady(token)
   }
 

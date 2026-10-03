@@ -16,9 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { clearPat, isPlausiblePat, readPat, writePat } from '@/mobile/lib/pat-store'
+import {
+  clearPat,
+  isPlausiblePat,
+  readPat,
+  subscribePat,
+  writePat,
+} from '@/mobile/lib/pat-store'
 
 describe('pat-store', () => {
   beforeEach(() => {
@@ -54,6 +60,30 @@ describe('pat-store', () => {
     expect(isPlausiblePat('abcdefghijklmnopqrstuvwxy z012')).toBe(false)
   })
 
+  it('notifies subscribers once after writePat and once after clearPat', () => {
+    const listener = vi.fn()
+    const unsubscribe = subscribePat(listener)
+
+    writePat('abcdefghijklmnopqrstuvwxyz012')
+    expect(listener).toHaveBeenCalledTimes(1)
+
+    clearPat()
+    expect(listener).toHaveBeenCalledTimes(2)
+
+    unsubscribe()
+  })
+
+  it('stops notifying a listener after it unsubscribes', () => {
+    const listener = vi.fn()
+    const unsubscribe = subscribePat(listener)
+    unsubscribe()
+
+    writePat('abcdefghijklmnopqrstuvwxyz012')
+    clearPat()
+
+    expect(listener).not.toHaveBeenCalled()
+  })
+
   it('falls back to an empty string when storage is unavailable', () => {
     const original = window.localStorage.getItem
     Object.defineProperty(window, 'localStorage', {
@@ -66,6 +96,9 @@ describe('pat-store', () => {
     })
 
     expect(readPat()).toBe('')
-    Object.defineProperty(window, 'localStorage', { configurable: true, value: { getItem: original } })
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: { getItem: original },
+    })
   })
 })

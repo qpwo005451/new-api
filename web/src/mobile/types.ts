@@ -82,3 +82,43 @@ export interface PagedResult<T> {
   page: number
   page_size: number
 }
+
+export type AvailabilityHealth = 'normal' | 'degraded' | 'unavailable' | 'unknown'
+
+export interface MonitorSiteModel {
+  model_name: string
+  status: string
+  latest_status: string
+  latest_failure_type?: string
+  latest_error_summary?: string
+  weight: number
+  stale: boolean
+}
+
+export interface MonitorSiteSummary {
+  score: number
+  health: string
+  models: MonitorSiteModel[]
+}
+
+export interface MonitorSiteResponse {
+  site: { id: number; name: string; enabled: boolean }
+  summary: MonitorSiteSummary
+  channel_ids: number[]
+  latest_observed_at: number
+  freshness_seconds?: number
+}
+
+export interface ModelMonitorSummary {
+  enabled: boolean
+  sites: MonitorSiteResponse[]
+}
+
+export interface AvailabilityRow {
+  siteName: string
+  modelName: string
+  status: string
+  latestFailureType?: string
+  latestErrorSummary?: string
+  stale: boolean
+}

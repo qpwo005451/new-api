@@ -927,7 +927,15 @@ git commit -m "feat(web-mobile): add the /m build entry and an empty mobile shel
 
 - [ ] **Step 1: 让构建失败（先证伪装配）**
 
-Run: `cd /home/ra/orca/workspaces/Newapi/codex-mobile-admin-webui && rm -rf web/mobile-dist && go build ./...`
+先只加入 `main.go` 里的两个 `//go:embed web/mobile-dist` 声明（Step 2 的其余装配与流水线改动留到 Step 3 之前一起做）。
+
+工作树里 `web/dist` 是 gitignored 且此时还不存在，先给它一个桩，否则失败信息会是 `pattern web/dist`，掩盖你要验证的信号：
+
+```bash
+cd /home/ra/orca/workspaces/Newapi/codex-mobile-admin-webui
+mkdir -p web/dist && printf '<!doctype html><title>desktop stub</title>\n' > web/dist/index.html
+rm -rf web/mobile-dist && go build ./...
+```
 Expected: FAIL — `pattern web/mobile-dist: no matching files found`（说明 embed 目标确实被需要）。
 
 - [ ] **Step 2: 写出装配实现**

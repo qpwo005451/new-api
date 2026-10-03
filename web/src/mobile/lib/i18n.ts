@@ -38,13 +38,20 @@ type MobileLocaleCode = keyof typeof localeLoaders
 const mobileLocaleCodes = Object.keys(localeLoaders) as MobileLocaleCode[]
 
 function isMobileLocaleCode(value: string): value is MobileLocaleCode {
-  return value in localeLoaders
+  return Object.hasOwn(localeLoaders, value)
 }
 
-// Reuse the project's browser-tag mapping (`zh` -> `zhCN`, `zh-Hant-TW` ->
-// `zhTW`), then narrow region tags onto their primary code (`fr-FR` -> `fr`).
+// The shared `i18nextLng` cache the desktop writes already holds interface codes
+// (`zhTW`), so an exact match has to win before the BCP-47 mapping runs:
+// `convertDetectedLanguage('zhTW')` reads that code as a plain `zh` tag and
+// would downgrade it to `zhCN`. Only then reuse the project's browser-tag
+// mapping (`zh` -> `zhCN`, `zh-Hant-TW` -> `zhTW`) and narrow region tags onto
+// their primary code (`fr-FR` -> `fr`).
 export function resolveMobileLocale(value: string): MobileLocaleCode {
-  const converted = convertDetectedLanguage(value)
+  const trimmed = value.trim()
+  if (isMobileLocaleCode(trimmed)) return trimmed
+
+  const converted = convertDetectedLanguage(trimmed.toLowerCase())
   if (isMobileLocaleCode(converted)) return converted
 
   const primary = converted.split('-')[0]

@@ -29,6 +29,12 @@ describe('resolveMobileLocale', () => {
     expect(resolveMobileLocale('fr-FR')).toBe('fr')
     expect(resolveMobileLocale('de-DE')).toBe('en')
   })
+
+  it('keeps interface language codes the desktop already cached', () => {
+    expect(resolveMobileLocale('zhTW')).toBe('zhTW')
+    expect(resolveMobileLocale('zhCN')).toBe('zhCN')
+    expect(resolveMobileLocale('ja')).toBe('ja')
+  })
 })
 
 describe('initializeMobileI18n', () => {
@@ -47,5 +53,15 @@ describe('initializeMobileI18n', () => {
     expect(i18n.hasResourceBundle('en', 'translation')).toBe(true)
     expect(i18n.hasResourceBundle('ja', 'translation')).toBe(false)
     expect(i18n.t('Usage')).not.toBe('Usage')
+  })
+
+  it('keeps a cached Traditional Chinese preference across reloads', async () => {
+    localStorage.setItem('i18nextLng', 'zhTW')
+
+    await initializeMobileI18n()
+    await initializeMobileI18n()
+
+    expect(i18n.resolvedLanguage).toBe('zhTW')
+    expect(localStorage.getItem('i18nextLng')).toBe('zhTW')
   })
 })

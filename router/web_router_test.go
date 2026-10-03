@@ -85,17 +85,20 @@ func TestDesktopShellRedirectsMobileRootToMobileConsole(t *testing.T) {
 
 func TestDesktopShellCases(t *testing.T) {
 	cases := []struct {
-		name         string
-		target       string
-		userAgent    string
-		cookie       string
-		wantStatus   int
-		wantLocation string
-		wantBody     string
+		name            string
+		target          string
+		userAgent       string
+		cookie          string
+		wantStatus      int
+		wantLocation    string
+		wantBody        string
+		wantClearCookie bool
 	}{
 		{name: "desktop root renders desktop shell", target: "/", userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36", wantStatus: http.StatusOK, wantBody: testDesktopIndex},
 		{name: "mobile root with desktop=1 stays on desktop", target: "/?desktop=1", userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) Mobile/15E148", wantStatus: http.StatusOK, wantBody: testDesktopIndex},
 		{name: "mobile root with preference cookie stays on desktop", target: "/", userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) Mobile/15E148", cookie: desktopPreferenceCookie + "=1", wantStatus: http.StatusOK, wantBody: testDesktopIndex},
+		{name: "mobile root with desktop=0 clears the preference and returns to mobile", target: "/?desktop=0", userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) Mobile/15E148", cookie: desktopPreferenceCookie + "=1", wantStatus: http.StatusFound, wantLocation: "/m", wantClearCookie: true},
+		{name: "desktop root with desktop=0 keeps rendering the desktop shell", target: "/?desktop=0", userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36", cookie: desktopPreferenceCookie + "=1", wantStatus: http.StatusOK, wantBody: testDesktopIndex},
 		{name: "mobile deep link is not redirected", target: "/usage-logs", userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) Mobile/15E148", wantStatus: http.StatusOK, wantBody: testDesktopIndex},
 		{name: "api path returns relay not found", target: "/api/unknown", userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) Mobile/15E148", wantStatus: http.StatusNotFound},
 	}
@@ -117,6 +120,11 @@ func TestDesktopShellCases(t *testing.T) {
 			}
 			if testCase.wantBody != "" {
 				assert.Equal(t, testCase.wantBody, recorder.Body.String())
+			}
+			if testCase.wantClearCookie {
+				setCookie := recorder.Header().Get("Set-Cookie")
+				assert.Contains(t, setCookie, desktopPreferenceCookie+"=", "clearing response must rewrite the preference cookie")
+				assert.Contains(t, setCookie, "Max-Age=0", "clearing response must expire the preference cookie")
 			}
 			if testCase.wantStatus == http.StatusOK {
 				assert.Equal(t, "no-cache", recorder.Header().Get("Cache-Control"))

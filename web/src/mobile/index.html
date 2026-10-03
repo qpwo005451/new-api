@@ -1,20 +1,56 @@
 <!doctype html>
-<html lang='en'>
+<html lang="en">
   <head>
-    <meta charset='UTF-8' />
+    <meta charset="UTF-8" />
     <meta
-      name='viewport'
-      content='width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5'
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5"
     />
-    <meta name='color-scheme' content='light dark' />
-    <meta name='theme-color' content='#ffffff' media='(prefers-color-scheme: light)' />
-    <meta name='theme-color' content='#0a0a0a' media='(prefers-color-scheme: dark)' />
+    <meta name="color-scheme" content="light dark" />
+    <meta
+      name="theme-color"
+      content="#ffffff"
+      media="(prefers-color-scheme: light)"
+    />
+    <meta
+      name="theme-color"
+      content="#0a0a0a"
+      media="(prefers-color-scheme: dark)"
+    />
     <title>new-api</title>
-    <link rel='manifest' href='/m/manifest.webmanifest' />
-    <meta name='apple-mobile-web-app-capable' content='yes' />
-    <meta name='apple-mobile-web-app-status-bar-style' content='default' />
+    <link rel="manifest" href="/m/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/m/icon-192.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <script>
+      // Mirror of the initial theme resolution in src/context/theme-provider.tsx
+      // (THEME_STORAGE_KEYS.mode + resolveTheme/getSystemTheme). It runs inline
+      // and synchronously before any module so the first paint already carries
+      // the dark/light class instead of flashing white. Change the preference
+      // key or the system rule in one place and the other must follow.
+      ;(function () {
+        try {
+          var stored = window.localStorage.getItem('newapi:theme:v1:mode')
+          var mode =
+            stored === 'dark' || stored === 'light' || stored === 'system'
+              ? stored
+              : 'system'
+          var resolved =
+            mode === 'system'
+              ? window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light'
+              : mode
+          var root = document.documentElement
+          root.classList.remove('light', 'dark')
+          root.classList.add(resolved)
+        } catch (error) {
+          document.documentElement.classList.add('light')
+        }
+      })()
+    </script>
   </head>
   <body>
-    <div id='root'></div>
+    <div id="root"></div>
   </body>
 </html>

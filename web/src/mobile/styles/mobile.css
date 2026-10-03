@@ -27,7 +27,6 @@ html {
 body {
   /* Numbers must not jitter while polling; every metric column uses digits of equal width. */
   font-variant-numeric: tabular-nums;
-  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 @media (prefers-reduced-motion: reduce) {

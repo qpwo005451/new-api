@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { fireEvent, render, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { PullToRefresh } from '@/mobile/components/pull-to-refresh'
@@ -118,5 +118,50 @@ describe('PullToRefresh', () => {
       expect(scroller).toHaveAttribute('data-refreshing', 'false')
     )
     expect(onRefresh).toHaveBeenCalledTimes(1)
+  })
+
+  it('cancels an armed pull when the touch is cancelled', async () => {
+    const onRefresh = vi.fn().mockResolvedValue(undefined)
+    const scroller = renderScroller(0, onRefresh)
+
+    touchStart(scroller, 0)
+    fireEvent.touchMove(scroller, { touches: [{ clientY: 120 }] })
+    fireEvent.touchCancel(scroller)
+    // A cancelled gesture can still be followed by a touchEnd in the browser;
+    // the cancel must clear the armed threshold so that end is a no-op.
+    fireEvent.touchEnd(scroller)
+
+    await waitFor(() =>
+      expect(scroller).toHaveAttribute('data-refreshing', 'false')
+    )
+    expect(onRefresh).not.toHaveBeenCalled()
+  })
+
+  it('announces the refreshing state to assistive technology', async () => {
+    let resolveRefresh: () => void = () => undefined
+    const onRefresh = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRefresh = resolve
+        })
+    )
+    const scroller = renderScroller(0, onRefresh)
+
+    const status = screen.getByRole('status')
+    expect(status).toHaveAttribute('aria-live', 'polite')
+    expect(status).toBeEmptyDOMElement()
+
+    touchStart(scroller, 0)
+    fireEvent.touchMove(scroller, { touches: [{ clientY: 120 }] })
+    fireEvent.touchEnd(scroller)
+
+    await waitFor(() =>
+      expect(screen.getByRole('status')).toHaveTextContent('Refreshing...')
+    )
+
+    resolveRefresh()
+    await waitFor(() =>
+      expect(screen.getByRole('status')).toBeEmptyDOMElement()
+    )
   })
 })

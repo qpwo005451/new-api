@@ -43,6 +43,8 @@ func isMobileUserAgent(userAgent string) bool {
 
 // prefersDesktopShell reports whether a mobile-looking browser explicitly asked
 // for the desktop dashboard, with ?desktop=1 or with the preference cookie.
+// The ?desktop=0 opt-out is handled before this check in desktopShellHandler,
+// because it must win over the cookie set by a previous ?desktop=1 visit.
 func prefersDesktopShell(c *gin.Context) bool {
 	if c.Query("desktop") == "1" {
 		return true
@@ -61,9 +63,21 @@ func desktopShellHandler(indexPage []byte) gin.HandlerFunc {
 			return
 		}
 		if c.Request.Method == http.MethodGet && c.Request.URL.Path == "/" &&
-			isMobileUserAgent(c.GetHeader("User-Agent")) && !prefersDesktopShell(c) {
-			c.Redirect(http.StatusFound, "/m")
-			return
+			isMobileUserAgent(c.GetHeader("User-Agent")) {
+			if c.Query("desktop") == "0" {
+				// The mobile console's "Desktop version" button only knows how to
+				// set the preference cookie, so this query parameter is the way
+				// back: expire the cookie and send the phone to /m. It is checked
+				// before prefersDesktopShell so it also overrides a cookie set by
+				// an earlier ?desktop=1 visit.
+				c.SetCookie(desktopPreferenceCookie, "", -1, "/", "", false, true)
+				c.Redirect(http.StatusFound, "/m")
+				return
+			}
+			if !prefersDesktopShell(c) {
+				c.Redirect(http.StatusFound, "/m")
+				return
+			}
 		}
 		c.Header("Cache-Control", "no-cache")
 		c.Data(http.StatusOK, "text/html; charset=utf-8", indexPage)

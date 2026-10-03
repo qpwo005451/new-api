@@ -167,14 +167,14 @@ export function RoutingPage() {
           hint={PRESET_LABEL_KEY[preset]}
         />
         <KpiCard
-          label='Channel switches'
+          label='Switched requests'
           value={formatNumber(stats.data.switched, locale)}
           hint={PRESET_LABEL_KEY[preset]}
         />
       </div>
 
       {stats.data.truncated ? (
-        <p className='text-muted-foreground px-3 text-[11px]'>
+        <p role='status' className='text-muted-foreground px-3 text-[11px]'>
           {t('Some switches in this window were not scanned.')}
         </p>
       ) : null}

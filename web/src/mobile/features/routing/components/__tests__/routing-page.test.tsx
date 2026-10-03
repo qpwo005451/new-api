@@ -17,7 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { RoutingPage } from '@/mobile/features/routing/components/routing-page'
@@ -69,7 +75,9 @@ const routingStats = {
   trend: [{ timestamp: 0, requests: 400, switched: 4 }],
   switches: [{ from: 1, to: 2, count: 4 }],
   switch_reasons: [{ reason: 'channel_error', count: 4 }],
-  affinity_by_rule: [{ rule_name: 'default', sticky_requests: 12, distinct_keys: 3 }],
+  affinity_by_rule: [
+    { rule_name: 'default', sticky_requests: 12, distinct_keys: 3 },
+  ],
 }
 
 function renderPage() {
@@ -123,7 +131,7 @@ describe('RoutingPage', () => {
     // The KPI reports the server total (7), not the sum of the truncated
     // top-5 pair list (4); a regression back to summing the pairs fails here.
     expect(
-      within(kpiCard('Channel switches')).getByText('7')
+      within(kpiCard('Switched requests')).getByText('7')
     ).toBeInTheDocument()
     expect(within(kpiCard('Requests')).getByText('400')).toBeInTheDocument()
     // The pair list stays the source for the switches section rows.
@@ -148,9 +156,9 @@ describe('RoutingPage', () => {
     renderPage()
 
     await waitFor(() =>
-      expect(
-        screen.getByText('Some switches in this window were not scanned.')
-      ).toBeInTheDocument()
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'Some switches in this window were not scanned.'
+      )
     )
   })
 
@@ -190,9 +198,18 @@ describe('RoutingPage', () => {
   it('refetches once with a new window when the time preset changes', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     vi.setSystemTime(PINNED_NOW)
+    // Hold the affinity response back so its arrival can be delivered on a
+    // later wall-clock second, forcing one extra render after the switch.
+    let resolveAffinity!: (response: Response) => void
+    const pendingAffinity = new Promise<Response>((resolve) => {
+      resolveAffinity = resolve
+    })
     const fetchMock = vi.fn(async (url: string) => {
       if (String(url).startsWith('/api/log/routing_stats')) {
         return jsonResponse({ success: true, data: routingStats })
+      }
+      if (String(url).startsWith('/api/log/channel_affinity_bindings')) {
+        return pendingAffinity
       }
       return jsonResponse({ success: true, data: { entries: [], total: 0 } })
     })
@@ -224,6 +241,21 @@ describe('RoutingPage', () => {
     expect(second.searchParams.get('end_timestamp')).not.toBe(
       first.searchParams.get('end_timestamp')
     )
+
+    // Deliver the affinity response on a later second than the preset switch.
+    // Resolving it re-renders the page; if the window anchor were recomputed
+    // during render, that render would change the range and mint a third
+    // routing_stats request. The count staying at two is the real guard, not
+    // the immediate fetch that the preset switch itself already proves.
+    vi.setSystemTime(new Date('2026-10-05T12:00:33Z'))
+    resolveAffinity(
+      jsonResponse({ success: true, data: { entries: [], total: 4 } })
+    )
+    // Wait until the late render actually landed: the sticky key count now
+    // comes from the resolved affinity response, so the page re-rendered.
+    await waitFor(() => expect(screen.getByText('4 keys')).toBeInTheDocument())
+    // That late render must not have moved the window and minted a third request.
+    expect(routingRequests()).toHaveLength(2)
     // The affinity endpoint does not key on the range, so it must not refetch.
     expect(
       fetchMock.mock.calls.filter(([url]) =>

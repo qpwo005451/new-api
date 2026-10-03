@@ -11,7 +11,8 @@
 ## Global Constraints
 
 - 实施工作树：`/home/ra/orca/workspaces/Newapi/codex-mobile-admin-webui`（Orca 创建，父工作树 `per-model-channel-weight`），分支 `codex/mobile-admin-webui`，基线 `qpwo005451/per-model-channel-weight` @ `7d4ac5fc0`（即 `prod/251` 的当前 head）。所有命令都在实施工作树内执行，不得提交到 `prod/251`。
-- 不新增后端业务接口、不改数据库、不改 relay/计费路径。后端改动只允许出现在 `main.go`、`router/web-router.go`、`router/web_router_test.go`、`router/testdata/**`、`makefile`、`Dockerfile`、`.github/workflows/*.yml`、`.gitignore`。
+- 不新增后端业务接口、不改数据库、不改 relay/计费路径。后端与构建装配改动只允许出现在 `main.go`、`router/web-router.go`、`router/web_router_test.go`、`router/testdata/**`、`makefile`、`Dockerfile`、`Dockerfile.dev`、`.dockerignore`、`.github/workflows/*.yml`、`electron/build.sh`、`scripts/build_release_candidate.sh`、`scripts/test_release_helpers.sh`、`.gitignore`。
+- **embed sweep 规则**：仓库里任何执行 `go build`/`go vet` 的路径，都必须在它之前让 `web/dist` 与 `web/mobile-dist` **同时**存在（真实构建或桩化）。`main.go` 的两个 `//go:embed` 都是无条件的，只准备 `web/dist` 的路径会直接编译失败。
 - 实施工作树是新建 checkout，没有任何 `node_modules`：首次运行前端命令前先执行 `cd web && bun install --frozen-lockfile`。
 - 不在生产主机 `10.0.0.251` 上执行 `bun install`、前端构建、`go build` 或测试；全部在本地工作站执行。发布候选使用 `scripts/build_release_candidate_local.ps1`。
 - 所有新增前端文件必须带 AGPL 版权头（用 `bun run copyright` 生成，它会重写命中文件；不要让它改写无关文件），文件名 kebab-case；测试必须放在被测模块的 `__tests__/` 目录，命名为 `<职责>.test.ts(x)`。
@@ -919,7 +920,7 @@ git commit -m "feat(web-mobile): add the /m build entry and an empty mobile shel
 ## Task 4：后端装配与构建流水线接入
 
 **Files:**
-- Modify: `main.go`、`makefile`、`Dockerfile`、`.github/workflows/ci.yml`、`.github/workflows/release.yml`
+- Modify: `main.go`、`makefile`、`Dockerfile`、`Dockerfile.dev`、`.dockerignore`、`.github/workflows/ci.yml`、`.github/workflows/release.yml`、`.github/workflows/electron-build.yml`、`electron/build.sh`、`scripts/build_release_candidate.sh`
 
 **Interfaces:**
 - Consumes: Task 2 的 `WebAssets.MobileBuildFS` / `WebAssets.MobileIndexPage`；Task 3 的 `web/mobile-dist`。
@@ -996,6 +997,30 @@ COPY --from=builder /build/web/mobile-dist ./web/mobile-dist
 ```yaml
           DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION=$VERSION bun run build:mobile
 ```
+
+- [ ] **Step 2b: 补齐其余会 `go build` 的路径（embed sweep）**
+
+`//go:embed web/mobile-dist` 是无条件的，只准备 `web/dist` 的路径现在会编译失败。逐个补齐（每一处都照该文件既有风格就近插入）：
+
+| 路径 | 需要做的事 |
+| --- | --- |
+| `.github/workflows/electron-build.yml` | 在 `bun run build` 那一行之后加 `DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION=$(git describe --tags) bun run build:mobile` |
+| `electron/build.sh` | 在 `bun run build` 之后、`cd ../electron` 之前加同一行（`electron/build.sh` 里版本号来自 `git describe --tags --always`，用该文件现有写法） |
+| `Dockerfile.dev` | 桩命令同时建两个目录与两个 `index.html`（它本来就不构建真实前端） |
+| `.dockerignore` | `/web/dist` 下一行加 `/web/mobile-dist`，否则本地陈旧的 mobile 产物会被 `COPY . .` 带进 builder2 并被 `//go:embed` 一并嵌进二进制（`COPY --from` 是合并语义，不清理目标多余文件） |
+| `scripts/build_release_candidate.sh` | `build_embed_assets` 增加 `bun run build:mobile`；`validate_embed_assets`、`restore_embed_assets_from_cache`、`store_embed_assets_in_cache` 都要把 `mobile-dist` 与 `dist` 同等对待（缓存条目里同时存 `dist/` 与 `mobile-dist/`），否则本地发布候选流水线只会产出桌面产物 |
+| `makefile` | 第 47 行那条注释同步说明两个 embed 目标由 `build-all-web` 覆盖 |
+
+已知但仍不处理：`scripts/post-rebuild-patches.sh` 在运行容器里 `go build`，容器最终阶段既无 `web/dist` 也无 `web/mobile-dist` —— 本次改动前它就已经失败，保持现状，只在报告里登记。
+
+Run:
+```bash
+cd /home/ra/orca/workspaces/Newapi/codex-mobile-admin-webui
+grep -n "build:mobile" .github/workflows/electron-build.yml electron/build.sh Dockerfile Dockerfile.dev scripts/build_release_candidate.sh makefile
+grep -n "web/mobile-dist" .github/workflows/ci.yml Dockerfile Dockerfile.dev .dockerignore scripts/build_release_candidate.sh
+bash scripts/test_release_helpers.sh 2>&1 | tail -5
+```
+Expected: 每条路径都能在 grep 结果里看到；`scripts/test_release_helpers.sh` 通过（若它断言了 `build_release_candidate.sh` 的措辞而失败，就同步更新该测试脚本，它也在允许改动清单里）。
 
 - [ ] **Step 3: 构建并运行后端测试确认通过**
 

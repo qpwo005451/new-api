@@ -18,7 +18,10 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { describe, expect, it } from 'vitest'
 
-import { countByHealth, flattenAvailability } from '@/mobile/features/models/lib/availability'
+import {
+  countByHealth,
+  flattenAvailability,
+} from '@/mobile/features/models/lib/availability'
 import type { MonitorSiteResponse } from '@/mobile/types'
 
 const sites: MonitorSiteResponse[] = [
@@ -28,7 +31,13 @@ const sites: MonitorSiteResponse[] = [
       score: 80,
       health: 'degraded',
       models: [
-        { model_name: 'gpt-5', status: 'available', latest_status: 'success', weight: 100, stale: false },
+        {
+          model_name: 'gpt-5',
+          status: 'available',
+          latest_status: 'success',
+          weight: 100,
+          stale: false,
+        },
         {
           model_name: 'claude-5',
           status: 'unavailable',
@@ -55,11 +64,21 @@ const sites: MonitorSiteResponse[] = [
 
 describe('countByHealth', () => {
   it('counts sites per health bucket including unknown', () => {
-    expect(countByHealth(sites)).toEqual({ normal: 1, degraded: 1, unavailable: 0, unknown: 0 })
+    expect(countByHealth(sites)).toEqual({
+      normal: 1,
+      degraded: 1,
+      unavailable: 0,
+      unknown: 0,
+    })
   })
 
   it('returns zeros for no sites', () => {
-    expect(countByHealth([])).toEqual({ normal: 0, degraded: 0, unavailable: 0, unknown: 0 })
+    expect(countByHealth([])).toEqual({
+      normal: 0,
+      degraded: 0,
+      unavailable: 0,
+      unknown: 0,
+    })
   })
 })
 
@@ -68,7 +87,11 @@ describe('flattenAvailability', () => {
     const rows = flattenAvailability(sites)
 
     expect(rows.map((row) => row.modelName)).toEqual(['claude-5', 'gpt-5'])
-    expect(rows[0]).toMatchObject({ siteName: 'primary', status: 'unavailable', latestFailureType: 'timeout' })
+    expect(rows[0]).toMatchObject({
+      siteName: 'primary',
+      status: 'unavailable',
+      latestFailureType: 'timeout',
+    })
     expect(rows[1]).toMatchObject({ siteName: 'primary', status: 'available' })
   })
 

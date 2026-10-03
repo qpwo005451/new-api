@@ -74,14 +74,16 @@ export function ModelsPage() {
   return (
     <div className='space-y-4 px-3 pb-4'>
       <div className='grid grid-cols-2 gap-2'>
-        {(Object.keys(HEALTH_LABEL_KEY) as AvailabilityHealth[]).map((health) => (
-          <KpiCard
-            key={health}
-            label={HEALTH_LABEL_KEY[health]}
-            value={counts[health]}
-            hint='Sites'
-          />
-        ))}
+        {(Object.keys(HEALTH_LABEL_KEY) as AvailabilityHealth[]).map(
+          (health) => (
+            <KpiCard
+              key={health}
+              label={HEALTH_LABEL_KEY[health]}
+              value={counts[health]}
+              hint='Sites'
+            />
+          )
+        )}
       </div>
 
       <p className='text-muted-foreground text-[11px]'>

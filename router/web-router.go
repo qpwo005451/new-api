@@ -112,7 +112,19 @@ func buildMobileShell(fs static.ServeFileSystem, indexPage []byte) gin.HandlerFu
 		if relativePath != "" {
 			if file, err := fs.Open(relativePath); err == nil {
 				_ = file.Close()
+				// Go's mime table has no entry for .webmanifest, so a manifest
+				// would be sniffed as text/plain and some browsers refuse it.
+				if strings.HasSuffix(relativePath, ".webmanifest") {
+					c.Header("Content-Type", "application/manifest+json")
+				}
 				fileServer.ServeHTTP(c.Writer, c.Request)
+				return
+			}
+			// Build output lives under /static; a miss there is a genuine 404.
+			// Answering it with the HTML shell would make a browser parse the
+			// index page as JavaScript or CSS.
+			if strings.HasPrefix(relativePath, "/static/") {
+				c.Status(http.StatusNotFound)
 				return
 			}
 		}

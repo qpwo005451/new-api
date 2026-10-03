@@ -18,13 +18,29 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { describe, expect, it } from 'vitest'
 
-import { aggregateTotals, rankRows, resolveTimeRange } from '@/mobile/features/usage/lib/usage-summary'
+import {
+  aggregateTotals,
+  rankRows,
+  resolveTimeRange,
+} from '@/mobile/features/usage/lib/usage-summary'
 import type { QuotaDataRow } from '@/mobile/types'
 
 const rows: QuotaDataRow[] = [
-  { model_name: 'gpt-5', created_at: 1, count: 10, quota: 500, token_used: 1000 },
+  {
+    model_name: 'gpt-5',
+    created_at: 1,
+    count: 10,
+    quota: 500,
+    token_used: 1000,
+  },
   { model_name: 'gpt-5', created_at: 2, count: 5, quota: 250, token_used: 500 },
-  { model_name: 'claude-5', created_at: 1, count: 1, quota: 900, token_used: 30 },
+  {
+    model_name: 'claude-5',
+    created_at: 1,
+    count: 1,
+    quota: 900,
+    token_used: 30,
+  },
 ]
 
 describe('resolveTimeRange', () => {
@@ -54,7 +70,11 @@ describe('resolveTimeRange', () => {
 
 describe('aggregateTotals', () => {
   it('sums requests, tokens and quota', () => {
-    expect(aggregateTotals(rows)).toEqual({ requests: 16, tokens: 1530, quota: 1650 })
+    expect(aggregateTotals(rows)).toEqual({
+      requests: 16,
+      tokens: 1530,
+      quota: 1650,
+    })
   })
 
   it('returns zeros for an empty range', () => {

@@ -57,16 +57,12 @@ export function summarizeRoutingShare(
       0
     )
     const hasConfiguredWeight = channels.some(
-      (channel) =>
-        typeof channel.weight === 'number' && channel.weight > 0
+      (channel) => typeof channel.weight === 'number' && channel.weight > 0
     )
     return {
       modelName,
       requests,
-      errors: channels.reduce(
-        (total, channel) => total + channel.errors,
-        0
-      ),
+      errors: channels.reduce((total, channel) => total + channel.errors, 0),
       avgUseTime:
         channels.reduce(
           (total, channel) => total + channel.avg_use_time * channel.requests,
@@ -91,5 +87,7 @@ export function topSwitches(
   rows: RoutingSwitchStat[],
   limit: number
 ): RoutingSwitchStat[] {
-  return [...rows].sort((left, right) => right.count - left.count).slice(0, limit)
+  return [...rows]
+    .sort((left, right) => right.count - left.count)
+    .slice(0, limit)
 }

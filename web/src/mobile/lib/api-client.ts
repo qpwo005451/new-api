@@ -18,14 +18,24 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { clearPat, readPat } from '@/mobile/lib/pat-store'
 
-export type ApiErrorCode = 'unauthorized' | 'forbidden' | 'http' | 'network' | 'business'
+export type ApiErrorCode =
+  | 'unauthorized'
+  | 'forbidden'
+  | 'http'
+  | 'network'
+  | 'business'
 
 export class ApiError extends Error {
   readonly code: ApiErrorCode
   readonly status: number
   readonly apiCode?: string
 
-  constructor(code: ApiErrorCode, message: string, status: number, apiCode?: string) {
+  constructor(
+    code: ApiErrorCode,
+    message: string,
+    status: number,
+    apiCode?: string
+  ) {
     super(message)
     this.name = 'ApiError'
     this.code = code
@@ -41,7 +51,10 @@ interface ApiEnvelope<T> {
   data?: T
 }
 
-function buildUrl(path: string, params?: Record<string, string | number | undefined>): string {
+function buildUrl(
+  path: string,
+  params?: Record<string, string | number | undefined>
+): string {
   if (!params) {
     return path
   }
@@ -56,7 +69,11 @@ function buildUrl(path: string, params?: Record<string, string | number | undefi
   return serialized === '' ? path : `${path}?${serialized}`
 }
 
-async function request<T>(path: string, init: RequestInit, params?: Record<string, string | number | undefined>): Promise<T> {
+async function request<T>(
+  path: string,
+  init: RequestInit,
+  params?: Record<string, string | number | undefined>
+): Promise<T> {
   const token = readPat()
   let response: Response
   try {
@@ -78,7 +95,11 @@ async function request<T>(path: string, init: RequestInit, params?: Record<strin
     throw new ApiError('unauthorized', 'Access token rejected', 401)
   }
   if (response.status === 403) {
-    throw new ApiError('forbidden', 'Access token has no permission for this action', 403)
+    throw new ApiError(
+      'forbidden',
+      'Access token has no permission for this action',
+      403
+    )
   }
 
   let envelope: ApiEnvelope<T> | null = null
@@ -89,15 +110,28 @@ async function request<T>(path: string, init: RequestInit, params?: Record<strin
   }
 
   if (!response.ok) {
-    throw new ApiError('http', envelope?.message ?? `Request failed with status ${response.status}`, response.status, envelope?.code)
+    throw new ApiError(
+      'http',
+      envelope?.message ?? `Request failed with status ${response.status}`,
+      response.status,
+      envelope?.code
+    )
   }
   if (!envelope || envelope.success !== true) {
-    throw new ApiError('business', envelope?.message ?? 'Request failed', response.status, envelope?.code)
+    throw new ApiError(
+      'business',
+      envelope?.message ?? 'Request failed',
+      response.status,
+      envelope?.code
+    )
   }
   return envelope.data as T
 }
 
-export function mobileApiGet<T>(path: string, params?: Record<string, string | number | undefined>): Promise<T> {
+export function mobileApiGet<T>(
+  path: string,
+  params?: Record<string, string | number | undefined>
+): Promise<T> {
   return request<T>(path, { method: 'GET' }, params)
 }
 

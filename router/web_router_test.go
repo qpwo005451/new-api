@@ -145,15 +145,18 @@ func newTestMobileEngine(t *testing.T) *gin.Engine {
 
 func TestMobileShellServesIndexAndFallsBackForDeepLinks(t *testing.T) {
 	cases := []struct {
-		name        string
-		target      string
-		wantStatus  int
-		wantBody    string
-		wantNoCache bool
+		name            string
+		target          string
+		wantStatus      int
+		wantBody        string
+		wantNoCache     bool
+		wantContentType string
 	}{
 		{name: "root of mobile console", target: "/m", wantStatus: http.StatusOK, wantBody: testMobileIndex, wantNoCache: true},
 		{name: "deep link falls back to mobile index", target: "/m/routing", wantStatus: http.StatusOK, wantBody: testMobileIndex, wantNoCache: true},
 		{name: "hashed asset is served from the mobile build", target: "/m/static/app.js", wantStatus: http.StatusOK, wantBody: "console.log('mobile shell asset')\n", wantNoCache: false},
+		{name: "a missing build asset is a 404, not the HTML shell", target: "/m/static/missing.js", wantStatus: http.StatusNotFound, wantNoCache: false},
+		{name: "the PWA manifest is served with its own content type", target: "/m/manifest.webmanifest", wantStatus: http.StatusOK, wantNoCache: false, wantContentType: "application/manifest+json"},
 	}
 
 	for _, testCase := range cases {
@@ -163,7 +166,12 @@ func TestMobileShellServesIndexAndFallsBackForDeepLinks(t *testing.T) {
 			engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, testCase.target, nil))
 
 			require.Equal(t, testCase.wantStatus, recorder.Code)
-			assert.Equal(t, testCase.wantBody, recorder.Body.String())
+			if testCase.wantBody != "" {
+				assert.Equal(t, testCase.wantBody, recorder.Body.String())
+			}
+			if testCase.wantContentType != "" {
+				assert.Equal(t, testCase.wantContentType, recorder.Header().Get("Content-Type"))
+			}
 			if testCase.wantNoCache {
 				assert.Equal(t, "no-cache", recorder.Header().Get("Cache-Control"))
 			} else {

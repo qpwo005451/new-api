@@ -134,10 +134,7 @@ export function UsagePage() {
     return (
       <div className='space-y-4 px-3 pb-4'>
         {controls}
-        <MobileError
-          title={t('Load failed')}
-          description={t('Retry later.')}
-        />
+        <MobileError title={t('Load failed')} description={t('Retry later.')} />
       </div>
     )
   }

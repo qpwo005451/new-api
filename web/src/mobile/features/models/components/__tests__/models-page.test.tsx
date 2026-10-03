@@ -24,7 +24,10 @@ import { ModelsPage } from '@/mobile/features/models/components/models-page'
 import { mobileQueryClient } from '@/mobile/lib/query-client'
 
 function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  })
 }
 
 describe('ModelsPage', () => {
@@ -87,7 +90,12 @@ describe('ModelsPage', () => {
   })
 
   it('explains that the monitor is disabled', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ success: true, data: { enabled: false, sites: [] } })))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({ success: true, data: { enabled: false, sites: [] } })
+      )
+    )
 
     render(
       <QueryClientProvider client={mobileQueryClient}>
@@ -95,7 +103,11 @@ describe('ModelsPage', () => {
       </QueryClientProvider>
     )
 
-    await waitFor(() => expect(screen.getByText('Model monitoring is disabled on this instance.')).toBeInTheDocument())
+    await waitFor(() =>
+      expect(
+        screen.getByText('Model monitoring is disabled on this instance.')
+      ).toBeInTheDocument()
+    )
   })
 
   it('shows an error state when the token is rejected', async () => {
@@ -103,10 +115,13 @@ describe('ModelsPage', () => {
       'fetch',
       vi.fn(
         async () =>
-          new Response(JSON.stringify({ success: false, message: 'forbidden' }), {
-            status: 403,
-            headers: { 'Content-Type': 'application/json' },
-          })
+          new Response(
+            JSON.stringify({ success: false, message: 'forbidden' }),
+            {
+              status: 403,
+              headers: { 'Content-Type': 'application/json' },
+            }
+          )
       )
     )
 

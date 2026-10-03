@@ -26,8 +26,13 @@ describe('MobileTabBar', () => {
   it('marks the active tab as selected', () => {
     render(<MobileTabBar active='routing' onChange={vi.fn()} />)
 
-    expect(screen.getByRole('tab', { name: 'Routing statistics' })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByRole('tab', { name: 'Usage' })).toHaveAttribute('aria-selected', 'false')
+    expect(
+      screen.getByRole('tab', { name: 'Routing statistics' })
+    ).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: 'Usage' })).toHaveAttribute(
+      'aria-selected',
+      'false'
+    )
   })
 
   it('reports the tapped tab', async () => {
@@ -50,7 +55,9 @@ describe('MobileTabBar', () => {
     await user.tab()
     await user.tab()
     await user.tab()
-    expect(screen.getByRole('tab', { name: 'Routing statistics' })).toHaveFocus()
+    expect(
+      screen.getByRole('tab', { name: 'Routing statistics' })
+    ).toHaveFocus()
 
     await user.keyboard('{Enter}')
 

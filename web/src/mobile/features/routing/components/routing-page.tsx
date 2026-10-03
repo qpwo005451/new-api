@@ -109,9 +109,7 @@ export function RoutingPage() {
         {controls}
         <MobileError
           title={
-            forbidden
-              ? t('Administrator access required')
-              : t('Load failed')
+            forbidden ? t('Administrator access required') : t('Load failed')
           }
           description={
             forbidden

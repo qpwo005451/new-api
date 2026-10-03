@@ -1047,7 +1047,7 @@ git commit -m "feat(web): embed and build the mobile console in every pipeline"
 **Files:**
 - Create: `web/src/mobile/lib/pat-store.ts`、`web/src/mobile/lib/api-client.ts`、`web/src/mobile/lib/query-client.ts`、`web/src/mobile/providers.tsx`
 - Create: `web/src/mobile/lib/__tests__/pat-store.test.ts`、`web/src/mobile/lib/__tests__/api-client.test.ts`
-- Modify: `web/src/mobile/types.ts`、`web/src/mobile/main.tsx`
+- Modify: `web/src/mobile/main.tsx`
 
 **Interfaces:**
 - Produces:
@@ -1090,14 +1090,14 @@ describe('pat-store', () => {
     expect(readPat()).toBe('')
   })
 
-  it('accepts tokens of the 29 to 32 characters produced by the server', () => {
-    expect(isPlausiblePat('a'.repeat(29))).toBe(true)
+  it('accepts the 28 and 32 character tokens the server produces', () => {
+    expect(isPlausiblePat('a'.repeat(28))).toBe(true)
     expect(isPlausiblePat('a'.repeat(32))).toBe(true)
   })
 
   it('rejects tokens that are too short, too long, or contain spaces', () => {
     expect(isPlausiblePat('')).toBe(false)
-    expect(isPlausiblePat('a'.repeat(28))).toBe(false)
+    expect(isPlausiblePat('a'.repeat(27))).toBe(false)
     expect(isPlausiblePat('a'.repeat(33))).toBe(false)
     expect(isPlausiblePat('abcdefghijklmnopqrstuvwxy z012')).toBe(false)
   })
@@ -1125,7 +1125,7 @@ describe('pat-store', () => {
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError, mobileApiGet, mobileApiPost } from '@/mobile/lib/api-client'
-import { clearPat, readPat, writePat } from '@/mobile/lib/pat-store'
+import { readPat, writePat } from '@/mobile/lib/pat-store'
 
 const VALID_PAT = 'a'.repeat(29)
 
@@ -1186,7 +1186,11 @@ describe('api-client', () => {
 
   it('throws business with the server message when success is false', async () => {
     writePat(VALID_PAT)
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockJsonResponse({ success: false, message: 'time range too wide' })))
+    // A Response body can only be read once, so each call needs its own response.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(() => Promise.resolve(mockJsonResponse({ success: false, message: 'time range too wide' })))
+    )
 
     await expect(mobileApiGet('/api/data/self')).rejects.toMatchObject({ code: 'business', apiCode: undefined })
     await expect(mobileApiGet('/api/data/self')).rejects.toThrow('time range too wide')
@@ -1217,7 +1221,11 @@ const PAT_STORAGE_KEY = 'newapi_mobile_pat'
 
 // The server generates access tokens with common.GenerateRandomKey(29 + rand(4)),
 // so anything outside 29..32 characters is a truncated paste.
-const PAT_LENGTH_MIN = 29
+// controller.GenerateAccessToken stores base64(29..32 requested chars), which is
+// 28 or 32 characters: 29..32 requested chars become 21..24 bytes, and base64
+// encodes 21 bytes as 28 characters. Roughly a quarter of issued tokens are 28
+// characters long, so the floor has to be 28 or valid tokens get rejected.
+const PAT_LENGTH_MIN = 28
 const PAT_LENGTH_MAX = 32
 
 export function isPlausiblePat(value: string): boolean {
@@ -1440,7 +1448,7 @@ Expected: 全部 PASS，typecheck/lint 无 error。
 
 ```bash
 cd /home/ra/orca/workspaces/Newapi/codex-mobile-admin-webui
-git add web/src/mobile/lib web/src/mobile/main.tsx
+git add web/src/mobile/lib web/src/mobile/main.tsx web/src/mobile/providers.tsx
 git commit -m "feat(web-mobile): authenticate the mobile console with a personal access token"
 ```
 

@@ -3417,11 +3417,13 @@ export function RoutingPage() {
 
       <div className='grid grid-cols-2 gap-2'>
         <KpiCard label='Requests' value={models.reduce((total, model) => total + model.requests, 0)} hint={PRESET_LABEL_KEY[preset]} />
-        <KpiCard label='Channel switches' value={formatNumber(stats.data.switched, locale)} hint={PRESET_LABEL_KEY[preset]} />
+        <KpiCard label='Switched requests' value={formatNumber(stats.data.switched, locale)} hint={PRESET_LABEL_KEY[preset]} />
       </div>
 
       {stats.data.truncated ? (
-        <p className='text-muted-foreground text-[11px]'>{t('Some switches in this window were not scanned.')}</p>
+        <p role='status' className='text-muted-foreground text-[11px]'>
+          {t('Some switches in this window were not scanned.')}
+        </p>
       ) : null}
 
       {models.length === 0 ? (

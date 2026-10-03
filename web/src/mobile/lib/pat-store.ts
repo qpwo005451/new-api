@@ -20,7 +20,11 @@ const PAT_STORAGE_KEY = 'newapi_mobile_pat'
 
 // The server generates access tokens with common.GenerateRandomKey(29 + rand(4)),
 // so anything outside 29..32 characters is a truncated paste.
-const PAT_LENGTH_MIN = 29
+// controller.GenerateAccessToken stores base64(29..32 requested chars), which is
+// 28 or 32 characters: 29..32 requested chars become 21..24 bytes, and base64
+// encodes 21 bytes as 28 characters. Roughly a quarter of issued tokens are 28
+// characters long, so the floor has to be 28 or valid tokens get rejected.
+const PAT_LENGTH_MIN = 28
 const PAT_LENGTH_MAX = 32
 
 export function isPlausiblePat(value: string): boolean {

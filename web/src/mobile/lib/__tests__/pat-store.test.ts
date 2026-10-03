@@ -42,14 +42,14 @@ describe('pat-store', () => {
     expect(readPat()).toBe('')
   })
 
-  it('accepts tokens of the 29 to 32 characters produced by the server', () => {
-    expect(isPlausiblePat('a'.repeat(29))).toBe(true)
+  it('accepts the 28 and 32 character tokens the server produces', () => {
+    expect(isPlausiblePat('a'.repeat(28))).toBe(true)
     expect(isPlausiblePat('a'.repeat(32))).toBe(true)
   })
 
   it('rejects tokens that are too short, too long, or contain spaces', () => {
     expect(isPlausiblePat('')).toBe(false)
-    expect(isPlausiblePat('a'.repeat(28))).toBe(false)
+    expect(isPlausiblePat('a'.repeat(27))).toBe(false)
     expect(isPlausiblePat('a'.repeat(33))).toBe(false)
     expect(isPlausiblePat('abcdefghijklmnopqrstuvwxy z012')).toBe(false)
   })

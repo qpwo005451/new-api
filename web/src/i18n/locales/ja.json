@@ -7101,6 +7101,20 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム"
+    "Zoom": "ズーム",
+    "Quick switch": "クイック切り替え",
+    "No presets yet.": "プリセットはまだありません。",
+    "Custom routing": "カスタムルーティング",
+    "Manage presets": "プリセットを管理",
+    "Apply preset": "プリセットを適用",
+    "Apply preset {{name}}?": "プリセット「{{name}}」を適用しますか？",
+    "This changes live routing immediately.": "本番のルーティングが即時に変更されます。",
+    "Presets": "プリセット",
+    "Save the current overrides as a preset and apply it later with one click.": "現在の上書き設定をプリセットとして保存し、ワンクリックで適用できます。",
+    "Preset name": "プリセット名",
+    "Save current as preset": "現在の設定をプリセットとして保存",
+    "Delete preset": "プリセットを削除",
+    "Delete preset {{name}}?": "プリセット「{{name}}」を削除しますか？",
+    "Enter a preset name": "プリセット名を入力してください"
   }
 }

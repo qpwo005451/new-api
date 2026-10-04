@@ -54,6 +54,7 @@ export type ModelHealthPolicySettings = {
 }
 export type ModelWeightSettings = {
   'model_weight_setting.weights': string
+  'model_weight_setting.presets': string
 }
 export type FilteringSettings = Pick<
   SecuritySettings,
@@ -98,6 +99,7 @@ export const defaultRequestPolicySettings: RequestPolicySettings = {
   'model_health_policy_setting.enabled': false,
   'model_health_policy_setting.rules': '[]',
   'model_weight_setting.weights': '[]',
+  'model_weight_setting.presets': '[]',
   CheckSensitiveEnabled: false,
   CheckSensitiveOnPromptEnabled: false,
   SensitiveWords: '',

@@ -7101,6 +7101,20 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Quick switch": "Bascule rapide",
+    "No presets yet.": "Aucun préréglage pour le moment.",
+    "Custom routing": "Routage personnalisé",
+    "Manage presets": "Gérer les préréglages",
+    "Apply preset": "Appliquer le préréglage",
+    "Apply preset {{name}}?": "Appliquer le préréglage {{name}} ?",
+    "This changes live routing immediately.": "Cela modifie immédiatement le routage en production.",
+    "Presets": "Préréglages",
+    "Save the current overrides as a preset and apply it later with one click.": "Enregistrez les remplacements actuels comme préréglage et appliquez-le en un clic.",
+    "Preset name": "Nom du préréglage",
+    "Save current as preset": "Enregistrer la configuration actuelle comme préréglage",
+    "Delete preset": "Supprimer le préréglage",
+    "Delete preset {{name}}?": "Supprimer le préréglage {{name}} ?",
+    "Enter a preset name": "Saisissez un nom de préréglage"
   }
 }

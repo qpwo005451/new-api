@@ -92,6 +92,12 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 			loadOptionsFromDatabase()
 			assert.Equal(t, "strict", CurrentRequestPolicy().Affinity.SessionMode)
 			assert.Equal(t, rules, CurrentRequestPolicy().Options["channel_affinity_setting.rules"], "a global mode never rewrites rule fields")
+			presets := `[{"name":"默认","weights":[{"channel_id":9,"model":"a","weight":1}]}]`
+			require.NoError(t, UpdateRequestPolicyOptions(map[string]string{"model_weight_setting.presets": presets}))
+			assert.Equal(t, presets, CurrentRequestPolicy().Options["model_weight_setting.presets"])
+			loadOptionsFromDatabase()
+			assert.Equal(t, presets, CurrentRequestPolicy().Options["model_weight_setting.presets"], "presets persist and reload")
+			assert.Error(t, UpdateRequestPolicyOptions(map[string]string{"model_weight_setting.presets": `[{"name":"a","weights":[{"channel_id":9,"model":"m"}]}]`}), "a preset entry must set a weight or a priority")
 			snapshot := CurrentRequestPolicy()
 			assert.Error(t, UpdateRequestPolicyOptions(map[string]string{"channel_affinity_setting.session_mode": "unknown"}))
 			assert.Same(t, snapshot, CurrentRequestPolicy())
@@ -147,6 +153,16 @@ func TestBuildRequestPolicyValidatesModelWeights(t *testing.T) {
 
 	invalid := base()
 	invalid["model_weight_setting.weights"] = `[{"channel_id":0,"model":"a","weight":1}]`
+	_, err = BuildRequestPolicy(invalid)
+	require.Error(t, err)
+
+	valid := base()
+	valid["model_weight_setting.presets"] = `[{"name":"默认","weights":[{"channel_id":9,"model":"a","weight":1}]}]`
+	_, err = BuildRequestPolicy(valid)
+	require.NoError(t, err)
+
+	invalid = base()
+	invalid["model_weight_setting.presets"] = `[{"name":"a","weights":[{"channel_id":0,"model":"m","weight":1}]}]`
 	_, err = BuildRequestPolicy(invalid)
 	require.Error(t, err)
 }

@@ -1,6 +1,7 @@
 package operation_setting
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -98,4 +99,25 @@ func TestValidateModelWeightsAcceptsPriority(t *testing.T) {
 	assert.Error(t, ValidateModelWeights(`[{"channel_id":9,"model":"a","priority":1000000001}]`), "priority upper bound")
 	assert.Error(t, ValidateModelWeights(`[{"channel_id":9,"model":"a","priority":-1}]`), "priority lower bound")
 	assert.Error(t, ValidateModelWeights(`[{"channel_id":9,"model":"a"}]`), "an entry must set a weight or a priority")
+}
+
+func TestValidateModelWeightPresets(t *testing.T) {
+	require.NoError(t, ValidateModelWeightPresets(""))
+	require.NoError(t, ValidateModelWeightPresets("[]"))
+	require.NoError(t, ValidateModelWeightPresets(`[{"name":"默认","weights":[]}]`), "an empty preset clears overrides")
+	require.NoError(t, ValidateModelWeightPresets(`[{"name":"全部 ollama","weights":[{"channel_id":46,"model":"deepseek-v4.1-flash","priority":501,"weight":100}]}]`))
+
+	assert.Error(t, ValidateModelWeightPresets(`{"name":"x"}`), "object is not an array")
+	assert.Error(t, ValidateModelWeightPresets(`null`), "null is not an array")
+	assert.Error(t, ValidateModelWeightPresets(`[{"weights":[]}]`), "name required")
+	assert.Error(t, ValidateModelWeightPresets(`[{"name":"  ","weights":[]}]`), "blank name")
+	assert.Error(t, ValidateModelWeightPresets(`[{"name":"a","weights":[]},{"name":"A","weights":[]}]`), "duplicate name case-insensitive")
+	assert.Error(t, ValidateModelWeightPresets(`[{"name":"a"}]`), "weights must be an explicit array")
+	assert.Error(t, ValidateModelWeightPresets(`[{"name":"a","weights":[{"channel_id":0,"model":"m","weight":1}]}]`), "entry rules are reused")
+	assert.Error(t, ValidateModelWeightPresets(`[{"name":"a","weights":[{"channel_id":9,"model":"m"}]}]`), "entry must set a weight or a priority")
+}
+
+func TestMaxModelWeightPresetNameLength(t *testing.T) {
+	long := strings.Repeat("a", MaxModelWeightPresetNameLength+1)
+	assert.Error(t, ValidateModelWeightPresets(`[{"name":"`+long+`","weights":[]}]`))
 }

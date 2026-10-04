@@ -7101,6 +7101,20 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Quick switch": "Быстрое переключение",
+    "No presets yet.": "Пресетов пока нет.",
+    "Custom routing": "Пользовательская маршрутизация",
+    "Manage presets": "Управление пресетами",
+    "Apply preset": "Применить пресет",
+    "Apply preset {{name}}?": "Применить пресет {{name}}?",
+    "This changes live routing immediately.": "Это немедленно изменит рабочую маршрутизацию.",
+    "Presets": "Пресеты",
+    "Save the current overrides as a preset and apply it later with one click.": "Сохраните текущие переопределения как пресет и применяйте его одним щелчком.",
+    "Preset name": "Название пресета",
+    "Save current as preset": "Сохранить текущие настройки как пресет",
+    "Delete preset": "Удалить пресет",
+    "Delete preset {{name}}?": "Удалить пресет {{name}}?",
+    "Enter a preset name": "Введите название пресета"
   }
 }

@@ -62,6 +62,7 @@ func requestPolicyDefaultOptions() map[string]string {
 	defaults["AutomaticEnableChannelEnabled"] = strconv.FormatBool(common.AutomaticEnableChannelEnabled)
 	defaults["ChannelDisableThreshold"] = strconv.FormatFloat(common.ChannelDisableThreshold, 'f', -1, 64)
 	defaults["model_weight_setting.weights"] = operation_setting.GetModelWeightSetting().Weights
+	defaults["model_weight_setting.presets"] = operation_setting.GetModelWeightSetting().Presets
 	return defaults
 }
 
@@ -70,7 +71,7 @@ func IsRequestPolicyOption(key string) bool {
 		return true
 	}
 	switch key {
-	case "model_weight_setting.weights":
+	case "model_weight_setting.weights", "model_weight_setting.presets":
 		return true
 	case "CheckSensitiveEnabled", "CheckSensitiveOnPromptEnabled", "SensitiveWords", "AutomaticEnableChannelEnabled", "ChannelDisableThreshold", "monitor_setting.auto_test_channel_enabled", "monitor_setting.auto_test_channel_minutes", "monitor_setting.channel_test_concurrency", "monitor_setting.channel_test_mode", "RetryTimes", "AutomaticRetryStatusCodes", "AutomaticDisableChannelEnabled", "AutomaticDisableStatusCodes", "AutomaticDisableKeywords":
 		return true
@@ -162,6 +163,9 @@ func BuildRequestPolicy(options map[string]string) (*RequestPolicySnapshot, erro
 		return nil, err
 	}
 	if err := operation_setting.ValidateModelWeights(raw["model_weight_setting.weights"]); err != nil {
+		return nil, err
+	}
+	if err := operation_setting.ValidateModelWeightPresets(raw["model_weight_setting.presets"]); err != nil {
 		return nil, err
 	}
 	for _, key := range []string{"ChannelDisableThreshold", "monitor_setting.auto_test_channel_minutes"} {

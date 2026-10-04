@@ -100,6 +100,8 @@ const POLICY_SECTIONS = [
         defaultValues={{
           'model_weight_setting.weights':
             settings['model_weight_setting.weights'],
+          'model_weight_setting.presets':
+            settings['model_weight_setting.presets'],
         }}
       />
     ),

@@ -37,8 +37,14 @@ import { SettingsForm } from '../components/settings-form-layout'
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useSavePolicy } from '../request-policies/use-save-policy'
+import { ModelWeightPresetBar } from './model-weight-preset-bar'
+import {
+  MODEL_WEIGHTS_OPTION_KEY,
+  parseModelWeightPresets,
+} from './model-weight-presets'
 
-const MODEL_WEIGHTS_KEY = 'model_weight_setting.weights'
+const MODEL_WEIGHTS_KEY = MODEL_WEIGHTS_OPTION_KEY
+const MODEL_WEIGHT_PRESETS_KEY = 'model_weight_setting.presets'
 const CHANNEL_PAGE_SIZE = 100
 const MAX_MODEL_WEIGHT_VALUE = 1000000
 const MAX_MODEL_PRIORITY_VALUE = 1000000000
@@ -57,6 +63,7 @@ type ModelWeightRow = {
 type Props = {
   defaultValues: {
     'model_weight_setting.weights': string
+    'model_weight_setting.presets': string
   }
 }
 
@@ -174,6 +181,12 @@ export function ModelWeightSection(props: Props) {
     retry: false,
   })
 
+  const presets = useMemo(
+    () =>
+      parseModelWeightPresets(props.defaultValues[MODEL_WEIGHT_PRESETS_KEY]),
+    [props.defaultValues]
+  )
+
   // Known channels plus fallback entries so IDs that no longer resolve
   // (e.g. deleted channels) still render as selectable options.
   const channelOptions = useMemo(() => {
@@ -208,7 +221,13 @@ export function ModelWeightSection(props: Props) {
   const handleAdd = () => {
     setRows((prev) => [
       ...prev,
-      { key: nextModelWeightRowKey(), channel_id: 0, model: '', weight: '', priority: '' },
+      {
+        key: nextModelWeightRowKey(),
+        channel_id: 0,
+        model: '',
+        weight: '',
+        priority: '',
+      },
     ])
   }
 
@@ -243,6 +262,10 @@ export function ModelWeightSection(props: Props) {
         <SettingsPageFormActions
           onSave={() => void handleSave()}
           isSaving={savePolicy.isPending}
+        />
+        <ModelWeightPresetBar
+          presets={presets}
+          currentWeights={serializeModelWeights(rows)}
         />
         <div className='flex flex-wrap items-center gap-2'>
           <Button type='button' size='sm' onClick={handleAdd}>
@@ -281,10 +304,7 @@ export function ModelWeightSection(props: Props) {
                       updateRow(index, { channel_id: Number(value) })
                     }
                   >
-                    <SelectTrigger
-                      aria-label={t('Channel')}
-                      className='w-full'
-                    >
+                    <SelectTrigger aria-label={t('Channel')} className='w-full'>
                       <SelectValue placeholder={t('Select a channel')} />
                     </SelectTrigger>
                     <SelectContent alignItemWithTrigger={false}>

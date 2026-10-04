@@ -7101,6 +7101,20 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Quick switch": "Quick switch",
+    "No presets yet.": "No presets yet.",
+    "Custom routing": "Custom routing",
+    "Manage presets": "Manage presets",
+    "Apply preset": "Apply preset",
+    "Apply preset {{name}}?": "Apply preset {{name}}?",
+    "This changes live routing immediately.": "This changes live routing immediately.",
+    "Presets": "Presets",
+    "Save the current overrides as a preset and apply it later with one click.": "Save the current overrides as a preset and apply it later with one click.",
+    "Preset name": "Preset name",
+    "Save current as preset": "Save current as preset",
+    "Delete preset": "Delete preset",
+    "Delete preset {{name}}?": "Delete preset {{name}}?",
+    "Enter a preset name": "Enter a preset name"
   }
 }

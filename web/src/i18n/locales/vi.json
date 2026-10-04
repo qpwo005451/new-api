@@ -7101,6 +7101,20 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Quick switch": "Chuyển nhanh",
+    "No presets yet.": "Chưa có cấu hình sẵn.",
+    "Custom routing": "Định tuyến tùy chỉnh",
+    "Manage presets": "Quản lý cấu hình sẵn",
+    "Apply preset": "Áp dụng cấu hình sẵn",
+    "Apply preset {{name}}?": "Áp dụng cấu hình sẵn {{name}}?",
+    "This changes live routing immediately.": "Thao tác này thay đổi định tuyến trực tiếp ngay lập tức.",
+    "Presets": "Cấu hình sẵn",
+    "Save the current overrides as a preset and apply it later with one click.": "Lưu các ghi đè hiện tại thành cấu hình sẵn và áp dụng sau chỉ bằng một cú nhấp.",
+    "Preset name": "Tên cấu hình sẵn",
+    "Save current as preset": "Lưu cấu hình hiện tại thành cấu hình sẵn",
+    "Delete preset": "Xóa cấu hình sẵn",
+    "Delete preset {{name}}?": "Xóa cấu hình sẵn {{name}}?",
+    "Enter a preset name": "Nhập tên cấu hình sẵn"
   }
 }

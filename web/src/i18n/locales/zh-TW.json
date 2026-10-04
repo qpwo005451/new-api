@@ -7101,6 +7101,20 @@
     "Zhipu": "智譜",
     "Zhipu GLM": "智譜GLM",
     "Zhipu V4": "智譜 V4",
-    "Zoom": "縮放"
+    "Zoom": "縮放",
+    "Quick switch": "快速切換",
+    "No presets yet.": "還沒有預設。",
+    "Custom routing": "自訂路由",
+    "Manage presets": "管理預設",
+    "Apply preset": "套用預設",
+    "Apply preset {{name}}?": "套用預設「{{name}}」？",
+    "This changes live routing immediately.": "這會立即改變線上路由。",
+    "Presets": "預設",
+    "Save the current overrides as a preset and apply it later with one click.": "將目前的覆寫儲存為預設，之後一鍵套用。",
+    "Preset name": "預設名稱",
+    "Save current as preset": "將目前設定儲存為預設",
+    "Delete preset": "刪除預設",
+    "Delete preset {{name}}?": "刪除預設「{{name}}」？",
+    "Enter a preset name": "請輸入預設名稱"
   }
 }

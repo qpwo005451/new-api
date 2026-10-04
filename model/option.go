@@ -248,6 +248,9 @@ func validateOptionValue(key string, value string) error {
 	if key == "model_weight_setting.weights" {
 		return operation_setting.ValidateModelWeights(value)
 	}
+	if key == "model_weight_setting.presets" {
+		return operation_setting.ValidateModelWeightPresets(value)
+	}
 	if key == "MaxTokenAutoGroups" {
 		return setting.ValidateMaxTokenAutoGroups(value)
 	}

@@ -57,6 +57,7 @@ vi.mock('@/features/channels/api', () => ({
 
 let client: QueryClient
 let weights: string
+let presetsRaw: string
 
 beforeEach(() => {
   vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined)
@@ -66,6 +67,7 @@ beforeEach(() => {
   weights = JSON.stringify([
     { channel_id: 9, model: 'deepseek-v4.1-flash', weight: 20 },
   ])
+  presetsRaw = '[]'
   vi.spyOn(api, 'patch').mockResolvedValue({
     data: {
       success: true,
@@ -88,7 +90,10 @@ function Workspace() {
       <div ref={setContainer} />
       <SettingsPageProvider actionsContainer={container}>
         <ModelWeightSection
-          defaultValues={{ 'model_weight_setting.weights': weights }}
+          defaultValues={{
+            'model_weight_setting.weights': weights,
+            'model_weight_setting.presets': presetsRaw,
+          }}
         />
       </SettingsPageProvider>
     </>
@@ -151,9 +156,7 @@ it('removes an override and saves the remaining rows', async () => {
   show()
 
   expect(await screen.findByText('#9 - channel-nine')).toBeVisible()
-  await userEvent.click(
-    screen.getAllByRole('button', { name: 'Remove' })[0]
-  )
+  await userEvent.click(screen.getAllByRole('button', { name: 'Remove' })[0])
   await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
 
   await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
@@ -204,5 +207,111 @@ it('drops rows that set neither a weight nor a priority', async () => {
   const payload = vi.mocked(api.patch).mock.calls[0][1] as {
     options: Record<string, string>
   }
-  expect(JSON.parse(payload.options['model_weight_setting.weights'])).toEqual([])
+  expect(JSON.parse(payload.options['model_weight_setting.weights'])).toEqual(
+    []
+  )
+})
+
+it('applies a preset with one click after confirmation', async () => {
+  weights = '[]'
+  presetsRaw = JSON.stringify([
+    {
+      name: '全部 ollama',
+      weights: [
+        {
+          channel_id: 9,
+          model: 'deepseek-v4.1-flash',
+          priority: 501,
+          weight: 100,
+        },
+      ],
+    },
+  ])
+  show()
+
+  await userEvent.click(
+    await screen.findByRole('button', { name: '全部 ollama' })
+  )
+  await userEvent.click(await screen.findByRole('button', { name: 'Apply' }))
+
+  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
+  const payload = vi.mocked(api.patch).mock.calls[0][1] as {
+    options: Record<string, string>
+  }
+  expect(JSON.parse(payload.options['model_weight_setting.weights'])).toEqual([
+    { channel_id: 9, model: 'deepseek-v4.1-flash', priority: 501, weight: 100 },
+  ])
+})
+
+it('marks the matching preset as active', async () => {
+  weights = JSON.stringify([
+    { channel_id: 9, model: 'deepseek-v4.1-flash', priority: 500, weight: 50 },
+  ])
+  presetsRaw = JSON.stringify([
+    {
+      name: '默认',
+      weights: [
+        {
+          channel_id: 9,
+          model: 'deepseek-v4.1-flash',
+          priority: 500,
+          weight: 50,
+        },
+      ],
+    },
+  ])
+  show()
+
+  const preset = await screen.findByRole('button', { name: '默认' })
+  await waitFor(() => expect(preset).toHaveAttribute('aria-pressed', 'true'))
+})
+
+it('saves the current rows as a named preset', async () => {
+  weights = JSON.stringify([
+    { channel_id: 9, model: 'deepseek-v4.1-flash', weight: 20 },
+  ])
+  show()
+
+  await screen.findByText('#9 - channel-nine')
+  await userEvent.click(screen.getByRole('button', { name: 'Manage presets' }))
+  await userEvent.type(
+    await screen.findByRole('textbox', { name: 'Preset name' }),
+    '默认'
+  )
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Save current as preset' })
+  )
+
+  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
+  const payload = vi.mocked(api.patch).mock.calls[0][1] as {
+    options: Record<string, string>
+  }
+  expect(JSON.parse(payload.options['model_weight_setting.presets'])).toEqual([
+    {
+      name: '默认',
+      weights: [{ channel_id: 9, model: 'deepseek-v4.1-flash', weight: 20 }],
+    },
+  ])
+})
+
+it('deletes a preset after confirmation', async () => {
+  weights = '[]'
+  presetsRaw = JSON.stringify([
+    { name: '默认', weights: [{ channel_id: 9, model: 'm', weight: 1 }] },
+    { name: '全部 ollama', weights: [] },
+  ])
+  show()
+
+  await userEvent.click(screen.getByRole('button', { name: 'Manage presets' }))
+  const removeButtons = await screen.findAllByRole('button', { name: 'Remove' })
+  await userEvent.click(removeButtons[0])
+  await userEvent.click(await screen.findByRole('button', { name: 'Delete' }))
+
+  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
+  const payload = vi.mocked(api.patch).mock.calls[0][1] as {
+    options: Record<string, string>
+  }
+  expect(JSON.parse(payload.options['model_weight_setting.presets'])).toEqual([
+    { name: '全部 ollama', weights: [] },
+  ])
 })

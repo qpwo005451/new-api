@@ -4864,3 +4864,56 @@ FIRST_SCREEN_GZIP_TOTAL=145680        (预算 153600，余量 7920)
 | `bun run i18n:sync` | 无待同步项（新增 key 后重跑通过） |
 | `bun run build:mobile` + 首屏 gzip | **145,730 B**（预算 153,600；新增行逻辑 +50 B） |
 | 浏览器冒烟（附录 D 脚本，重建后端后重跑） | **38/38 passed**，新增检查 `routing lists the per-rule sticky breakdown :: affinity-a` 通过；截图见 `artifacts/shots/05-routing.png`（可见 `affinity-a  1 请求 / 1 个键`） |
+
+---
+
+## 附录 F. 生产热切部署（10.0.0.251，2026-10-04 实际执行）
+
+本附录只记录发布与部署事实。它本身是文档提交，**不改变已部署的二进制**（部署对应提交 `424b720aa`）。
+
+**发布候选（本地构建，未在生产机执行构建）**
+
+| 项 | 值 |
+| --- | --- |
+| release id | `2026-10-04-mobile-console-rc01` |
+| 构建命令 | `scripts/build_release_candidate.sh 2026-10-04-mobile-console-rc01 424b720aa`（`FRONTEND_CACHE_HIT=0`，Bun 1.4.2） |
+| 源码提交 | `424b720aa8cbacba14047fb74131c0796f1ab69c`（分支 `codex/mobile-admin-webui`） |
+| 二进制 SHA256 | `0bf34453bf84e3b4ddbcc0deafff4097a37c71a167030f39a5f225412c805440` |
+| 上传位置 | `/opt/new-api-release-runner/releases/2026-10-04-mobile-console-rc01/{bin/new-api,manifest.env}`（远端 sha 校验一致） |
+| 本地选项覆盖基线 | `LOCAL_OPTION_OVERRIDES_SHA256=f75fdb682a58…`（与 rc07 相同，未改动） |
+
+**候选预演（生产主机内、隔离命名空间）**
+
+- `stage_release_runtime.sh` 在 `unshare -n`（仅 loopback）命名空间内启动候选，`VIRTUAL_POOL_STAGING_ISOLATED=1` 是真实隔离；候选跑生产数据库副本。
+- 观测：`/api/status` 200；`/m` 200 + `Cache-Control: no-cache`；`/m/static/js/*` 200；iPhone UA 访问 `/` → 302 `/m`；桌面 UA → 200；manifest `application/manifest+json`；`/m/locales/zh.json` 200；缺失静态 → 404；`smoke_release.sh … fast` ok。
+- schema hash 在候选启动前后与线上完全一致：`21bacf270ced05ef6c818c0e64cdbf3e99423d781fc1dcd27cf34043f9e47dbf` → **无 schema 漂移**。
+
+**热切（`cutover_release.sh`）**
+
+| 项 | 值 |
+| --- | --- |
+| 切换时间 | `2026-10-04T08:28:46+08:00` |
+| 流程 | 停服 → 备份 DB 与二进制 → 原子安装 → 重启 → 就绪探测 → post-cutover `smoke_release.sh fast` ok（任一步失败自动回滚） |
+| 回滚句柄 | `…/releases/2026-10-04-mobile-console-rc01/runtime/cutover-backup.env`（`PREVIOUS_BINARY_SHA256=88d3806658…` 即 rc07；含上一版二进制 + 切换前 801 MB DB 备份）→ `rollback_release.sh <该文件>` |
+| live 二进制 | `/opt/new-api/new-api` SHA256 == `0bf34453…c805440` |
+| finalize | `08:34:42` 完成，`finalized.env` 的 `LIVE_BINARY_SHA256` == 候选 |
+
+**切换后验证（生产 `:4002`）**
+
+- `X-New-Api-Version: 424b720aa`；`/m` 200 + `no-cache` + 与本地构建相同的 chunk；资源 `max-age=604800` + `text/javascript`；`/m/locales/zh.json` 3742 B、`en.json` 3897 B；manifest `application/manifest+json`；缺失静态 → 404；iPhone UA → 302 `/m`；`?desktop=0` → 302 `/m` + 过期 cookie；桌面 UA → 200（桌面壳及其 JS 均 200）。
+- `pragma integrity_check` = ok；日志表持续增长。
+- relay 未中断：`POST /v1/chat/completions` 多次 200（含流式），0 panic / `[ERROR]`；窗口内唯一 503 是既有的 `No available channel for model gpt-5.4-mini under group svip`（当日切换前已有 54 次），与本次改动无关。
+
+**HTTPS 入口（PWA 安装的前置条件）**
+
+- 现象与根因：Android/Brave 无法安装 PWA，Chromium `Page.getInstallabilityErrors` 报 `not-from-secure-origin`；manifest `errors: []`、当前 Chromium 也不要求 service worker，唯一缺项就是 HTTPS 安全上下文。
+- 做法：在 `10.0.0.4`（hostname `caddy`，PVE 虚拟机，Caddy 由 systemd 管理，全局 `acme_dns cloudflare` 走 DNS-01）新增站点 `newapi.005452.xyz → reverse_proxy 10.0.0.251:4002`；先备份 `Caddyfile.bak-20261004-094234` → `caddy validate`（Valid configuration）→ `systemctl reload caddy`（优雅重载，其它站点零中断）。证书由 Cloudflare DNS-01 自动签发：`CN=newapi.005452.xyz`（Let's Encrypt）。该名字只有内网 DNS 记录 → **LAN-only HTTPS**。
+- 验证：`/m` 200 + `no-cache`；assets / `/m/locales/zh.json` / `/m/manifest.webmanifest` / `/m/icon-192.png` 全 200；手机 UA `/` → 302 `/m`；`?desktop=0` 清 cookie；可安装性错误只剩 `in-incognito`（Playwright 无痕噪声）→ 可在 Brave 安装；其它 vhost（lobechat/ha/nvr/pve）无回归；new-api 日志里客户端仍是真实 IP（默认 `TRUSTED_PROXIES` 含 `10.0.0.0/8`）。
+- 用生产 PAT 走 `https://newapi.005452.xyz` 的**只读**浏览器冒烟（纯 GET，不改渠道、不撤销 PAT）：**24/24 通过**；生产 PAT 临时文件用后即删，截图含生产渠道名故只留在本机。
+- 该反代配置已入库：`qpwo005451/homelab` 的 `caddy` 子项目分支（`config/Caddyfile` + `scripts/pull-caddyfile.sh`、`scripts/apply-caddyfile.sh`）。
+
+**遗留**
+
+1. 生产树 `/opt/new-api` 仍跟踪 `prod/251` @ `7d4ac5fc0`：合并 PR #21 后需在 251 执行 `sync_origin_prod_251.sh`，使源码树与运行中的二进制一致。
+2. 用 `unshare -n` 隔离暂存时，`finalize_release.sh` 的归属校验只看主机 netns（看不到 4003 监听）：需先在命名空间内证明归属、`kill` 后删除 `runtime/candidate.pid`，再重跑 finalize（本次按此执行）。
+3. 生产生成新 PAT 仍需 2FA security proof（`SECURITY_PROOF_REQUIRED`）；如需轮换 PAT，先在桌面端注册验证方式。

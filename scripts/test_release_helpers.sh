@@ -193,7 +193,7 @@ case "${1:-}:${2:-}" in
   install:--frozen-lockfile)
     exit 0
     ;;
-  run:build)
+  run:build|run:build:mobile)
     if [ "${FAIL_BUN_BUILD:-0}" = "1" ]; then
       exit 42
     fi
@@ -206,9 +206,17 @@ case "${1:-}:${2:-}" in
         exit 1
         ;;
     esac
-    mkdir -p dist/assets
-    printf '<!doctype html><html><body>fresh %s source build for embedded release validation; this fixture deliberately exceeds the release artifact minimum index size check.</body></html>\n' "$marker" >dist/index.html
-    printf 'console.log("fresh %s source build")\n' "$marker" >"dist/assets/$marker.js"
+    case "${2:-}" in
+      build:mobile)
+        target_dir="mobile-dist"
+        ;;
+      *)
+        target_dir="dist"
+        ;;
+    esac
+    mkdir -p "$target_dir/assets"
+    printf '<!doctype html><html><body>fresh %s source build for embedded release validation; this fixture deliberately exceeds the release artifact minimum index size check.</body></html>\n' "$marker" >"$target_dir/index.html"
+    printf 'console.log("fresh %s source build")\n' "$marker" >"$target_dir/assets/$marker.js"
     ;;
   *)
     printf 'unexpected bun command: %s\n' "$*" >&2
@@ -253,13 +261,21 @@ FRONTEND_CACHE_ROOT="$frontend_cache_root" \
 
 [ ! -e "$build_release_src" ] || fail "release source worktree was not removed after build"
 grep -Fxq "BUN_BIN=$fake_bin/bun" "$build_release_root/manifest.env" || fail "release manifest did not record the bun binary"
-expected_web_lock_sha="$(git -C "$repo_root" show HEAD:web/bun.lock | sha256sum | awk '{print $1}')"
+# The release worktree is a fresh git checkout, so the lockfile hash recorded in
+# the manifest reflects the checkout eol conversion (core.autocrlf). Mirror it
+# instead of hashing the LF blob directly.
+if [ "$(git -C "$repo_root" config --bool core.autocrlf)" = "true" ]; then
+  expected_web_lock_sha="$(git -C "$repo_root" show HEAD:web/bun.lock | sed 's/$/\r/' | sha256sum | awk '{print $1}')"
+else
+  expected_web_lock_sha="$(git -C "$repo_root" show HEAD:web/bun.lock | sha256sum | awk '{print $1}')"
+fi
 grep -Fxq "WEB_LOCK_SHA256=$expected_web_lock_sha" "$build_release_root/manifest.env" || fail "release manifest did not record the frontend lockfile"
 frontend_cache_key="$(sed -n 's/^FRONTEND_CACHE_KEY=//p' "$build_release_root/manifest.env")"
 [ -n "$frontend_cache_key" ] || fail "release manifest did not record the frontend cache key"
 grep -Fxq "FRONTEND_CACHE_HIT=0" "$build_release_root/manifest.env" || fail "first release build unexpectedly hit the frontend cache"
 grep -Fq "install --frozen-lockfile" "$fake_bun_log" || fail "release build did not install locked frontend dependencies"
-[ "$(grep -Fc "run build" "$fake_bun_log")" -eq 1 ] || fail "release build did not build the frontend"
+[ "$(grep -Fc "run build" "$fake_bun_log")" -eq 2 ] || fail "release build did not build the desktop and mobile frontends"
+grep -Fq "run build:mobile" "$fake_bun_log" || fail "release build did not build the mobile frontend"
 grep -Fq "build " "$fake_go_log" || fail "release build did not invoke Go"
 grep -Fq "GOWORK=off" "$script_dir/build_release_candidate.sh" || fail "release build does not force GOWORK=off"
 

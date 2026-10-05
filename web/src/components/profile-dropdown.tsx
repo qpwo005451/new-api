@@ -17,7 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useNavigate } from '@tanstack/react-router'
-import { User, Wallet, LogOut, Settings, ShieldCheck } from 'lucide-react'
+import {
+  User,
+  Wallet,
+  LogOut,
+  Settings,
+  ShieldCheck,
+  Smartphone,
+} from 'lucide-react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -135,6 +142,27 @@ export function ProfileDropdown() {
               {t('System Settings')}
             </DropdownMenuItem>
           )}
+
+          <DropdownMenuSeparator />
+
+          {/* The console cannot be reached from the router (it is served outside
+              the SPA), so this is a plain navigation. It also drops the desktop
+              preference the phone's "Desktop version" action left behind. */}
+          <DropdownMenuItem
+            nativeButton={false}
+            render={
+              <a
+                href='/m'
+                onClick={() => {
+                  document.cookie =
+                    'newapi_prefer_desktop=; path=/; max-age=0; samesite=lax'
+                }}
+              />
+            }
+          >
+            <Smartphone className='size-4' />
+            {t('Mobile version')}
+          </DropdownMenuItem>
 
           <DropdownMenuSeparator />
 

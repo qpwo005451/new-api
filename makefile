@@ -8,7 +8,7 @@ DEV_POSTGRES_DB = new-api
 DEV_POSTGRES_USER = root
 DEV_SQLITE_PATH ?= one-api.db
 
-.PHONY: all build-web build-all-web start-api dev dev-api dev-api-rebuild dev-web reset-setup test
+.PHONY: all build-web build-mobile-web build-all-web start-api dev dev-api dev-api-rebuild dev-web reset-setup test
 
 all: build-all-web start-api
 
@@ -17,7 +17,12 @@ build-web:
 	@cd $(WEB_DIR) && bun install --frozen-lockfile
 	@cd $(WEB_DIR) && DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION=$$(cat ../VERSION) bun run build
 
-build-all-web: build-web
+build-mobile-web:
+	@echo "Building mobile web frontend..."
+	@cd $(WEB_DIR) && bun install --frozen-lockfile
+	@cd $(WEB_DIR) && bun run build:mobile
+
+build-all-web: build-web build-mobile-web
 
 start-api:
 	@echo "Starting api dev server..."
@@ -39,7 +44,7 @@ dev-web:
 
 dev: dev-api dev-web
 
-# The main package embeds the ignored web/dist output and is covered after build-web.
+# The main package embeds the ignored web/dist and web/mobile-dist outputs; both are covered after build-all-web.
 test:
 	@echo "Testing root Go module..."
 	@root_module=$$(GOWORK=off go list -m); \

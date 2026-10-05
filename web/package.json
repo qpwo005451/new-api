@@ -5,8 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "rsbuild dev",
+    "dev:mobile": "rsbuild dev -c rsbuild.mobile.config.ts",
     "build": "rsbuild build",
     "build:check": "tsgo -b && rsbuild build",
+    "mobile:locales": "node scripts/build-mobile-locales.mjs",
+    "build:mobile": "bun run mobile:locales && tsgo -b && rsbuild build -c rsbuild.mobile.config.ts",
     "typecheck": "tsgo -b",
     "lint": "oxlint -c .oxlintrc.json .",
     "lint:fix": "oxlint -c .oxlintrc.json . --fix",

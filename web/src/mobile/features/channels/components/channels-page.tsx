@@ -41,6 +41,7 @@ import {
   channelToggleTarget,
 } from '@/mobile/features/channels/lib/channel-status'
 import { ApiError } from '@/mobile/lib/api-client'
+import { mobileErrorCopy } from '@/mobile/lib/error-copy'
 import type { ChannelFilters, ChannelRow } from '@/mobile/types'
 
 const STATUS_FILTERS = [
@@ -100,8 +101,13 @@ export function ChannelsPage() {
   if (channels.isPending) {
     content = <MobileLoading />
   } else if (channels.isError) {
+    const errorCopy = mobileErrorCopy(channels.error)
     content = (
-      <MobileError title={t('Load failed')} description={t('Retry later.')} />
+      <MobileError
+        title={t(errorCopy.titleKey)}
+        description={t(errorCopy.descriptionKey)}
+        onRetry={() => void channels.refetch()}
+      />
     )
   } else if (items.length === 0) {
     content = (

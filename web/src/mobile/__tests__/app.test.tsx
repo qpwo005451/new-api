@@ -17,8 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { MobileApp } from '@/mobile/app'
 import { STATUS_QUERY_KEY } from '@/mobile/lib/status'
@@ -45,11 +45,34 @@ describe('MobileApp', () => {
     testQueryClient.setQueryData(STATUS_QUERY_KEY, {})
   })
 
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
   it('renders the mobile console heading', () => {
     renderApp()
 
     expect(
       screen.getByRole('heading', { name: 'Mobile console' })
     ).toBeInTheDocument()
+  })
+
+  it('names an unreachable gateway instead of rendering a broken shell', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('Failed to fetch')
+      })
+    )
+    // Leave the status query unseeded so the shell actually calls /api/status.
+    testQueryClient.clear()
+    renderApp()
+
+    await waitFor(() =>
+      expect(screen.getByText('Connection failed')).toBeInTheDocument()
+    )
+    expect(
+      screen.queryByRole('heading', { name: 'Mobile console' })
+    ).not.toBeInTheDocument()
   })
 })

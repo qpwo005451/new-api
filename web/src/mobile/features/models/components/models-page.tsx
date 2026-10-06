@@ -28,6 +28,7 @@ import {
   countByHealth,
   flattenAvailability,
 } from '@/mobile/features/models/lib/availability'
+import { mobileErrorCopy } from '@/mobile/lib/error-copy'
 import type { AvailabilityHealth } from '@/mobile/types'
 
 const HEALTH_LABEL_KEY: Record<AvailabilityHealth, string> = {
@@ -52,8 +53,13 @@ export function ModelsPage() {
     return <MobileLoading />
   }
   if (availability.isError) {
+    const errorCopy = mobileErrorCopy(availability.error)
     return (
-      <MobileError title={t('Load failed')} description={t('Retry later.')} />
+      <MobileError
+        title={t(errorCopy.titleKey)}
+        description={t(errorCopy.descriptionKey)}
+        onRetry={() => void availability.refetch()}
+      />
     )
   }
   if (!availability.data.enabled) {

@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
+import { MobileError } from '@/mobile/components/mobile-error'
 import { MobileLoading } from '@/mobile/components/mobile-loading'
 import { MobileTabBar } from '@/mobile/components/mobile-tab-bar'
 import { PatGate } from '@/mobile/components/pat-gate'
@@ -27,6 +28,7 @@ import { ChannelsPage } from '@/mobile/features/channels/components/channels-pag
 import { ModelsPage } from '@/mobile/features/models/components/models-page'
 import { RoutingPage } from '@/mobile/features/routing/components/routing-page'
 import { UsagePage } from '@/mobile/features/usage/components/usage-page'
+import { mobileErrorCopy } from '@/mobile/lib/error-copy'
 import { mobileQueryClient } from '@/mobile/lib/query-client'
 import { useActiveTab } from '@/mobile/lib/router'
 import { mobileStatusQueryOptions } from '@/mobile/lib/status'
@@ -41,6 +43,22 @@ export function MobileApp() {
 
   if (status.isPending) {
     return <MobileLoading />
+  }
+
+  // `/api/status` is unauthenticated and cheap, so when it fails the console
+  // almost certainly cannot reach the gateway at all. Say that here instead of
+  // rendering the shell and letting every tab fail with a generic load error.
+  if (status.isError) {
+    const errorCopy = mobileErrorCopy(status.error)
+    return (
+      <div className='mx-auto flex min-h-dvh max-w-md flex-col justify-center px-5'>
+        <MobileError
+          title={t(errorCopy.titleKey)}
+          description={t(errorCopy.descriptionKey)}
+          onRetry={() => void status.refetch()}
+        />
+      </div>
+    )
   }
 
   // Every mobile feature keys its queries under ['mobile', ...], so one prefix

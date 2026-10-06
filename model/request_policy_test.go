@@ -98,6 +98,13 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 			loadOptionsFromDatabase()
 			assert.Equal(t, presets, CurrentRequestPolicy().Options["model_weight_setting.presets"], "presets persist and reload")
 			assert.Error(t, UpdateRequestPolicyOptions(map[string]string{"model_weight_setting.presets": `[{"name":"a","weights":[{"channel_id":9,"model":"m"}]}]`}), "a preset entry must set a weight or a priority")
+			scopedPresets := `[{"name":"均衡","model":"deepseek-v4.1-flash","weights":[{"channel_id":9,"model":"DeepSeek-V4.1-Flash","weight":1}]}]`
+			require.NoError(t, UpdateRequestPolicyOptions(map[string]string{"model_weight_setting.presets": scopedPresets}))
+			assert.Equal(t, scopedPresets, CurrentRequestPolicy().Options["model_weight_setting.presets"])
+			loadOptionsFromDatabase()
+			assert.Equal(t, scopedPresets, CurrentRequestPolicy().Options["model_weight_setting.presets"], "scoped presets persist and reload")
+			assert.Error(t, UpdateRequestPolicyOptions(map[string]string{"model_weight_setting.presets": `[{"name":"bad","model":"deepseek-v4.1-flash","weights":[{"channel_id":9,"model":"glm-4.6","weight":1}]}]`}), "an out-of-scope preset entry is rejected")
+			assert.Equal(t, scopedPresets, CurrentRequestPolicy().Options["model_weight_setting.presets"], "a rejected scoped preset leaves the snapshot unchanged")
 			snapshot := CurrentRequestPolicy()
 			assert.Error(t, UpdateRequestPolicyOptions(map[string]string{"channel_affinity_setting.session_mode": "unknown"}))
 			assert.Same(t, snapshot, CurrentRequestPolicy())
@@ -163,6 +170,11 @@ func TestBuildRequestPolicyValidatesModelWeights(t *testing.T) {
 
 	invalid = base()
 	invalid["model_weight_setting.presets"] = `[{"name":"a","weights":[{"channel_id":0,"model":"m","weight":1}]}]`
+	_, err = BuildRequestPolicy(invalid)
+	require.Error(t, err)
+
+	invalid = base()
+	invalid["model_weight_setting.presets"] = `[{"name":"均衡","model":"deepseek-v4.1-flash","weights":[{"channel_id":9,"model":"glm-4.6","weight":1}]}]`
 	_, err = BuildRequestPolicy(invalid)
 	require.Error(t, err)
 }

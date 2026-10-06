@@ -29,6 +29,7 @@ import { MobileError } from '@/mobile/components/mobile-error'
 import { MobileLoading } from '@/mobile/components/mobile-loading'
 import { ValueRow } from '@/mobile/components/value-row'
 import { useRecentLogs } from '@/mobile/features/usage/api'
+import { mobileErrorCopy } from '@/mobile/lib/error-copy'
 import type { TimeRange, UsageScope } from '@/mobile/types'
 
 interface RecentRequestsProps {
@@ -50,8 +51,13 @@ export function RecentRequests(props: RecentRequestsProps) {
   // A failed log request must not be reported as "no requests": that reads as
   // a healthy empty range while the panel is actually broken.
   if (logs.isError) {
+    const errorCopy = mobileErrorCopy(logs.error)
     return (
-      <MobileError title={t('Load failed')} description={t('Retry later.')} />
+      <MobileError
+        title={t(errorCopy.titleKey)}
+        description={t(errorCopy.descriptionKey)}
+        onRetry={() => void logs.refetch()}
+      />
     )
   }
   if (items.length === 0) {

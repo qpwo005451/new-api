@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -180,6 +180,62 @@ describe('UsagePage', () => {
     await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
     expect(screen.getByText('Load failed')).toBeInTheDocument()
     expect(screen.queryByText('No recent requests')).not.toBeInTheDocument()
+  })
+
+  it('offers a retry that refetches the aggregate after a network failure', async () => {
+    let aggregateCalls = 0
+    let failAggregate = true
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.startsWith('/api/data/self')) {
+        aggregateCalls += 1
+        if (failAggregate) {
+          throw new TypeError('Failed to fetch')
+        }
+        return jsonResponse({
+          success: true,
+          data: [
+            {
+              model_name: 'gpt-5',
+              created_at: 1,
+              count: 7,
+              quota: 1,
+              token_used: 2,
+            },
+          ],
+        })
+      }
+      if (url.startsWith('/api/log/self/stat')) {
+        return jsonResponse({
+          success: true,
+          data: { quota: 0, rpm: 1, tpm: 2 },
+        })
+      }
+      return jsonResponse({ success: true, data: { items: [], total: 0 } })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+
+    // The shared client retries network errors; a local no-retry client keeps
+    // this regression on the user-triggered retry path.
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <UsagePage />
+      </QueryClientProvider>
+    )
+
+    // A dropped connection must be named, not reported as a generic load
+    // failure, so the operator can tell it apart from a gateway problem.
+    await waitFor(() =>
+      expect(screen.getByText('Connection failed')).toBeInTheDocument()
+    )
+    failAggregate = false
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+
+    await waitFor(() => expect(screen.getByText('7')).toBeInTheDocument())
+    expect(aggregateCalls).toBe(2)
   })
 
   it('keeps the time window frozen when a response arrives a second later', async () => {

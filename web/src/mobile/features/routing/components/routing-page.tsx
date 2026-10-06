@@ -37,6 +37,7 @@ import {
 } from '@/mobile/features/routing/lib/routing-share'
 import { resolveTimeRange } from '@/mobile/features/usage/lib/usage-summary'
 import { ApiError } from '@/mobile/lib/api-client'
+import { mobileErrorCopy } from '@/mobile/lib/error-copy'
 import type { TimeRangePreset } from '@/mobile/types'
 
 const PRESETS = [
@@ -104,18 +105,24 @@ export function RoutingPage() {
     // role problem, not a transient failure; say so instead of showing blank.
     const forbidden =
       stats.error instanceof ApiError && stats.error.code === 'forbidden'
+    const errorCopy = mobileErrorCopy(stats.error)
     return (
       <div className='space-y-4 px-3 pb-4'>
         {controls}
         <MobileError
           title={
-            forbidden ? t('Administrator access required') : t('Load failed')
+            forbidden
+              ? t('Administrator access required')
+              : t(errorCopy.titleKey)
           }
           description={
             forbidden
               ? t('This page needs an administrator access token.')
-              : t('Retry later.')
+              : t(errorCopy.descriptionKey)
           }
+          // Retrying cannot grant a missing role, so only offer it for
+          // transient failures.
+          onRetry={forbidden ? undefined : () => void stats.refetch()}
         />
       </div>
     )

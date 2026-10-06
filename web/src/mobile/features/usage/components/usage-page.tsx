@@ -37,6 +37,7 @@ import {
   rankRows,
   resolveTimeRange,
 } from '@/mobile/features/usage/lib/usage-summary'
+import { mobileErrorCopy } from '@/mobile/lib/error-copy'
 import type { TimeRangePreset, UsageScope } from '@/mobile/types'
 
 const PRESETS: readonly TimeRangePreset[] = ['today', '7d', '30d']
@@ -131,10 +132,15 @@ export function UsagePage() {
     )
   }
   if (aggregate.isError) {
+    const errorCopy = mobileErrorCopy(aggregate.error)
     return (
       <div className='space-y-4 px-3 pb-4'>
         {controls}
-        <MobileError title={t('Load failed')} description={t('Retry later.')} />
+        <MobileError
+          title={t(errorCopy.titleKey)}
+          description={t(errorCopy.descriptionKey)}
+          onRetry={() => void aggregate.refetch()}
+        />
       </div>
     )
   }

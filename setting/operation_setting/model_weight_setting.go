@@ -35,8 +35,14 @@ type ModelWeightOverride struct {
 // ModelWeightPreset is a named, ready-to-apply weight configuration. Applying a
 // preset copies its weights into ModelWeightSetting.Weights; the preset itself
 // stays untouched so it can be re-applied later.
+//
+// Model optionally scopes the preset to a single model: an empty (or
+// whitespace-only) Model is a global preset that replaces the whole table,
+// while a non-empty Model is a per-model preset whose entries must all target
+// that same model.
 type ModelWeightPreset struct {
 	Name    string                `json:"name"`
+	Model   string                `json:"model,omitempty"`
 	Weights []ModelWeightOverride `json:"weights"`
 }
 
@@ -163,7 +169,9 @@ func ValidateModelWeights(value string) error {
 
 // ValidateModelWeightPresets enforces the structural invariants of the preset
 // array. Each preset reuses the same per-entry rules as the live weights, and
-// names are unique case-insensitively so the UI can address a preset by name.
+// (scope, name) pairs are unique case-insensitively so the UI can address a
+// preset by name within its scope. A non-empty scope must match every entry's
+// model case-insensitively; a whitespace-only scope is global.
 func ValidateModelWeightPresets(value string) error {
 	if strings.TrimSpace(value) == "" {
 		return nil
@@ -187,13 +195,25 @@ func ValidateModelWeightPresets(value string) error {
 		if len(name) > MaxModelWeightPresetNameLength {
 			return fmt.Errorf("model weight preset %d name is longer than %d bytes", index+1, MaxModelWeightPresetNameLength)
 		}
-		key := strings.ToLower(name)
+		scope := strings.TrimSpace(preset.Model)
+		if len(scope) > 255 {
+			return fmt.Errorf("model weight preset %d scope is longer than 255 bytes", index+1)
+		}
+		key := strings.ToLower(scope) + "|" + strings.ToLower(name)
 		if _, exists := seen[key]; exists {
-			return fmt.Errorf("duplicate model weight preset name %q", name)
+			return fmt.Errorf("duplicate model weight preset name %q for scope %q", name, scope)
 		}
 		seen[key] = struct{}{}
 		if err := validateModelWeightEntries(preset.Weights, fmt.Sprintf("model weight preset %q", name)); err != nil {
 			return err
+		}
+		if scope != "" {
+			for entryIndex, entry := range preset.Weights {
+				entryModel := strings.TrimSpace(entry.Model)
+				if !strings.EqualFold(entryModel, scope) {
+					return fmt.Errorf("model weight preset %q entry %d targets model %q outside its scope", scope, entryIndex+1, entryModel)
+				}
+			}
 		}
 	}
 	return nil

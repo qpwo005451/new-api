@@ -34,6 +34,8 @@ export type ModelWeightOverrideEntry = {
 
 export type ModelWeightPreset = {
   name: string
+  /** Empty/absent = global preset (whole table); non-empty = scoped to one model. */
+  model?: string
   weights: ModelWeightOverrideEntry[]
 }
 
@@ -44,6 +46,16 @@ const PRESET_NAME_MAX_LENGTH = 64
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Trimmed preset scope; non-strings and blanks are treated as global. */
+function trimmedScope(model: unknown): string {
+  return typeof model === 'string' ? model.trim() : ''
+}
+
+/** Case-insensitive comparison key for a preset scope. */
+function scopeKey(model: unknown): string {
+  return trimmedScope(model).toLowerCase()
 }
 
 function toOverrideEntry(value: unknown): ModelWeightOverrideEntry | null {
@@ -108,7 +120,13 @@ export function parseModelWeightPresets(raw: string): ModelWeightPreset[] {
       if (!isRecord(item) || typeof item.name !== 'string') return []
       const name = item.name.trim()
       if (name === '' || name.length > PRESET_NAME_MAX_LENGTH) return []
-      return [{ name, weights: toOverrideList(item.weights) }]
+      const model = trimmedScope(item.model)
+      const preset: ModelWeightPreset = {
+        name,
+        weights: toOverrideList(item.weights),
+      }
+      if (model !== '') preset.model = model
+      return [preset]
     })
   } catch {
     return []
@@ -142,10 +160,20 @@ export function serializeModelWeightPresets(
   presets: ModelWeightPreset[]
 ): string {
   return JSON.stringify(
-    presets.map((preset) => ({
-      name: preset.name.trim(),
-      weights: serializeEntries(preset.weights),
-    }))
+    presets.map((preset) => {
+      const model = trimmedScope(preset.model)
+      if (model === '') {
+        return {
+          name: preset.name.trim(),
+          weights: serializeEntries(preset.weights),
+        }
+      }
+      return {
+        name: preset.name.trim(),
+        model,
+        weights: serializeEntries(preset.weights),
+      }
+    })
   )
 }
 
@@ -164,4 +192,112 @@ export function findActivePresetName(
     if (canonicalKey(preset.weights) === target) return preset.name
   }
   return null
+}
+
+function entryKey(entry: ModelWeightOverrideEntry): string {
+  return `${entry.channel_id}|${entry.model.trim().toLowerCase()}`
+}
+
+/** Drop repeated (channel_id, model) pairs, keeping the first occurrence. */
+function dedupeEntries(
+  entries: ModelWeightOverrideEntry[]
+): ModelWeightOverrideEntry[] {
+  const seen = new Set<string>()
+  const result: ModelWeightOverrideEntry[] = []
+  for (const entry of entries) {
+    const key = entryKey(entry)
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(entry)
+  }
+  return result
+}
+
+function entriesForModel(
+  entries: ModelWeightOverrideEntry[],
+  model: string
+): ModelWeightOverrideEntry[] {
+  const key = scopeKey(model)
+  if (key === '') return []
+  return entries.filter((entry) => scopeKey(entry.model) === key)
+}
+
+/** Scoped presets that target `model`; global presets are never returned. */
+export function presetsForModel(
+  presets: ModelWeightPreset[],
+  model: string
+): ModelWeightPreset[] {
+  const key = scopeKey(model)
+  if (key === '') return []
+  return presets.filter((preset) => scopeKey(preset.model) === key)
+}
+
+/** Name of the scoped preset matching `model`'s rows, or null for custom. */
+export function findActiveScopedPresetName(
+  presets: ModelWeightPreset[],
+  model: string,
+  weightsRaw: string
+): string | null {
+  const scoped = presetsForModel(presets, model)
+  if (scoped.length === 0) return null
+
+  const target = canonicalKey(
+    entriesForModel(parseModelWeightEntries(weightsRaw), model)
+  )
+  for (const preset of scoped) {
+    if (canonicalKey(entriesForModel(preset.weights, model)) === target) {
+      return preset.name
+    }
+  }
+  return null
+}
+
+/**
+ * Merge a preset into the live weights.
+ *
+ * A global preset replaces the whole table. A scoped preset replaces only its
+ * model's rows, inserted where that model's first row used to be (or appended
+ * when the model has no rows yet); every other model keeps its order.
+ */
+export function applyPresetToModel(
+  currentWeightsRaw: string,
+  preset: ModelWeightPreset
+): string {
+  const scope = trimmedScope(preset.model)
+  if (scope === '') {
+    return JSON.stringify(serializeEntries(dedupeEntries(preset.weights)))
+  }
+
+  const current = parseModelWeightEntries(currentWeightsRaw)
+  const key = scopeKey(scope)
+  // Defense in depth: a tampered preset option could carry another model's
+  // rows. The backend rejects those presets on write, so never let them leak
+  // into the target model's replacement rows here either.
+  const scopedWeights = preset.weights.filter(
+    (entry) => scopeKey(entry.model) === key
+  )
+  const firstIndex = current.findIndex((entry) => scopeKey(entry.model) === key)
+  const others = current.filter((entry) => scopeKey(entry.model) !== key)
+  const merged =
+    firstIndex === -1
+      ? [...others, ...scopedWeights]
+      : [
+          ...others.slice(0, firstIndex),
+          ...scopedWeights,
+          ...others.slice(firstIndex),
+        ]
+  return JSON.stringify(serializeEntries(dedupeEntries(merged)))
+}
+
+const MAX_MODEL_WEIGHT_VALUE = 1000000
+
+/**
+ * Convert within-tier percentages into integer weights. Non-positive and
+ * non-finite shares are excluded (0); any positive share stays at least 1.
+ */
+export function normalizeRatioWeights(percents: number[]): number[] {
+  return percents.map((percent) => {
+    if (!Number.isFinite(percent) || percent <= 0) return 0
+    return Math.min(MAX_MODEL_WEIGHT_VALUE, Math.max(1, Math.round(percent)))
+  })
 }

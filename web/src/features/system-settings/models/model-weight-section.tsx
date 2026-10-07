@@ -17,48 +17,50 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { Plus, Trash2 } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { getChannels } from '@/features/channels/api'
 
 import { SettingsForm } from '../components/settings-form-layout'
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useSavePolicy } from '../request-policies/use-save-policy'
+import { ModelWeightCustomRatioDialog } from './model-weight-custom-ratio-dialog'
+import { ModelWeightGroup, ModelWeightRowEditor } from './model-weight-group'
 import { ModelWeightPresetBar } from './model-weight-preset-bar'
 import {
+  applyPresetToModel,
   MODEL_WEIGHTS_OPTION_KEY,
+  MODEL_WEIGHT_PRESETS_OPTION_KEY,
   parseModelWeightPresets,
+  presetsForModel,
+  type ModelWeightPreset,
 } from './model-weight-presets'
+import {
+  applyCustomRatioWeights,
+  buildChannelOptions,
+  buildCustomRatioState,
+  buildDraftRows,
+  computeShareByGroupKey,
+  computeUnsavedByGroupKey,
+  CUSTOM_RATIO_VALUE,
+  groupRowsByModel,
+  nextModelWeightRowKey,
+  parseModelWeights,
+  replaceModelRows,
+  serializeModelWeights,
+  type CustomRatioState,
+  type ModelWeightRow,
+} from './model-weight-rows'
 
 const MODEL_WEIGHTS_KEY = MODEL_WEIGHTS_OPTION_KEY
-const MODEL_WEIGHT_PRESETS_KEY = 'model_weight_setting.presets'
+const MODEL_WEIGHTS_PRESETS_KEY = MODEL_WEIGHT_PRESETS_OPTION_KEY
 const CHANNEL_PAGE_SIZE = 100
-const MAX_MODEL_WEIGHT_VALUE = 1000000
-const MAX_MODEL_PRIORITY_VALUE = 1000000000
-
-type ModelWeightRow = {
-  /** Client-side stable identity for React keys; stripped before saving. */
-  key: string
-  channel_id: number
-  model: string
-  /** Empty means "no override"; an explicit 0 is a real value. */
-  weight: string
-  /** Empty means "no override"; an explicit 0 is a real value. */
-  priority: string
-}
 
 type Props = {
   defaultValues: {
@@ -66,10 +68,6 @@ type Props = {
     'model_weight_setting.presets': string
   }
 }
-
-let modelWeightRowKeySeq = 0
-
-const nextModelWeightRowKey = () => `model-weight-${++modelWeightRowKeySeq}`
 
 async function fetchAllChannels() {
   const firstResponse = await getChannels({
@@ -109,56 +107,6 @@ async function fetchAllChannels() {
   )
 }
 
-function optionalNumberText(value: unknown) {
-  return value === undefined || value === null ? '' : String(value)
-}
-
-function parseModelWeights(value: string): ModelWeightRow[] {
-  try {
-    const parsed: unknown = JSON.parse(value || '[]')
-    if (!Array.isArray(parsed)) return []
-    return parsed.map((item) => {
-      const record = (item ?? {}) as Record<string, unknown>
-      return {
-        key: nextModelWeightRowKey(),
-        channel_id: Number(record.channel_id) || 0,
-        model: typeof record.model === 'string' ? record.model : '',
-        weight: optionalNumberText(record.weight),
-        priority: optionalNumberText(record.priority),
-      }
-    })
-  } catch {
-    return []
-  }
-}
-
-function serializeModelWeights(rows: ModelWeightRow[]) {
-  const entries = rows
-    .filter((row) => row.channel_id > 0 && row.model.trim() !== '')
-    .map((row) => {
-      const entry: Record<string, number | string> = {
-        channel_id: row.channel_id,
-        model: row.model.trim(),
-      }
-      if (row.weight.trim() !== '') {
-        entry.weight = Math.min(
-          Math.max(Number(row.weight) || 0, 0),
-          MAX_MODEL_WEIGHT_VALUE
-        )
-      }
-      if (row.priority.trim() !== '') {
-        entry.priority = Math.min(
-          Math.max(Number(row.priority) || 0, 0),
-          MAX_MODEL_PRIORITY_VALUE
-        )
-      }
-      return entry
-    })
-    // A row with neither value would be rejected by the backend validator.
-    .filter((entry) => 'weight' in entry || 'priority' in entry)
-  return JSON.stringify(entries)
-}
-
 export function ModelWeightSection(props: Props) {
   const { t } = useTranslation()
   const savePolicy = useSavePolicy()
@@ -167,12 +115,22 @@ export function ModelWeightSection(props: Props) {
     [props.defaultValues]
   )
   const [rows, setRows] = useState<ModelWeightRow[]>(initialRows)
+  const [savedWeights, setSavedWeights] = useState(() =>
+    serializeModelWeights(initialRows)
+  )
   const baselineRef = useRef(serializeModelWeights(initialRows))
+  const [pendingApply, setPendingApply] = useState<{
+    model: string
+    preset: ModelWeightPreset
+  } | null>(null)
+  const [customRatio, setCustomRatio] = useState<CustomRatioState | null>(null)
 
   useEffect(() => {
     const parsed = parseModelWeights(props.defaultValues[MODEL_WEIGHTS_KEY])
+    const serialized = serializeModelWeights(parsed)
     setRows(parsed)
-    baselineRef.current = serializeModelWeights(parsed)
+    setSavedWeights(serialized)
+    baselineRef.current = serialized
   }, [props.defaultValues])
 
   const channelsQuery = useQuery({
@@ -181,36 +139,41 @@ export function ModelWeightSection(props: Props) {
     retry: false,
   })
 
+  const channelById = useMemo(
+    () =>
+      new Map(
+        (channelsQuery.data ?? []).map((channel) => [channel.id, channel])
+      ),
+    [channelsQuery.data]
+  )
+
   const presets = useMemo(
     () =>
-      parseModelWeightPresets(props.defaultValues[MODEL_WEIGHT_PRESETS_KEY]),
+      parseModelWeightPresets(props.defaultValues[MODEL_WEIGHTS_PRESETS_KEY]),
     [props.defaultValues]
   )
 
-  // Known channels plus fallback entries so IDs that no longer resolve
-  // (e.g. deleted channels) still render as selectable options.
-  const channelOptions = useMemo(() => {
-    const options = new Map(
-      (channelsQuery.data ?? []).map((channel) => [
-        channel.id,
-        {
-          label: `#${channel.id} - ${channel.name}`,
-          value: String(channel.id),
-        },
-      ])
-    )
-    for (const row of rows) {
-      if (row.channel_id > 0 && !options.has(row.channel_id)) {
-        options.set(row.channel_id, {
-          label: `#${row.channel_id}`,
-          value: String(row.channel_id),
-        })
-      }
-    }
-    return [...options.values()].sort(
-      (left, right) => Number(left.value) - Number(right.value)
-    )
-  }, [channelsQuery.data, rows])
+  const channelOptions = useMemo(
+    () => buildChannelOptions(channelsQuery.data, rows),
+    [channelsQuery.data, rows]
+  )
+
+  const groups = useMemo(
+    () => groupRowsByModel(rows, channelById),
+    [rows, channelById]
+  )
+
+  const draftRows = useMemo(() => buildDraftRows(rows), [rows])
+
+  const shareByGroupKey = useMemo(
+    () => computeShareByGroupKey(groups),
+    [groups]
+  )
+
+  const unsavedByGroupKey = useMemo(
+    () => computeUnsavedByGroupKey(groups, rows, savedWeights),
+    [groups, rows, savedWeights]
+  )
 
   const updateRow = (index: number, changes: Partial<ModelWeightRow>) => {
     setRows((prev) =>
@@ -243,6 +206,46 @@ export function ModelWeightSection(props: Props) {
     }
     await savePolicy.mutateAsync({ [MODEL_WEIGHTS_KEY]: serialized })
     baselineRef.current = serialized
+    setSavedWeights(serialized)
+  }
+
+  const handleRatioChange = (model: string, value: string) => {
+    if (value === CUSTOM_RATIO_VALUE) {
+      setCustomRatio(buildCustomRatioState(savedWeights, model, channelById))
+      return
+    }
+    const preset = presetsForModel(presets, model).find(
+      (candidate) => candidate.name === value
+    )
+    if (preset) setPendingApply({ model, preset })
+  }
+
+  const handleApplyPreset = async () => {
+    if (!pendingApply) return
+    const { model, preset } = pendingApply
+    const merged = applyPresetToModel(savedWeights, preset)
+    await savePolicy.mutateAsync({ [MODEL_WEIGHTS_KEY]: merged })
+    baselineRef.current = merged
+    setSavedWeights(merged)
+    setRows((prev) => replaceModelRows(prev, model, merged))
+    setPendingApply(null)
+  }
+
+  const handleCustomPercentChange = (key: string, value: string) => {
+    setCustomRatio((prev) =>
+      prev ? { ...prev, percents: { ...prev.percents, [key]: value } } : prev
+    )
+  }
+
+  const handleCustomConfirm = async () => {
+    if (!customRatio) return
+    const merged = applyCustomRatioWeights(savedWeights, customRatio)
+    const { model } = customRatio
+    await savePolicy.mutateAsync({ [MODEL_WEIGHTS_KEY]: merged })
+    baselineRef.current = merged
+    setSavedWeights(merged)
+    setRows((prev) => replaceModelRows(prev, model, merged))
+    setCustomRatio(null)
   }
 
   return (
@@ -265,7 +268,8 @@ export function ModelWeightSection(props: Props) {
         />
         <ModelWeightPresetBar
           presets={presets}
-          currentWeights={serializeModelWeights(rows)}
+          currentWeights={savedWeights}
+          editorWeights={serializeModelWeights(rows)}
         />
         <div className='flex flex-wrap items-center gap-2'>
           <Button type='button' size='sm' onClick={handleAdd}>
@@ -286,95 +290,71 @@ export function ModelWeightSection(props: Props) {
             {t('No overrides yet. Click "Add override" to create one.')}
           </div>
         ) : (
-          <div className='space-y-3'>
-            {rows.map((row, index) => (
-              <div
-                key={row.key}
-                className='grid gap-3 rounded-lg border p-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_7rem_7rem_auto]'
-              >
-                <label className='grid gap-1.5 text-sm'>
-                  <span className='text-muted-foreground text-xs font-medium'>
-                    {t('Channel')}
-                  </span>
-                  <Select
-                    items={channelOptions}
-                    value={row.channel_id > 0 ? String(row.channel_id) : null}
-                    onValueChange={(value) =>
-                      value !== null &&
-                      updateRow(index, { channel_id: Number(value) })
-                    }
-                  >
-                    <SelectTrigger aria-label={t('Channel')} className='w-full'>
-                      <SelectValue placeholder={t('Select a channel')} />
-                    </SelectTrigger>
-                    <SelectContent alignItemWithTrigger={false}>
-                      {channelOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </label>
-                <label className='grid gap-1.5 text-sm'>
-                  <span className='text-muted-foreground text-xs font-medium'>
-                    {t('Model')}
-                  </span>
-                  <Input
-                    aria-label={t('Model')}
-                    value={row.model}
-                    onChange={(event) =>
-                      updateRow(index, { model: event.target.value })
-                    }
-                    placeholder='deepseek-v4.1-flash'
-                  />
-                </label>
-                <label className='grid gap-1.5 text-sm'>
-                  <span className='text-muted-foreground text-xs font-medium'>
-                    {t('Weight')}
-                  </span>
-                  <Input
-                    aria-label={t('Weight')}
-                    type='number'
-                    min={0}
-                    max={MAX_MODEL_WEIGHT_VALUE}
-                    value={row.weight}
-                    onChange={(event) =>
-                      updateRow(index, { weight: event.target.value })
-                    }
-                  />
-                </label>
-                <label className='grid gap-1.5 text-sm'>
-                  <span className='text-muted-foreground text-xs font-medium'>
-                    {t('Priority')}
-                  </span>
-                  <Input
-                    aria-label={t('Priority')}
-                    type='number'
-                    min={0}
-                    max={MAX_MODEL_PRIORITY_VALUE}
-                    value={row.priority}
-                    onChange={(event) =>
-                      updateRow(index, { priority: event.target.value })
-                    }
-                  />
-                </label>
-                <div className='flex items-end justify-end'>
-                  <Button
-                    type='button'
-                    variant='outline'
-                    size='icon'
-                    aria-label={t('Remove')}
-                    onClick={() => handleRemove(index)}
-                  >
-                    <Trash2 />
-                  </Button>
-                </div>
-              </div>
+          <div className='space-y-4'>
+            {groups.map((group) => (
+              <ModelWeightGroup
+                key={group.key}
+                group={group}
+                shares={shareByGroupKey.get(group.key)}
+                channelOptions={channelOptions}
+                presets={presets}
+                savedWeights={savedWeights}
+                unsaved={unsavedByGroupKey.get(group.key) ?? false}
+                onRowChange={updateRow}
+                onRemove={handleRemove}
+                onRatioChange={handleRatioChange}
+              />
             ))}
+            {draftRows.length > 0 ? (
+              <div className='space-y-3 rounded-lg border border-dashed p-3'>
+                {draftRows.map(({ row, index }) => (
+                  <ModelWeightRowEditor
+                    key={row.key}
+                    row={row}
+                    index={index}
+                    share='-'
+                    channelOptions={channelOptions}
+                    onRowChange={updateRow}
+                    onRemove={handleRemove}
+                  />
+                ))}
+              </div>
+            ) : null}
           </div>
         )}
+
+        <p className='text-muted-foreground text-xs'>
+          {t('The share is computed inside one priority tier.')}
+        </p>
       </SettingsForm>
+
+      <ConfirmDialog
+        open={pendingApply !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingApply(null)
+        }}
+        title={t('Apply preset to this model?')}
+        desc={
+          pendingApply
+            ? t('This replaces the overrides of {{model}} only.', {
+                model: pendingApply.model,
+              })
+            : ''
+        }
+        confirmText={t('Apply')}
+        isLoading={savePolicy.isPending}
+        handleConfirm={() => void handleApplyPreset()}
+      />
+
+      <ModelWeightCustomRatioDialog
+        state={customRatio}
+        isPending={savePolicy.isPending}
+        onOpenChange={(open) => {
+          if (!open) setCustomRatio(null)
+        }}
+        onPercentChange={handleCustomPercentChange}
+        onConfirm={() => void handleCustomConfirm()}
+      />
     </SettingsSection>
   )
 }

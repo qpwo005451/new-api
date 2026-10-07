@@ -38,6 +38,12 @@ export function mobileErrorCopy(error: unknown): MobileErrorCopy {
       descriptionKey: 'Network connection failed or server not responding',
     }
   }
+  if (error instanceof ApiError && error.code === 'forbidden') {
+    return {
+      titleKey: 'Administrator access required',
+      descriptionKey: 'This page needs an administrator access token.',
+    }
+  }
   return {
     titleKey: 'Load failed',
     descriptionKey: 'Retry later.',

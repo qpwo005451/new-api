@@ -18,7 +18,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ApiError, mobileApiGet, mobileApiPost } from '@/mobile/lib/api-client'
+import {
+  ApiError,
+  mobileApiGet,
+  mobileApiPatch,
+  mobileApiPost,
+} from '@/mobile/lib/api-client'
 import { readPat, writePat } from '@/mobile/lib/pat-store'
 
 const VALID_PAT = 'a'.repeat(29)
@@ -72,6 +77,46 @@ describe('api-client', () => {
     expect(init.method).toBe('POST')
     expect(init.body).toBe('{"status":2}')
     expect(init.headers['Content-Type']).toBe('application/json')
+  })
+
+  it('patches a json body with the same envelope handling as post', async () => {
+    writePat(VALID_PAT)
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        mockJsonResponse({ success: true, data: { options: {} } })
+      )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(
+      mobileApiPatch('/api/option/request_policy', {
+        options: { key: 'value' },
+      })
+    ).resolves.toEqual({ options: {} })
+
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/option/request_policy')
+    expect(init.method).toBe('PATCH')
+    expect(init.body).toBe('{"options":{"key":"value"}}')
+    expect(init.headers['Content-Type']).toBe('application/json')
+    expect(init.headers.Authorization).toBe(`Bearer ${VALID_PAT}`)
+  })
+
+  it('maps a rejected patch through the shared 403 branch', async () => {
+    writePat(VALID_PAT)
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(
+          mockJsonResponse({ success: false, message: 'no permission' }, 403)
+        )
+    )
+
+    await expect(
+      mobileApiPatch('/api/option/request_policy', { options: {} })
+    ).rejects.toMatchObject({ code: 'forbidden', status: 403 })
+    expect(readPat()).toBe(VALID_PAT)
   })
 
   it('throws unauthorized and clears the token on 401', async () => {

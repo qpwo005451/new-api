@@ -37,6 +37,7 @@ function renderApp() {
 
 describe('MobileApp', () => {
   beforeEach(() => {
+    window.location.hash = ''
     window.localStorage.clear()
     window.localStorage.setItem('newapi_mobile_pat', 'a'.repeat(29))
     testQueryClient.clear()
@@ -74,5 +75,44 @@ describe('MobileApp', () => {
     expect(
       screen.queryByRole('heading', { name: 'Mobile console' })
     ).not.toBeInTheDocument()
+  })
+
+  it('renders the model routing settings page only when its tab is selected', async () => {
+    window.location.hash = '#/routing-weights'
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (String(url).startsWith('/api/option/request_policy')) {
+          return new Response(
+            JSON.stringify({
+              success: true,
+              data: {
+                options: {
+                  'model_weight_setting.weights': JSON.stringify([
+                    { channel_id: 9, model: 'gpt-5', weight: 700 },
+                  ]),
+                  'model_weight_setting.presets': '[]',
+                },
+              },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+        }
+        return new Response(
+          JSON.stringify({ success: true, data: { items: [], total: 0 } }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      })
+    )
+
+    renderApp()
+
+    await waitFor(() => expect(screen.getByText('gpt-5')).toBeInTheDocument())
+    expect(screen.getByRole('tab', { name: 'Model routing' })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    // The read-only routing statistics page must not be mounted.
+    expect(screen.queryByText('Traffic by model')).not.toBeInTheDocument()
   })
 })

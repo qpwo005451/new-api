@@ -121,3 +121,34 @@ func TestMaxModelWeightPresetNameLength(t *testing.T) {
 	long := strings.Repeat("a", MaxModelWeightPresetNameLength+1)
 	assert.Error(t, ValidateModelWeightPresets(`[{"name":"`+long+`","weights":[]}]`))
 }
+
+func TestValidateModelWeightPresetsScope(t *testing.T) {
+	t.Run("scope and entry model match case-insensitively after trimming", func(t *testing.T) {
+		err := ValidateModelWeightPresets(`[{"name":"均衡","model":" deepseek-v4.1-flash ","weights":[{"channel_id":9,"model":"DeepSeek-V4.1-Flash","weight":1}]}]`)
+		require.NoError(t, err)
+	})
+
+	t.Run("entry outside the scope is rejected and the scope is named", func(t *testing.T) {
+		err := ValidateModelWeightPresets(`[{"name":"均衡","model":"deepseek-v4.1-flash","weights":[{"channel_id":9,"model":"glm-4.6","weight":1}]}]`)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "deepseek-v4.1-flash")
+		assert.Contains(t, err.Error(), "glm-4.6")
+	})
+
+	t.Run("same name is allowed in different scopes", func(t *testing.T) {
+		err := ValidateModelWeightPresets(`[{"name":"均衡","weights":[{"channel_id":9,"model":"a","weight":1}]},{"name":"均衡","model":"deepseek-v4.1-flash","weights":[{"channel_id":9,"model":"deepseek-v4.1-flash","weight":1}]}]`)
+		require.NoError(t, err)
+	})
+
+	t.Run("duplicate name inside one scope is rejected case-insensitively", func(t *testing.T) {
+		err := ValidateModelWeightPresets(`[{"name":"均衡","model":"deepseek-v4.1-flash","weights":[]},{"name":"均衡","model":" DeepSeek-V4.1-Flash ","weights":[]}]`)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "duplicate model weight preset name")
+	})
+
+	t.Run("scope length limit is 255 bytes", func(t *testing.T) {
+		scope := strings.Repeat("a", 255)
+		require.NoError(t, ValidateModelWeightPresets(`[{"name":"均衡","model":"`+scope+`","weights":[]}]`))
+		require.Error(t, ValidateModelWeightPresets(`[{"name":"均衡","model":"`+scope+`a","weights":[]}]`))
+	})
+}

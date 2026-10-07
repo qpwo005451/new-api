@@ -16,7 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-export type MobileTab = 'usage' | 'models' | 'routing' | 'channels'
+export type MobileTab =
+  | 'usage'
+  | 'models'
+  | 'routing'
+  | 'channels'
+  | 'routing-weights'
 
 /** Bottom-navigation order of the mobile console tabs. */
 export const MOBILE_TABS = [
@@ -24,7 +29,12 @@ export const MOBILE_TABS = [
   'models',
   'routing',
   'channels',
+  'routing-weights',
 ] as const satisfies readonly MobileTab[]
+
+export interface RequestPolicyOptions {
+  options: Record<string, string>
+}
 
 export type UsageScope = 'self' | 'all'
 

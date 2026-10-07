@@ -16,423 +16,487 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { parseModelsList } from '@/features/channels/lib/channel-utils'
+import { extractMappingSourceModels } from '@/features/channels/lib/model-mapping-validation'
 import type { Channel } from '@/features/channels/types'
-import { formatPercent } from '@/lib/format'
 
 import {
-  applyPresetToModel,
   normalizeRatioWeights,
-  parseModelWeightEntries,
   type ModelWeightOverrideEntry,
+  type ModelWeightPreset,
 } from './model-weight-presets'
 
 export const MAX_MODEL_WEIGHT_VALUE = 1000000
 export const MAX_MODEL_PRIORITY_VALUE = 1000000000
-export const CUSTOM_RATIO_VALUE = '__custom_ratio__'
 
-export type ModelWeightChannelOption = {
-  label: string
-  value: string
-}
-
-export type ModelWeightRow = {
-  /** Client-side stable identity for React keys; stripped before saving. */
+export type ModelAllocationRow = {
+  /** Stable identity derived from (model, channel_id). */
   key: string
-  channel_id: number
+  channelId: number
   model: string
-  /** Empty means "no override"; an explicit 0 is a real value. */
-  weight: string
-  /** Empty means "no override"; an explicit 0 is a real value. */
+  channelName: string
+  channelPriority: number
+  channelWeight: number
+  /** Raw override priority text; empty falls back to the channel priority. */
   priority: string
+  /** Editable percentage text. Percentage is the share. */
+  percent: string
 }
 
-export type GroupedRow = {
-  row: ModelWeightRow
-  index: number
-  tier: number
-  weight: number | undefined
+export type ModelAllocationTier = {
+  priority: number
+  /** True for the highest tier; lower tiers are fallbacks. */
+  participates: boolean
+  rows: ModelAllocationRow[]
 }
 
-export type RowGroup = {
-  model: string
+export type ModelAllocationCard = {
   key: string
-  rows: GroupedRow[]
-}
-
-export type CustomRatioTier = {
-  tier: number
-  entries: ModelWeightOverrideEntry[]
-  /**
-   * True when at least one entry's effective weight is unknown, so the tier
-   * cannot be re-proportioned. Locked tiers are read-only and are never
-   * rewritten by `applyCustomRatioWeights`.
-   */
-  locked: boolean
-}
-
-export type CustomRatioState = {
   model: string
-  tiers: CustomRatioTier[]
-  percents: Record<string, string>
+  channelCount: number
+  tiers: ModelAllocationTier[]
 }
 
-let modelWeightRowKeySeq = 0
-
-export const nextModelWeightRowKey = () =>
-  `model-weight-${++modelWeightRowKeySeq}`
-
-function modelKey(model: string) {
+export function modelKey(model: string): string {
   return model.trim().toLowerCase()
 }
 
-export function isSameModel(left: string, right: string) {
-  return modelKey(left) === modelKey(right)
+export function rowKey(model: string, channelId: number): string {
+  return `${modelKey(model)}|${channelId}`
 }
 
-export function entryKey(entry: ModelWeightOverrideEntry) {
-  return `${entry.channel_id}|${modelKey(entry.model)}`
+/** True when the channel's model list or mapping source names `model`. */
+export function channelServesModel(channel: Channel, model: string): boolean {
+  const key = modelKey(model)
+  if (key === '') return false
+  if (parseModelsList(channel.models).some((item) => modelKey(item) === key)) {
+    return true
+  }
+  return extractMappingSourceModels(channel.model_mapping ?? '').some(
+    (item) => modelKey(item) === key
+  )
 }
 
-export function effectiveRowPriority(row: ModelWeightRow, channel?: Channel) {
+export function effectivePriority(row: ModelAllocationRow): number {
   if (row.priority.trim() !== '') {
     const parsed = Number(row.priority)
     if (Number.isFinite(parsed)) return parsed
   }
-  return channel?.priority ?? 0
+  return row.channelPriority
 }
 
-export function effectiveRowWeight(
-  row: ModelWeightRow,
-  channel?: Channel
-): number | undefined {
-  if (row.weight.trim() !== '') {
-    const parsed = Number(row.weight)
-    if (Number.isFinite(parsed)) return parsed
+/** Stored weight derived from a percentage: 0 stays 0, positives clamp to >= 1. */
+export function derivedWeightFromPercent(percent: string): number {
+  return normalizeRatioWeights([Number(percent)])[0]
+}
+
+/** Serialize one card row back into the override entry shape. */
+export function rowToEntry(row: ModelAllocationRow): ModelWeightOverrideEntry {
+  const entry: ModelWeightOverrideEntry = {
+    channel_id: row.channelId,
+    model: row.model,
+    weight: derivedWeightFromPercent(row.percent),
   }
-  return channel?.weight ?? undefined
-}
-
-function effectiveEntryPriority(
-  entry: ModelWeightOverrideEntry,
-  channel?: Channel
-) {
-  if (entry.priority !== undefined && Number.isFinite(entry.priority)) {
-    return entry.priority
-  }
-  return channel?.priority ?? 0
-}
-
-function effectiveEntryWeight(
-  entry: ModelWeightOverrideEntry,
-  channel?: Channel
-): number | undefined {
-  if (entry.weight !== undefined && Number.isFinite(entry.weight)) {
-    return entry.weight
-  }
-  return channel?.weight ?? undefined
-}
-
-function optionalNumberText(value: unknown) {
-  return value === undefined || value === null ? '' : String(value)
-}
-
-export function parseModelWeights(value: string): ModelWeightRow[] {
-  try {
-    const parsed: unknown = JSON.parse(value || '[]')
-    if (!Array.isArray(parsed)) return []
-    return parsed.map((item) => {
-      const record = (item ?? {}) as Record<string, unknown>
-      return {
-        key: nextModelWeightRowKey(),
-        channel_id: Number(record.channel_id) || 0,
-        model: typeof record.model === 'string' ? record.model : '',
-        weight: optionalNumberText(record.weight),
-        priority: optionalNumberText(record.priority),
-      }
-    })
-  } catch {
-    return []
-  }
-}
-
-export function serializeModelWeights(rows: ModelWeightRow[]) {
-  const entries = rows
-    .filter((row) => row.channel_id > 0 && row.model.trim() !== '')
-    .map((row) => {
-      const entry: Record<string, number | string> = {
-        channel_id: row.channel_id,
-        model: row.model.trim(),
-      }
-      if (row.weight.trim() !== '') {
-        entry.weight = Math.min(
-          Math.max(Number(row.weight) || 0, 0),
-          MAX_MODEL_WEIGHT_VALUE
-        )
-      }
-      if (row.priority.trim() !== '') {
-        entry.priority = Math.min(
-          Math.max(Number(row.priority) || 0, 0),
-          MAX_MODEL_PRIORITY_VALUE
-        )
-      }
-      return entry
-    })
-    // A row with neither value would be rejected by the backend validator.
-    .filter((entry) => 'weight' in entry || 'priority' in entry)
-  return JSON.stringify(entries)
-}
-
-/** Replace one model's editor rows, keeping every other model (and draft) row. */
-export function replaceModelRows(
-  current: ModelWeightRow[],
-  model: string,
-  mergedWeights: string
-): ModelWeightRow[] {
-  const replacement = parseModelWeights(mergedWeights).filter((row) =>
-    isSameModel(row.model, model)
-  )
-  const firstIndex = current.findIndex((row) => isSameModel(row.model, model))
-  const others = current.filter((row) => !isSameModel(row.model, model))
-  if (firstIndex === -1) return [...others, ...replacement]
-  return [
-    ...others.slice(0, firstIndex),
-    ...replacement,
-    ...others.slice(firstIndex),
-  ]
-}
-
-function groupEntriesByTier(
-  entries: ModelWeightOverrideEntry[],
-  channelById: Map<number, Channel>
-) {
-  const tiers = new Map<number, ModelWeightOverrideEntry[]>()
-  for (const entry of entries) {
-    const tier = effectiveEntryPriority(
-      entry,
-      channelById.get(entry.channel_id)
-    )
-    const list = tiers.get(tier) ?? []
-    list.push(entry)
-    tiers.set(tier, list)
-  }
-  for (const list of tiers.values()) {
-    list.sort((left, right) => left.channel_id - right.channel_id)
-  }
-  return tiers
-}
-
-export function tierTotal(
-  tier: CustomRatioTier,
-  percents: Record<string, string>
-) {
-  return tier.entries.reduce((total, entry) => {
-    const value = Number(percents[entryKey(entry)] ?? '')
-    return total + (Number.isFinite(value) ? value : 0)
-  }, 0)
-}
-
-export function buildCustomRatioState(
-  savedWeights: string,
-  model: string,
-  channelById: Map<number, Channel>
-): CustomRatioState {
-  const entries = parseModelWeightEntries(savedWeights).filter((entry) =>
-    isSameModel(entry.model, model)
-  )
-  const tiers = [...groupEntriesByTier(entries, channelById).entries()]
-    .sort((left, right) => right[0] - left[0])
-    .map(([tier, tierEntries]) => {
-      const weights = tierEntries.map((entry) =>
-        effectiveEntryWeight(entry, channelById.get(entry.channel_id))
+  if (row.priority.trim() !== '') {
+    const parsed = Number(row.priority)
+    if (Number.isFinite(parsed)) {
+      entry.priority = Math.min(
+        Math.max(Math.trunc(parsed), 0),
+        MAX_MODEL_PRIORITY_VALUE
       )
-      const locked = !weights.every(
-        (weight) => weight !== undefined && Number.isFinite(weight)
-      )
-      return { tier, entries: tierEntries, locked }
-    })
-
-  const percents: Record<string, string> = {}
-  for (const tier of tiers) {
-    // A locked tier has no trustworthy shares: leave its percents unset so the
-    // dialog cannot encode the lock as a real "0" weight.
-    if (tier.locked) continue
-    const weights = tier.entries.map((entry) =>
-      effectiveEntryWeight(entry, channelById.get(entry.channel_id))
-    )
-    const sum = weights.reduce<number>(
-      (total, weight) => total + (weight ?? 0),
-      0
-    )
-    tier.entries.forEach((entry, index) => {
-      const weight = weights[index]
-      if (weight === undefined || sum <= 0 || weight <= 0) {
-        percents[entryKey(entry)] = '0'
-        return
-      }
-      percents[entryKey(entry)] = String(
-        Math.max(1, Math.round((weight / sum) * 100))
-      )
-    })
-  }
-
-  return { model, tiers, percents }
-}
-
-/** Merge the custom-ratio editor percentages back into the saved weights. */
-export function applyCustomRatioWeights(
-  savedWeights: string,
-  state: CustomRatioState
-): string {
-  const { model, tiers, percents } = state
-  const weightByEntryKey = new Map<string, number>()
-  for (const tier of tiers) {
-    // Locked tiers are untouched: their entries keep whatever weight key (or
-    // absence of one) they already have in `savedWeights`.
-    if (tier.locked) continue
-    const values = tier.entries.map((entry) => {
-      const parsed = Number(percents[entryKey(entry)] ?? '')
-      return Number.isFinite(parsed) ? parsed : 0
-    })
-    const weights = normalizeRatioWeights(values)
-    tier.entries.forEach((entry, index) => {
-      weightByEntryKey.set(entryKey(entry), weights[index])
-    })
-  }
-  const modelEntries = parseModelWeightEntries(savedWeights).filter((entry) =>
-    isSameModel(entry.model, model)
-  )
-  const updated = modelEntries.map((entry) => {
-    const weight = weightByEntryKey.get(entryKey(entry))
-    return weight === undefined ? entry : { ...entry, weight }
-  })
-  return applyPresetToModel(savedWeights, {
-    name: '',
-    model,
-    weights: updated,
-  })
-}
-
-export function groupRowsByModel(
-  rows: ModelWeightRow[],
-  channelById: Map<number, Channel>
-): RowGroup[] {
-  const order: string[] = []
-  const byModel = new Map<string, GroupedRow[]>()
-  rows.forEach((row, index) => {
-    const model = row.model.trim()
-    if (model === '') return
-    const key = modelKey(model)
-    let list = byModel.get(key)
-    if (!list) {
-      list = []
-      byModel.set(key, list)
-      order.push(key)
     }
-    const channel = channelById.get(row.channel_id)
-    list.push({
-      row,
-      index,
-      tier: effectiveRowPriority(row, channel),
-      weight: effectiveRowWeight(row, channel),
-    })
-  })
-  return order.flatMap((key) => {
-    const list = byModel.get(key)
-    if (!list || list.length === 0) return []
-    list.sort(
-      (left, right) =>
-        right.tier - left.tier || left.row.channel_id - right.row.channel_id
-    )
-    return [{ model: list[0].row.model.trim(), key, rows: list }]
-  })
+  }
+  return entry
 }
 
-/** Draft rows (no model yet) render outside any model group. */
-export function buildDraftRows(rows: ModelWeightRow[]) {
-  return rows
-    .map((row, index) => ({ row, index }))
-    .filter(({ row }) => row.model.trim() === '')
-}
-
-/** Known channels plus fallbacks for channel IDs that no longer resolve. */
-export function buildChannelOptions(
-  channels: Channel[] | undefined,
-  rows: ModelWeightRow[]
-): ModelWeightChannelOption[] {
-  const options = new Map(
-    (channels ?? []).map((channel) => [
-      channel.id,
-      {
-        label: `#${channel.id} - ${channel.name}`,
-        value: String(channel.id),
-      },
-    ])
+function equalPercents(count: number): string[] {
+  if (count <= 0) return []
+  const base = Math.floor(100 / count)
+  const remainder = 100 - base * count
+  return Array.from({ length: count }, (_, index) =>
+    String(base + (index < remainder ? 1 : 0))
   )
+}
+
+/**
+ * Turn a tier's effective weights into integer percentages that sum to 100.
+ * An unknown or all-zero tier falls back to an equal split, matching the
+ * backend's `sumWeight == 0` behaviour.
+ */
+function distributePercents(weights: number[]): string[] {
+  if (weights.length === 0) return []
+  const usable = weights.every((weight) => Number.isFinite(weight))
+  const sum = usable
+    ? weights.reduce((total, weight) => total + Math.max(0, weight), 0)
+    : 0
+  if (!usable || sum <= 0) return equalPercents(weights.length)
+
+  const exact = weights.map((weight) => (Math.max(0, weight) / sum) * 100)
+  const floors = exact.map((value) => Math.floor(value))
+  const remainder = 100 - floors.reduce((total, value) => total + value, 0)
+  const order = exact
+    .map((value, index) => ({ index, fraction: value - Math.floor(value) }))
+    .sort((left, right) => right.fraction - left.fraction || left.index - right.index)
+  const result = [...floors]
+  for (let step = 0; step < remainder; step += 1) {
+    result[order[step % result.length].index] += 1
+  }
+  return result.map(String)
+}
+
+/** Allocate `total` across `count` rows, keeping the sum exact for integers. */
+function distributeAmount(count: number, total: number): string[] {
+  if (count <= 0) return []
+  if (Number.isInteger(total)) {
+    const base = Math.floor(total / count)
+    const remainder = total - base * count
+    return Array.from({ length: count }, (_, index) =>
+      String(base + (index < remainder ? 1 : 0))
+    )
+  }
+  const each = total / count
+  return Array.from({ length: count }, () => String(Number(each.toFixed(2))))
+}
+
+function groupByPriority(
+  rows: ModelAllocationRow[]
+): Map<number, ModelAllocationRow[]> {
+  const byPriority = new Map<number, ModelAllocationRow[]>()
   for (const row of rows) {
-    if (row.channel_id > 0 && !options.has(row.channel_id)) {
-      options.set(row.channel_id, {
-        label: `#${row.channel_id}`,
-        value: String(row.channel_id),
+    const priority = effectivePriority(row)
+    const list = byPriority.get(priority) ?? []
+    list.push(row)
+    byPriority.set(priority, list)
+  }
+  return byPriority
+}
+
+function sortRows(rows: ModelAllocationRow[]): ModelAllocationRow[] {
+  return [...rows].sort(
+    (left, right) =>
+      effectivePriority(right) - effectivePriority(left) ||
+      left.channelId - right.channelId
+  )
+}
+
+function entriesByModel(
+  entries: ModelWeightOverrideEntry[],
+  model: string
+): Map<number, ModelWeightOverrideEntry> {
+  const key = modelKey(model)
+  const byChannel = new Map<number, ModelWeightOverrideEntry>()
+  for (const entry of entries) {
+    if (modelKey(entry.model) !== key) continue
+    if (!byChannel.has(entry.channel_id)) byChannel.set(entry.channel_id, entry)
+  }
+  return byChannel
+}
+
+/**
+ * Build one editable row per enabled channel that serves the model. Channels
+ * that no longer serve the model (including disabled ones) are never listed so
+ * their existing override entries stay untouched.
+ */
+export function buildAllocationRows(
+  entries: ModelWeightOverrideEntry[],
+  channels: Channel[]
+): ModelAllocationRow[] {
+  const modelOrder: string[] = []
+  const seenModels = new Set<string>()
+  for (const entry of entries) {
+    const model = entry.model.trim()
+    if (model === '') continue
+    const key = modelKey(model)
+    if (seenModels.has(key)) continue
+    seenModels.add(key)
+    modelOrder.push(model)
+  }
+
+  const result: ModelAllocationRow[] = []
+  for (const model of modelOrder) {
+    const byChannel = entriesByModel(entries, model)
+    const rows: ModelAllocationRow[] = []
+    for (const channel of channels) {
+      if (channel.status !== 1) continue
+      if (!channelServesModel(channel, model)) continue
+      const override = byChannel.get(channel.id)
+      rows.push({
+        key: rowKey(model, channel.id),
+        channelId: channel.id,
+        model,
+        channelName: channel.name || `#${channel.id}`,
+        channelPriority: channel.priority ?? 0,
+        channelWeight: channel.weight ?? 0,
+        priority:
+          override?.priority !== undefined ? String(override.priority) : '',
+        percent: '',
       })
     }
+    for (const tierRows of groupByPriority(rows).values()) {
+      const weights = tierRows.map((row) => {
+        const override = byChannel.get(row.channelId)
+        return override?.weight !== undefined && Number.isFinite(override.weight)
+          ? override.weight
+          : row.channelWeight
+      })
+      const percents = distributePercents(weights)
+      tierRows.forEach((row, index) => {
+        row.percent = percents[index]
+      })
+    }
+    result.push(...sortRows(rows))
   }
-  return [...options.values()].sort(
-    (left, right) => Number(left.value) - Number(right.value)
+  return result
+}
+
+/**
+ * Group editable rows into one card per model and one tier per priority.
+ * `models` seeds the card list so a model whose channels are all disabled or
+ * gone still renders an empty card instead of disappearing.
+ */
+export function groupAllocationCards(
+  rows: ModelAllocationRow[],
+  models: string[]
+): ModelAllocationCard[] {
+  const order: string[] = []
+  const displayByKey = new Map<string, string>()
+  for (const model of models) {
+    const key = modelKey(model)
+    if (key === '' || displayByKey.has(key)) continue
+    displayByKey.set(key, model.trim())
+    order.push(key)
+  }
+  const byModel = new Map<string, ModelAllocationRow[]>()
+  for (const row of rows) {
+    const key = modelKey(row.model)
+    if (!displayByKey.has(key)) {
+      displayByKey.set(key, row.model)
+      order.push(key)
+    }
+    const list = byModel.get(key) ?? []
+    list.push(row)
+    byModel.set(key, list)
+  }
+
+  return order.map((key) => {
+    const modelRows = sortRows(byModel.get(key) ?? [])
+    const tiers: ModelAllocationTier[] = []
+    for (const row of modelRows) {
+      const priority = effectivePriority(row)
+      let tier = tiers.at(-1)
+      if (!tier || tier.priority !== priority) {
+        tier = { priority, participates: tiers.length === 0, rows: [] }
+        tiers.push(tier)
+      }
+      tier.rows.push(row)
+    }
+    return {
+      key,
+      model: displayByKey.get(key) ?? '',
+      channelCount: modelRows.length,
+      tiers,
+    }
+  })
+}
+
+/** Replace one model's editable rows. */
+function replaceModelRows(
+  rows: ModelAllocationRow[],
+  replacements: Map<string, ModelAllocationRow>
+): ModelAllocationRow[] {
+  return rows.map((row) => replacements.get(row.key) ?? row)
+}
+
+/** Average split: every tier of the model gets equal percentages. */
+export function averageSplitRows(
+  rows: ModelAllocationRow[],
+  model: string
+): ModelAllocationRow[] {
+  const key = modelKey(model)
+  const modelRows = rows.filter((row) => modelKey(row.model) === key)
+  const replacements = new Map<string, ModelAllocationRow>()
+  for (const tierRows of groupByPriority(modelRows).values()) {
+    const percents = equalPercents(tierRows.length)
+    tierRows.forEach((row, index) => {
+      replacements.set(row.key, { ...row, percent: percents[index] })
+    })
+  }
+  return replaceModelRows(rows, replacements)
+}
+
+/**
+ * Fill a model's percentages from a scoped preset without writing anything.
+ * Rows the preset does not mention fall back to the channel weight, matching
+ * the backend's fallback when no override exists.
+ */
+export function applyScopedPresetToRows(
+  rows: ModelAllocationRow[],
+  model: string,
+  preset: ModelWeightPreset
+): ModelAllocationRow[] {
+  const key = modelKey(model)
+  const byChannel = new Map<number, ModelWeightOverrideEntry>()
+  for (const entry of preset.weights) {
+    if (modelKey(entry.model) === key) byChannel.set(entry.channel_id, entry)
+  }
+
+  const modelRows = rows
+    .filter((row) => modelKey(row.model) === key)
+    .map((row) => {
+      const entry = byChannel.get(row.channelId)
+      return {
+        ...row,
+        priority: entry?.priority !== undefined ? String(entry.priority) : '',
+      }
+    })
+
+  const replacements = new Map<string, ModelAllocationRow>()
+  for (const tierRows of groupByPriority(modelRows).values()) {
+    const weights = tierRows.map((row) => {
+      const entry = byChannel.get(row.channelId)
+      return entry?.weight !== undefined && Number.isFinite(entry.weight)
+        ? entry.weight
+        : row.channelWeight
+    })
+    const percents = distributePercents(weights)
+    tierRows.forEach((row, index) => {
+      replacements.set(row.key, { ...row, percent: percents[index] })
+    })
+  }
+  return replaceModelRows(rows, replacements)
+}
+
+/** Percentage edit keeps the tier sum at 100 by splitting the remainder evenly. */
+export function setRowPercent(
+  rows: ModelAllocationRow[],
+  key: string,
+  value: string
+): ModelAllocationRow[] {
+  const target = rows.find((row) => row.key === key)
+  if (!target) return rows
+  const priority = effectivePriority(target)
+  const others = rows.filter(
+    (row) =>
+      row.model === target.model &&
+      row.key !== key &&
+      effectivePriority(row) === priority
+  )
+  if (others.length === 0) {
+    return rows.map((row) => (row.key === key ? { ...row, percent: value } : row))
+  }
+  const parsed = Number(value)
+  const remaining = Number.isFinite(parsed)
+    ? Math.min(100, Math.max(0, 100 - parsed))
+    : 100
+  const shares = distributeAmount(others.length, remaining)
+  const byKey = new Map<string, string>()
+  others.forEach((row, index) => byKey.set(row.key, shares[index]))
+  return rows.map((row) => {
+    if (row.key === key) return { ...row, percent: value }
+    const share = byKey.get(row.key)
+    return share === undefined ? row : { ...row, percent: share }
+  })
+}
+
+/** Priority edit re-normalizes the affected tiers so each still sums to 100. */
+export function setRowPriority(
+  rows: ModelAllocationRow[],
+  key: string,
+  value: string
+): ModelAllocationRow[] {
+  const updated = rows.map((row) =>
+    row.key === key ? { ...row, priority: value } : row
+  )
+  const target = updated.find((row) => row.key === key)
+  if (!target) return updated
+  const modelRows = updated.filter((row) => row.model === target.model)
+  const replacements = new Map<string, ModelAllocationRow>()
+  for (const tierRows of groupByPriority(modelRows).values()) {
+    const weights = tierRows.map((row) => Number(row.percent))
+    const percents = distributePercents(weights)
+    tierRows.forEach((row, index) => {
+      replacements.set(row.key, { ...row, percent: percents[index] })
+    })
+  }
+  return replaceModelRows(updated, replacements)
+}
+
+/** Canonical draft state used for dirty tracking. */
+export function serializeDraftState(rows: ModelAllocationRow[]): string {
+  return JSON.stringify(
+    [...rows]
+      .sort(
+        (left, right) =>
+          modelKey(left.model).localeCompare(modelKey(right.model)) ||
+          left.channelId - right.channelId
+      )
+      .map((row) => [
+        modelKey(row.model),
+        row.channelId,
+        effectivePriority(row),
+        row.priority.trim(),
+        row.percent.trim(),
+      ])
   )
 }
 
-export function computeShareByGroupKey(groups: RowGroup[]) {
-  const result = new Map<string, Map<string, string>>()
-  for (const group of groups) {
-    const byRowKey = new Map<string, string>()
-    const byTier = new Map<number, GroupedRow[]>()
-    for (const grouped of group.rows) {
-      const list = byTier.get(grouped.tier) ?? []
-      list.push(grouped)
-      byTier.set(grouped.tier, list)
-    }
-    for (const list of byTier.values()) {
-      const resolved = list.every(
-        (grouped) =>
-          grouped.weight !== undefined && Number.isFinite(grouped.weight)
-      )
-      const sum = resolved
-        ? list.reduce<number>(
-            (total, grouped) => total + (grouped.weight as number),
-            0
-          )
-        : 0
-      for (const grouped of list) {
-        if (!resolved || sum <= 0) {
-          byRowKey.set(grouped.row.key, '-')
-          continue
-        }
-        byRowKey.set(
-          grouped.row.key,
-          formatPercent(Math.round(((grouped.weight as number) / sum) * 100))
-        )
-      }
-    }
-    result.set(group.key, byRowKey)
+/** Model keys whose editable draft differs from the saved baseline. */
+export function computeDirtyModelKeys(
+  rows: ModelAllocationRow[],
+  baselineRows: ModelAllocationRow[]
+): Set<string> {
+  const keys = new Set<string>()
+  const models = new Set(
+    [...rows, ...baselineRows].map((row) => modelKey(row.model))
+  )
+  for (const key of models) {
+    const draft = serializeDraftState(
+      rows.filter((row) => modelKey(row.model) === key)
+    )
+    const baseline = serializeDraftState(
+      baselineRows.filter((row) => modelKey(row.model) === key)
+    )
+    if (draft !== baseline) keys.add(key)
   }
-  return result
+  return keys
 }
 
-export function computeUnsavedByGroupKey(
-  groups: RowGroup[],
-  rows: ModelWeightRow[],
-  savedWeights: string
-) {
-  const savedRows = parseModelWeights(savedWeights)
-  const result = new Map<string, boolean>()
-  for (const group of groups) {
-    const editorSerialized = serializeModelWeights(
-      rows.filter((row) => isSameModel(row.model, group.model))
-    )
-    const savedSerialized = serializeModelWeights(
-      savedRows.filter((row) => isSameModel(row.model, group.model))
-    )
-    result.set(group.key, editorSerialized !== savedSerialized)
+/**
+ * Serialize the draft table. Only dirty models are rewritten; every entry of a
+ * clean model (and every entry whose channel is not shown) is preserved
+ * byte-identical.
+ */
+export function serializeAllocationDraft(
+  baseEntries: ModelWeightOverrideEntry[],
+  rows: ModelAllocationRow[],
+  dirtyModelKeys: ReadonlySet<string>
+): string {
+  const rowByKey = new Map(
+    rows.map((row) => [rowKey(row.model, row.channelId), row])
+  )
+  const emitted = new Set<string>()
+  const result: ModelWeightOverrideEntry[] = []
+
+  for (const entry of baseEntries) {
+    const key = rowKey(entry.model, entry.channel_id)
+    const row = rowByKey.get(key)
+    if (row && dirtyModelKeys.has(modelKey(entry.model))) {
+      if (emitted.has(key)) continue
+      emitted.add(key)
+      result.push(rowToEntry(row))
+      continue
+    }
+    result.push(entry)
+    emitted.add(key)
   }
-  return result
+
+  for (const row of rows) {
+    const key = rowKey(row.model, row.channelId)
+    if (emitted.has(key)) continue
+    if (!dirtyModelKeys.has(modelKey(row.model))) continue
+    emitted.add(key)
+    result.push(rowToEntry(row))
+  }
+
+  return JSON.stringify(result)
 }

@@ -16,7 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronRight } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -35,193 +36,189 @@ import {
   type ModelWeightPreset,
 } from './model-weight-presets'
 import {
-  CUSTOM_RATIO_VALUE,
   MAX_MODEL_PRIORITY_VALUE,
   MAX_MODEL_WEIGHT_VALUE,
-  type ModelWeightChannelOption,
-  type ModelWeightRow,
-  type RowGroup,
+  derivedWeightFromPercent,
+  type ModelAllocationCard,
 } from './model-weight-rows'
 
-type ModelWeightRowEditorProps = {
-  row: ModelWeightRow
-  index: number
-  share: string
-  channelOptions: ModelWeightChannelOption[]
-  onRowChange: (index: number, changes: Partial<ModelWeightRow>) => void
-  onRemove: (index: number) => void
-}
+const CUSTOM_PRESET_VALUE = '__custom_preset__'
 
-export function ModelWeightRowEditor(props: ModelWeightRowEditorProps) {
-  const { t } = useTranslation()
-
-  return (
-    <div className='grid gap-3 rounded-lg border p-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_7rem_7rem_5rem_auto]'>
-      <label className='grid gap-1.5 text-sm'>
-        <span className='text-muted-foreground text-xs font-medium'>
-          {t('Channel')}
-        </span>
-        <Select
-          items={props.channelOptions}
-          value={props.row.channel_id > 0 ? String(props.row.channel_id) : null}
-          onValueChange={(value) =>
-            value !== null &&
-            props.onRowChange(props.index, { channel_id: Number(value) })
-          }
-        >
-          <SelectTrigger aria-label={t('Channel')} className='w-full'>
-            <SelectValue placeholder={t('Select a channel')} />
-          </SelectTrigger>
-          <SelectContent alignItemWithTrigger={false}>
-            {props.channelOptions.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </label>
-      <label className='grid gap-1.5 text-sm'>
-        <span className='text-muted-foreground text-xs font-medium'>
-          {t('Model')}
-        </span>
-        <Input
-          aria-label={t('Model')}
-          value={props.row.model}
-          onChange={(event) =>
-            props.onRowChange(props.index, { model: event.target.value })
-          }
-          placeholder='deepseek-v4.1-flash'
-        />
-      </label>
-      <label className='grid gap-1.5 text-sm'>
-        <span className='text-muted-foreground text-xs font-medium'>
-          {t('Weight')}
-        </span>
-        <Input
-          aria-label={t('Weight')}
-          type='number'
-          min={0}
-          max={MAX_MODEL_WEIGHT_VALUE}
-          value={props.row.weight}
-          onChange={(event) =>
-            props.onRowChange(props.index, { weight: event.target.value })
-          }
-        />
-      </label>
-      <label className='grid gap-1.5 text-sm'>
-        <span className='text-muted-foreground text-xs font-medium'>
-          {t('Priority')}
-        </span>
-        <Input
-          aria-label={t('Priority')}
-          type='number'
-          min={0}
-          max={MAX_MODEL_PRIORITY_VALUE}
-          value={props.row.priority}
-          onChange={(event) =>
-            props.onRowChange(props.index, { priority: event.target.value })
-          }
-        />
-      </label>
-      <div className='grid gap-1.5 text-sm'>
-        <span className='text-muted-foreground text-xs font-medium'>
-          {t('Share')}
-        </span>
-        <span className='flex h-8 items-center text-sm'>{props.share}</span>
-      </div>
-      <div className='flex items-end justify-end'>
-        <Button
-          type='button'
-          variant='outline'
-          size='icon'
-          aria-label={t('Remove')}
-          onClick={() => props.onRemove(props.index)}
-        >
-          <Trash2 />
-        </Button>
-      </div>
-    </div>
-  )
-}
-
-type ModelWeightGroupProps = {
-  group: RowGroup
-  shares: Map<string, string> | undefined
-  channelOptions: ModelWeightChannelOption[]
+type Props = {
+  card: ModelAllocationCard
   presets: ModelWeightPreset[]
   savedWeights: string
   unsaved: boolean
-  onRowChange: (index: number, changes: Partial<ModelWeightRow>) => void
-  onRemove: (index: number) => void
-  onRatioChange: (model: string, value: string) => void
+  onPercentChange: (key: string, value: string) => void
+  onPriorityChange: (key: string, value: string) => void
+  onWeightChange: (key: string, value: string) => void
+  onApplyPreset: (model: string, preset: ModelWeightPreset) => void
+  onAverageSplit: (model: string) => void
 }
 
-export function ModelWeightGroup(props: ModelWeightGroupProps) {
+export function ModelWeightCard(props: Props) {
   const { t } = useTranslation()
+  const [advanced, setAdvanced] = useState(false)
+
+  const scopedPresets = presetsForModel(props.presets, props.card.model)
   const activeName = findActiveScopedPresetName(
     props.presets,
-    props.group.model,
+    props.card.model,
     props.savedWeights
   )
-  const ratioItems = [
-    ...presetsForModel(props.presets, props.group.model).map((preset) => ({
+  const presetItems = [
+    ...scopedPresets.map((preset) => ({
       label: preset.name,
       value: preset.name,
     })),
-    { label: t('Custom ratio'), value: CUSTOM_RATIO_VALUE },
+    { label: t('Custom'), value: CUSTOM_PRESET_VALUE },
   ]
+
+  const handlePresetChange = (value: string | null) => {
+    if (value === null || value === CUSTOM_PRESET_VALUE) return
+    const preset = scopedPresets.find((candidate) => candidate.name === value)
+    if (preset) props.onApplyPreset(props.card.model, preset)
+  }
 
   return (
     <div className='rounded-lg border'>
       <div className='flex flex-wrap items-center justify-between gap-2 border-b p-3'>
-        <div className='flex items-center gap-2'>
-          <span className='text-sm font-medium'>{props.group.model}</span>
+        <div className='flex min-w-0 items-center gap-2'>
+          <span className='truncate text-sm font-medium'>{props.card.model}</span>
+          <span className='text-muted-foreground text-xs whitespace-nowrap'>
+            {t('{{count}} channels', { count: props.card.channelCount })}
+          </span>
           {props.unsaved ? (
             <span className='bg-muted text-muted-foreground rounded px-1.5 py-0.5 text-[0.7rem] font-medium'>
               {t('Unsaved changes')}
             </span>
           ) : null}
         </div>
-        <div className='flex items-center gap-2'>
-          <span className='text-muted-foreground text-xs font-medium'>
-            {t('Routing ratio')}
-          </span>
+        <div className='flex flex-wrap items-center gap-2'>
           <Select
-            items={ratioItems}
-            value={activeName ?? CUSTOM_RATIO_VALUE}
-            onValueChange={(value) =>
-              value !== null && props.onRatioChange(props.group.model, value)
-            }
+            items={presetItems}
+            value={activeName ?? CUSTOM_PRESET_VALUE}
+            onValueChange={handlePresetChange}
           >
             <SelectTrigger
-              aria-label={`${t('Routing ratio')} ${props.group.model}`}
-              className='w-48'
+              aria-label={`${t('Preset')} ${props.card.model}`}
+              className='w-40'
             >
               <SelectValue />
             </SelectTrigger>
             <SelectContent alignItemWithTrigger={false}>
-              {ratioItems.map((item) => (
+              {presetItems.map((item) => (
                 <SelectItem key={item.value} value={item.value}>
                   {item.label}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
+          <Button
+            type='button'
+            size='sm'
+            variant='outline'
+            onClick={() => props.onAverageSplit(props.card.model)}
+          >
+            {t('Average split')}
+          </Button>
+          <Button
+            type='button'
+            size='sm'
+            variant='ghost'
+            aria-expanded={advanced}
+            onClick={() => setAdvanced((previous) => !previous)}
+          >
+            {advanced ? <ChevronDown /> : <ChevronRight />}
+            {t('Advanced')}
+          </Button>
         </div>
       </div>
+
       <div className='space-y-3 p-3'>
-        {props.group.rows.map((grouped) => (
-          <ModelWeightRowEditor
-            key={grouped.row.key}
-            row={grouped.row}
-            index={grouped.index}
-            share={props.shares?.get(grouped.row.key) ?? '-'}
-            channelOptions={props.channelOptions}
-            onRowChange={props.onRowChange}
-            onRemove={props.onRemove}
-          />
-        ))}
+        {props.card.tiers.length === 0 ? (
+          <p className='text-muted-foreground text-sm'>
+            {t('No enabled channel serves this model.')}
+          </p>
+        ) : (
+          props.card.tiers.map((tier) => (
+            <div key={tier.priority} className='space-y-2'>
+              {props.card.tiers.length > 1 ? (
+                <div className='flex items-center justify-between gap-2 text-xs'>
+                  <span className='text-muted-foreground font-medium'>
+                    {`${t('Priority')} ${tier.priority}`}
+                  </span>
+                  <span className='text-muted-foreground'>
+                    {tier.participates ? t('Participating') : t('Fallback')}
+                  </span>
+                </div>
+              ) : null}
+              {tier.rows.map((row) => (
+                <div
+                  key={row.key}
+                  className='grid items-center gap-2 sm:grid-cols-[minmax(0,1fr)_6rem]'
+                >
+                  <span className='truncate text-sm'>{row.channelName}</span>
+                  <div className='flex items-center gap-1'>
+                    <Input
+                      aria-label={`${t('Share')} ${props.card.model} #${row.channelId}`}
+                      type='number'
+                      min={0}
+                      max={100}
+                      step='any'
+                      className='text-right'
+                      value={row.percent}
+                      onChange={(event) =>
+                        props.onPercentChange(row.key, event.target.value)
+                      }
+                    />
+                    <span className='text-muted-foreground text-xs'>%</span>
+                  </div>
+                  {advanced ? (
+                    <div className='grid gap-2 sm:col-span-2 sm:grid-cols-2'>
+                      <label className='grid gap-1 text-xs'>
+                        <span className='text-muted-foreground font-medium'>
+                          {t('Priority')}
+                        </span>
+                        <Input
+                          aria-label={`${t('Priority')} ${props.card.model} #${row.channelId}`}
+                          type='number'
+                          min={0}
+                          max={MAX_MODEL_PRIORITY_VALUE}
+                          placeholder={String(row.channelPriority)}
+                          value={row.priority}
+                          onChange={(event) =>
+                            props.onPriorityChange(
+                              row.key,
+                              event.target.value
+                            )
+                          }
+                        />
+                      </label>
+                      <label className='grid gap-1 text-xs'>
+                        <span className='text-muted-foreground font-medium'>
+                          {t('Weight')}
+                        </span>
+                        <Input
+                          aria-label={`${t('Weight')} ${props.card.model} #${row.channelId}`}
+                          type='number'
+                          min={0}
+                          max={MAX_MODEL_WEIGHT_VALUE}
+                          value={String(
+                            derivedWeightFromPercent(row.percent)
+                          )}
+                          onChange={(event) =>
+                            props.onWeightChange(row.key, event.target.value)
+                          }
+                        />
+                      </label>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ))
+        )}
       </div>
     </div>
   )

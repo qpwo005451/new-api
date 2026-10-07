@@ -17,45 +17,44 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { Plus } from 'lucide-react'
+import { Info } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
-import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Button } from '@/components/ui/button'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { getChannels } from '@/features/channels/api'
 
 import { SettingsForm } from '../components/settings-form-layout'
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useSavePolicy } from '../request-policies/use-save-policy'
-import { ModelWeightCustomRatioDialog } from './model-weight-custom-ratio-dialog'
-import { ModelWeightGroup, ModelWeightRowEditor } from './model-weight-group'
+import { ModelWeightCard } from './model-weight-group'
 import { ModelWeightPresetBar } from './model-weight-preset-bar'
 import {
-  applyPresetToModel,
   MODEL_WEIGHTS_OPTION_KEY,
   MODEL_WEIGHT_PRESETS_OPTION_KEY,
+  parseModelWeightEntries,
   parseModelWeightPresets,
-  presetsForModel,
   type ModelWeightPreset,
 } from './model-weight-presets'
 import {
-  applyCustomRatioWeights,
-  buildChannelOptions,
-  buildCustomRatioState,
-  buildDraftRows,
-  computeShareByGroupKey,
-  computeUnsavedByGroupKey,
-  CUSTOM_RATIO_VALUE,
-  groupRowsByModel,
-  nextModelWeightRowKey,
-  parseModelWeights,
-  replaceModelRows,
-  serializeModelWeights,
-  type CustomRatioState,
-  type ModelWeightRow,
+  applyScopedPresetToRows,
+  averageSplitRows,
+  buildAllocationRows,
+  computeDirtyModelKeys,
+  groupAllocationCards,
+  modelKey,
+  serializeAllocationDraft,
+  setRowPercent,
+  setRowPriority,
+  type ModelAllocationRow,
 } from './model-weight-rows'
 
 const MODEL_WEIGHTS_KEY = MODEL_WEIGHTS_OPTION_KEY
@@ -110,152 +109,172 @@ async function fetchAllChannels() {
 export function ModelWeightSection(props: Props) {
   const { t } = useTranslation()
   const savePolicy = useSavePolicy()
-  const initialRows = useMemo(
-    () => parseModelWeights(props.defaultValues[MODEL_WEIGHTS_KEY]),
-    [props.defaultValues]
+  const defaultWeights = props.defaultValues[MODEL_WEIGHTS_KEY]
+  const presetsRaw = props.defaultValues[MODEL_WEIGHTS_PRESETS_KEY]
+
+  const [savedEntries, setSavedEntries] = useState(() =>
+    parseModelWeightEntries(defaultWeights)
   )
-  const [rows, setRows] = useState<ModelWeightRow[]>(initialRows)
-  const [savedWeights, setSavedWeights] = useState(() =>
-    serializeModelWeights(initialRows)
+  const [baseEntries, setBaseEntries] = useState(() =>
+    parseModelWeightEntries(defaultWeights)
   )
-  const baselineRef = useRef(serializeModelWeights(initialRows))
-  const [pendingApply, setPendingApply] = useState<{
-    model: string
-    preset: ModelWeightPreset
-  } | null>(null)
-  const [customRatio, setCustomRatio] = useState<CustomRatioState | null>(null)
+  const [rows, setRows] = useState<ModelAllocationRow[]>([])
 
   useEffect(() => {
-    const parsed = parseModelWeights(props.defaultValues[MODEL_WEIGHTS_KEY])
-    const serialized = serializeModelWeights(parsed)
-    setRows(parsed)
-    setSavedWeights(serialized)
-    baselineRef.current = serialized
-  }, [props.defaultValues])
+    const parsed = parseModelWeightEntries(defaultWeights)
+    setSavedEntries(parsed)
+    setBaseEntries(parsed)
+  }, [defaultWeights])
 
   const channelsQuery = useQuery({
     queryKey: ['system-settings', 'model-weights', 'channels'],
     queryFn: fetchAllChannels,
     retry: false,
   })
+  const channels = channelsQuery.data
 
-  const channelById = useMemo(
+  const channelsSignature = useMemo(
     () =>
-      new Map(
-        (channelsQuery.data ?? []).map((channel) => [channel.id, channel])
-      ),
-    [channelsQuery.data]
+      channels
+        ? JSON.stringify(
+            channels.map((channel) => [
+              channel.id,
+              channel.status,
+              channel.priority,
+              channel.weight,
+              channel.models,
+              channel.model_mapping,
+            ])
+          )
+        : '',
+    [channels]
+  )
+
+  const appliedSignatureRef = useRef('')
+  useEffect(() => {
+    const signature = `${JSON.stringify(baseEntries)}||${channelsSignature}`
+    if (appliedSignatureRef.current === signature) return
+    appliedSignatureRef.current = signature
+    setRows(buildAllocationRows(baseEntries, channels ?? []))
+  }, [baseEntries, channels, channelsSignature])
+
+  const baselineRows = useMemo(
+    () => buildAllocationRows(savedEntries, channels ?? []),
+    [savedEntries, channels]
+  )
+
+  const dirtyModelKeys = useMemo(
+    () => computeDirtyModelKeys(rows, baselineRows),
+    [rows, baselineRows]
+  )
+
+  const cardModels = useMemo(() => {
+    const models: string[] = []
+    const seen = new Set<string>()
+    for (const entry of baseEntries) {
+      const model = entry.model.trim()
+      const key = modelKey(model)
+      if (model === '' || seen.has(key)) continue
+      seen.add(key)
+      models.push(model)
+    }
+    return models
+  }, [baseEntries])
+
+  const cards = useMemo(
+    () => groupAllocationCards(rows, cardModels),
+    [rows, cardModels]
   )
 
   const presets = useMemo(
-    () =>
-      parseModelWeightPresets(props.defaultValues[MODEL_WEIGHTS_PRESETS_KEY]),
-    [props.defaultValues]
+    () => parseModelWeightPresets(presetsRaw),
+    [presetsRaw]
   )
 
-  const channelOptions = useMemo(
-    () => buildChannelOptions(channelsQuery.data, rows),
-    [channelsQuery.data, rows]
+  const editorWeights = useMemo(
+    () => serializeAllocationDraft(baseEntries, rows, dirtyModelKeys),
+    [baseEntries, rows, dirtyModelKeys]
   )
 
-  const groups = useMemo(
-    () => groupRowsByModel(rows, channelById),
-    [rows, channelById]
-  )
-
-  const draftRows = useMemo(() => buildDraftRows(rows), [rows])
-
-  const shareByGroupKey = useMemo(
-    () => computeShareByGroupKey(groups),
-    [groups]
-  )
-
-  const unsavedByGroupKey = useMemo(
-    () => computeUnsavedByGroupKey(groups, rows, savedWeights),
-    [groups, rows, savedWeights]
-  )
-
-  const updateRow = (index: number, changes: Partial<ModelWeightRow>) => {
-    setRows((prev) =>
-      prev.map((row, i) => (i === index ? { ...row, ...changes } : row))
-    )
-  }
-
-  const handleAdd = () => {
-    setRows((prev) => [
-      ...prev,
-      {
-        key: nextModelWeightRowKey(),
-        channel_id: 0,
-        model: '',
-        weight: '',
-        priority: '',
-      },
-    ])
-  }
-
-  const handleRemove = (index: number) => {
-    setRows((prev) => prev.filter((_, i) => i !== index))
-  }
+  const savedWeights = useMemo(() => JSON.stringify(savedEntries), [savedEntries])
 
   const handleSave = async () => {
-    const serialized = serializeModelWeights(rows)
-    if (serialized === baselineRef.current) {
+    if (dirtyModelKeys.size === 0) {
       toast.info(t('No changes to save'))
       return
     }
+    const serialized = serializeAllocationDraft(
+      baseEntries,
+      rows,
+      dirtyModelKeys
+    )
     await savePolicy.mutateAsync({ [MODEL_WEIGHTS_KEY]: serialized })
-    baselineRef.current = serialized
-    setSavedWeights(serialized)
+    const merged = parseModelWeightEntries(serialized)
+    setSavedEntries(merged)
+    setBaseEntries(merged)
   }
 
-  const handleRatioChange = (model: string, value: string) => {
-    if (value === CUSTOM_RATIO_VALUE) {
-      setCustomRatio(buildCustomRatioState(savedWeights, model, channelById))
-      return
-    }
-    const preset = presetsForModel(presets, model).find(
-      (candidate) => candidate.name === value
-    )
-    if (preset) setPendingApply({ model, preset })
+  const handlePercentChange = (key: string, value: string) => {
+    setRows((previous) => setRowPercent(previous, key, value))
   }
 
-  const handleApplyPreset = async () => {
-    if (!pendingApply) return
-    const { model, preset } = pendingApply
-    const merged = applyPresetToModel(savedWeights, preset)
-    await savePolicy.mutateAsync({ [MODEL_WEIGHTS_KEY]: merged })
-    baselineRef.current = merged
-    setSavedWeights(merged)
-    setRows((prev) => replaceModelRows(prev, model, merged))
-    setPendingApply(null)
+  const handleWeightChange = (key: string, value: string) => {
+    setRows((previous) => setRowPercent(previous, key, value))
   }
 
-  const handleCustomPercentChange = (key: string, value: string) => {
-    setCustomRatio((prev) =>
-      prev ? { ...prev, percents: { ...prev.percents, [key]: value } } : prev
-    )
+  const handlePriorityChange = (key: string, value: string) => {
+    setRows((previous) => setRowPriority(previous, key, value))
   }
 
-  const handleCustomConfirm = async () => {
-    if (!customRatio) return
-    const merged = applyCustomRatioWeights(savedWeights, customRatio)
-    const { model } = customRatio
-    await savePolicy.mutateAsync({ [MODEL_WEIGHTS_KEY]: merged })
-    baselineRef.current = merged
-    setSavedWeights(merged)
-    setRows((prev) => replaceModelRows(prev, model, merged))
-    setCustomRatio(null)
+  const handleAverageSplit = (model: string) => {
+    setRows((previous) => averageSplitRows(previous, model))
+  }
+
+  const handleApplyScopedPreset = (
+    model: string,
+    preset: ModelWeightPreset
+  ) => {
+    setRows((previous) => applyScopedPresetToRows(previous, model, preset))
+  }
+
+  const handleApplyGlobalPreset = (preset: ModelWeightPreset) => {
+    setBaseEntries(preset.weights.map((entry) => ({ ...entry })))
   }
 
   return (
     <SettingsSection title={t('Model Routing')}>
-      <p className='text-muted-foreground text-sm font-medium'>
-        {t('Per-model channel routing')}
-      </p>
-      <p className='text-muted-foreground text-sm'>
-        {t('Overrides the channel priority or weight for one model only.')}
-      </p>
+      <div className='flex items-center gap-1.5'>
+        <p className='text-muted-foreground text-sm font-medium'>
+          {t('Per-model channel routing')}
+        </p>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type='button'
+                  variant='ghost'
+                  size='icon'
+                  className='size-5'
+                  aria-label={t('Help')}
+                >
+                  <Info className='size-3.5' aria-hidden='true' />
+                </Button>
+              }
+            />
+            <TooltipContent className='max-w-sm'>
+              {t('Overrides the channel priority or weight for one model only.')}{' '}
+              {t('Unset fields keep the channel value.')}{' '}
+              {t('A weight of 0 excludes the model on this channel.')}{' '}
+              {t(
+                'Priority decides which channels compete; weight splits traffic within one priority.'
+              )}{' '}
+              {t('The share is computed inside one priority tier.')}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      </div>
+
       <SettingsForm
         onSubmit={(event) => {
           event.preventDefault()
@@ -269,92 +288,33 @@ export function ModelWeightSection(props: Props) {
         <ModelWeightPresetBar
           presets={presets}
           currentWeights={savedWeights}
-          editorWeights={serializeModelWeights(rows)}
+          editorWeights={editorWeights}
+          onApplyPreset={handleApplyGlobalPreset}
         />
-        <div className='flex flex-wrap items-center gap-2'>
-          <Button type='button' size='sm' onClick={handleAdd}>
-            <Plus data-icon='inline-start' />
-            {t('Add override')}
-          </Button>
-          <span className='text-muted-foreground text-xs'>
-            {t('Unset fields keep the channel value.')}{' '}
-            {t('A weight of 0 excludes the model on this channel.')}{' '}
-            {t(
-              'Priority decides which channels compete; weight splits traffic within one priority.'
-            )}
-          </span>
-        </div>
 
-        {rows.length === 0 ? (
+        {cards.length === 0 ? (
           <div className='text-muted-foreground/80 rounded-lg border border-dashed px-5 py-8 text-center text-sm'>
-            {t('No overrides yet. Click "Add override" to create one.')}
+            {t('No model overrides yet.')}
           </div>
         ) : (
           <div className='space-y-4'>
-            {groups.map((group) => (
-              <ModelWeightGroup
-                key={group.key}
-                group={group}
-                shares={shareByGroupKey.get(group.key)}
-                channelOptions={channelOptions}
+            {cards.map((card) => (
+              <ModelWeightCard
+                key={card.key}
+                card={card}
                 presets={presets}
                 savedWeights={savedWeights}
-                unsaved={unsavedByGroupKey.get(group.key) ?? false}
-                onRowChange={updateRow}
-                onRemove={handleRemove}
-                onRatioChange={handleRatioChange}
+                unsaved={dirtyModelKeys.has(card.key)}
+                onPercentChange={handlePercentChange}
+                onPriorityChange={handlePriorityChange}
+                onWeightChange={handleWeightChange}
+                onApplyPreset={handleApplyScopedPreset}
+                onAverageSplit={handleAverageSplit}
               />
             ))}
-            {draftRows.length > 0 ? (
-              <div className='space-y-3 rounded-lg border border-dashed p-3'>
-                {draftRows.map(({ row, index }) => (
-                  <ModelWeightRowEditor
-                    key={row.key}
-                    row={row}
-                    index={index}
-                    share='-'
-                    channelOptions={channelOptions}
-                    onRowChange={updateRow}
-                    onRemove={handleRemove}
-                  />
-                ))}
-              </div>
-            ) : null}
           </div>
         )}
-
-        <p className='text-muted-foreground text-xs'>
-          {t('The share is computed inside one priority tier.')}
-        </p>
       </SettingsForm>
-
-      <ConfirmDialog
-        open={pendingApply !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingApply(null)
-        }}
-        title={t('Apply preset to this model?')}
-        desc={
-          pendingApply
-            ? t('This replaces the overrides of {{model}} only.', {
-                model: pendingApply.model,
-              })
-            : ''
-        }
-        confirmText={t('Apply')}
-        isLoading={savePolicy.isPending}
-        handleConfirm={() => void handleApplyPreset()}
-      />
-
-      <ModelWeightCustomRatioDialog
-        state={customRatio}
-        isPending={savePolicy.isPending}
-        onOpenChange={(open) => {
-          if (!open) setCustomRatio(null)
-        }}
-        onPercentChange={handleCustomPercentChange}
-        onConfirm={() => void handleCustomConfirm()}
-      />
     </SettingsSection>
   )
 }

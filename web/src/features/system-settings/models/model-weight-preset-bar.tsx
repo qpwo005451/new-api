@@ -36,11 +36,9 @@ import {
 import { useSavePolicy } from '../request-policies/use-save-policy'
 import {
   findActivePresetName,
-  MODEL_WEIGHTS_OPTION_KEY,
   MODEL_WEIGHT_PRESETS_OPTION_KEY,
   parseModelWeightEntries,
   serializeModelWeightPresets,
-  serializePresetWeights,
   type ModelWeightPreset,
 } from './model-weight-presets'
 
@@ -51,8 +49,10 @@ type Props = {
   presets: ModelWeightPreset[]
   /** Serialized SAVED weights; drives the active highlight. */
   currentWeights: string
-  /** Serialized editor rows; drives Save-as-preset and the scope model list. */
+  /** Serialized editor draft; drives Save-as-preset and the scope model list. */
   editorWeights: string
+  /** Fill the page draft with a global preset; never writes. */
+  onApplyPreset: (preset: ModelWeightPreset) => void
 }
 
 function scopeKey(model: string | undefined) {
@@ -63,16 +63,9 @@ function presetKey(preset: ModelWeightPreset) {
   return `${scopeKey(preset.model)}|${preset.name.trim().toLowerCase()}`
 }
 
-export function ModelWeightPresetBar({
-  presets,
-  currentWeights,
-  editorWeights,
-}: Props) {
+export function ModelWeightPresetBar(props: Props) {
   const { t } = useTranslation()
   const savePolicy = useSavePolicy()
-  const [pendingApply, setPendingApply] = useState<ModelWeightPreset | null>(
-    null
-  )
   const [pendingDelete, setPendingDelete] = useState<{
     name: string
     scope: string
@@ -82,15 +75,15 @@ export function ModelWeightPresetBar({
   const [scope, setScope] = useState(GLOBAL_PRESET_VALUE)
 
   const globalPresets = useMemo(
-    () => presets.filter((preset) => scopeKey(preset.model) === ''),
-    [presets]
+    () => props.presets.filter((preset) => scopeKey(preset.model) === ''),
+    [props.presets]
   )
-  const activeName = findActivePresetName(globalPresets, currentWeights)
+  const activeName = findActivePresetName(globalPresets, props.currentWeights)
 
   const modelOptions = useMemo(() => {
     const seen = new Set<string>()
     const models: string[] = []
-    for (const entry of parseModelWeightEntries(editorWeights)) {
+    for (const entry of parseModelWeightEntries(props.editorWeights)) {
       const model = entry.model.trim()
       const key = model.toLowerCase()
       if (model === '' || seen.has(key)) continue
@@ -98,7 +91,7 @@ export function ModelWeightPresetBar({
       models.push(model)
     }
     return models
-  }, [editorWeights])
+  }, [props.editorWeights])
 
   const scopeItems = [
     { label: t('Global (all models)'), value: GLOBAL_PRESET_VALUE },
@@ -115,14 +108,6 @@ export function ModelWeightPresetBar({
       : t('Only {{model}}', { model: scoped })
   }
 
-  const handleApply = async () => {
-    if (!pendingApply) return
-    await savePolicy.mutateAsync({
-      [MODEL_WEIGHTS_OPTION_KEY]: serializePresetWeights(pendingApply),
-    })
-    setPendingApply(null)
-  }
-
   const handleSavePreset = async () => {
     const name = presetName.trim()
     if (name === '') {
@@ -130,7 +115,7 @@ export function ModelWeightPresetBar({
       return
     }
     const targetScope = scope === GLOBAL_PRESET_VALUE ? '' : scope
-    const allWeights = parseModelWeightEntries(editorWeights)
+    const allWeights = parseModelWeightEntries(props.editorWeights)
     const weights =
       targetScope === ''
         ? allWeights
@@ -142,7 +127,7 @@ export function ModelWeightPresetBar({
         ? { name, weights }
         : { name, model: targetScope, weights }
     const next = [
-      ...presets.filter(
+      ...props.presets.filter(
         (existing) =>
           !(
             scopeKey(existing.model) === scopeKey(targetScope) &&
@@ -160,7 +145,7 @@ export function ModelWeightPresetBar({
 
   const handleDelete = async () => {
     if (pendingDelete === null) return
-    const next = presets.filter(
+    const next = props.presets.filter(
       (preset) =>
         !(
           scopeKey(preset.model) === scopeKey(pendingDelete.scope) &&
@@ -192,7 +177,7 @@ export function ModelWeightPresetBar({
               size='sm'
               variant={preset.name === activeName ? 'default' : 'outline'}
               aria-pressed={preset.name === activeName}
-              onClick={() => setPendingApply(preset)}
+              onClick={() => props.onApplyPreset(preset)}
             >
               {preset.name}
             </Button>
@@ -214,23 +199,6 @@ export function ModelWeightPresetBar({
         </Button>
       </div>
 
-      <ConfirmDialog
-        open={pendingApply !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingApply(null)
-        }}
-        title={t('Apply preset')}
-        desc={
-          <span>
-            {t('Apply preset {{name}}?', { name: pendingApply?.name ?? '' })}{' '}
-            {t('This changes live routing immediately.')}
-          </span>
-        }
-        confirmText={t('Apply')}
-        isLoading={savePolicy.isPending}
-        handleConfirm={() => void handleApply()}
-      />
-
       <Dialog
         open={manageOpen}
         onOpenChange={setManageOpen}
@@ -249,13 +217,13 @@ export function ModelWeightPresetBar({
         }
       >
         <div className='space-y-4'>
-          {presets.length === 0 ? (
+          {props.presets.length === 0 ? (
             <p className='text-muted-foreground text-sm'>
               {t('No presets yet.')}
             </p>
           ) : (
             <div className='space-y-2'>
-              {presets.map((preset) => (
+              {props.presets.map((preset) => (
                 <div
                   key={presetKey(preset)}
                   className='flex items-center justify-between gap-2 rounded-lg border p-2'

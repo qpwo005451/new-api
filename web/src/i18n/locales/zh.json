@@ -1045,6 +1045,7 @@
     "Channel consistency repaired: {{success}} succeeded, {{fails}} failed": "渠道一致性修复完成：{{success}} 个成功，{{fails}} 个失败",
     "Channel copied successfully": "渠道复制成功",
     "Channel created successfully": "渠道创建成功",
+    "Channel data is unavailable, so this tier keeps its current weights.": "渠道数据不可用，因此该档位保留当前权重。",
     "Channel deleted successfully": "渠道删除成功",
     "Channel disable requested": "已请求停用渠道",
     "Channel disabled": "渠道已禁用",

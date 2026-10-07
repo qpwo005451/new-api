@@ -1045,6 +1045,7 @@
     "Channel consistency repaired: {{success}} succeeded, {{fails}} failed": "Đã sửa tính nhất quán kênh: {{success}} thành công, {{fails}} thất bại",
     "Channel copied successfully": "Sao chép kênh thành công",
     "Channel created successfully": "Tạo kênh thành công",
+    "Channel data is unavailable, so this tier keeps its current weights.": "Dữ liệu kênh không khả dụng nên bậc này giữ nguyên trọng số hiện tại.",
     "Channel deleted successfully": "Xóa kênh thành công",
     "Channel disable requested": "Đã yêu cầu vô hiệu hóa kênh",
     "Channel disabled": "Đã tắt kênh",

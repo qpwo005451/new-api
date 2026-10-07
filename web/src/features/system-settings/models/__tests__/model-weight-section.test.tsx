@@ -366,6 +366,24 @@ describe('card presentation', () => {
     expect(screen.getByText('Priority 400')).toBeVisible()
   })
 
+  it('rebalances the rest of the tier so it still totals 100 after an edit', async () => {
+    weights = JSON.stringify([
+      { channel_id: 9, model: MODEL, weight: 700 },
+      { channel_id: 36, model: MODEL, weight: 300 },
+    ])
+    channelState.items = [mockChannel({ id: 9 }), mockChannel({ id: 36 })]
+    show()
+
+    await screen.findByText('channel-9')
+    expect(screen.queryByText('Total')).not.toBeInTheDocument()
+
+    fireEvent.change(shareInput(MODEL, 36), { target: { value: '70' } })
+    expect(shareInput(MODEL, 36)).toHaveValue(70)
+    expect(shareInput(MODEL, 9)).toHaveValue(30)
+    // The tier still totals 100, so the card stays quiet.
+    expect(screen.queryByText('Total')).not.toBeInTheDocument()
+  })
+
   it('reveals editable priority and raw weight fields behind Advanced', async () => {
     weights = JSON.stringify([
       { channel_id: 9, model: MODEL, weight: 700 },

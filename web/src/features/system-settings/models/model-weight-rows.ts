@@ -48,6 +48,12 @@ export type ModelAllocationTier = {
   /** True for the highest tier; lower tiers are fallbacks. */
   participates: boolean
   rows: ModelAllocationRow[]
+  /**
+   * Sum of the tier's editable percentages. Stored weights are relative, so a
+   * tier that does not total 100 still routes proportionally; the card shows
+   * the sum so a typo is visible instead of silent.
+   */
+  totalPercent: number
 }
 
 export type ModelAllocationCard = {
@@ -285,10 +291,21 @@ export function groupAllocationCards(
       const priority = effectivePriority(row)
       let tier = tiers.at(-1)
       if (!tier || tier.priority !== priority) {
-        tier = { priority, participates: tiers.length === 0, rows: [] }
+        tier = {
+          priority,
+          participates: tiers.length === 0,
+          rows: [],
+          totalPercent: 0,
+        }
         tiers.push(tier)
       }
       tier.rows.push(row)
+    }
+    for (const tier of tiers) {
+      tier.totalPercent = tier.rows.reduce((sum, row) => {
+        const value = Number(row.percent)
+        return sum + (Number.isFinite(value) ? value : 0)
+      }, 0)
     }
     return {
       key,

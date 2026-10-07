@@ -270,14 +270,20 @@ export function applyPresetToModel(
 
   const current = parseModelWeightEntries(currentWeightsRaw)
   const key = scopeKey(scope)
+  // Defense in depth: a tampered preset option could carry another model's
+  // rows. The backend rejects those presets on write, so never let them leak
+  // into the target model's replacement rows here either.
+  const scopedWeights = preset.weights.filter(
+    (entry) => scopeKey(entry.model) === key
+  )
   const firstIndex = current.findIndex((entry) => scopeKey(entry.model) === key)
   const others = current.filter((entry) => scopeKey(entry.model) !== key)
   const merged =
     firstIndex === -1
-      ? [...others, ...preset.weights]
+      ? [...others, ...scopedWeights]
       : [
           ...others.slice(0, firstIndex),
-          ...preset.weights,
+          ...scopedWeights,
           ...others.slice(firstIndex),
         ]
   return JSON.stringify(serializeEntries(dedupeEntries(merged)))

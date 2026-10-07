@@ -64,10 +64,23 @@ describe('MobileTabBar', () => {
     expect(onChange).toHaveBeenCalledWith('routing')
   })
 
-  it('exposes four tabs inside a tablist', () => {
+  it('exposes five tabs inside a tablist', () => {
     render(<MobileTabBar active='usage' onChange={vi.fn()} />)
 
     expect(screen.getByRole('tablist')).toBeInTheDocument()
-    expect(screen.getAllByRole('tab')).toHaveLength(4)
+    expect(screen.getAllByRole('tab')).toHaveLength(5)
+  })
+
+  it('renders the routing-weights tab and reports it when tapped', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(<MobileTabBar active='usage' onChange={onChange} />)
+
+    const tab = screen.getByRole('tab', { name: 'Model routing' })
+    expect(tab).toBeInTheDocument()
+
+    await user.click(tab)
+
+    expect(onChange).toHaveBeenCalledWith('routing-weights')
   })
 })

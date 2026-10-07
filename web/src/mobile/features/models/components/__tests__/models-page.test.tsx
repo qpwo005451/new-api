@@ -110,7 +110,7 @@ describe('ModelsPage', () => {
     )
   })
 
-  it('shows an error state when the token is rejected', async () => {
+  it('shows the administrator copy when the token is rejected', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(
@@ -132,6 +132,12 @@ describe('ModelsPage', () => {
     )
 
     await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
-    expect(screen.getByText('Load failed')).toBeInTheDocument()
+    // A 403 is a role problem, not a transient load failure.
+    expect(
+      screen.getByText('Administrator access required')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('This page needs an administrator access token.')
+    ).toBeInTheDocument()
   })
 })

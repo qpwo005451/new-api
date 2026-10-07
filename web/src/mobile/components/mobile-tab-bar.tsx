@@ -27,6 +27,7 @@ const TAB_LABEL_KEY: Record<MobileTab, string> = {
   models: 'Model availability',
   routing: 'Routing statistics',
   channels: 'Channels',
+  'routing-weights': 'Model routing',
 }
 
 interface MobileTabBarProps {

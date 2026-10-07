@@ -21,15 +21,9 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { PENDING_ROUTING_WEIGHTS_I18N_KEYS } from '@/mobile/features/routing-weights/lib/pending-i18n-keys'
-
 const MOBILE_DIR = path.resolve('src/mobile')
 const LOCALES_DIR = path.resolve('src/i18n/locales')
 const LOCALES = ['en', 'zh', 'zh-TW', 'fr', 'ru', 'ja', 'vi'] as const
-// The routing-weights page ships ahead of its locale entries; the follow-up
-// i18n worker fills them. Keeping the list explicit means every other missing
-// key still fails this check.
-const PENDING_KEYS = new Set<string>(PENDING_ROUTING_WEIGHTS_I18N_KEYS)
 
 // Matches the literal `t('key')` forms used across the mobile console. Calls
 // with a dynamic key (t(TAB_LABEL_KEY[tab])) are intentionally not matched.
@@ -81,18 +75,10 @@ describe('mobile i18n coverage', () => {
     const report: Record<string, string[]> = {}
     for (const locale of LOCALES) {
       const translation = readLocale(locale)
-      const missing = [...keys]
-        .filter((key) => !(key in translation) && !PENDING_KEYS.has(key))
-        .sort()
+      const missing = [...keys].filter((key) => !(key in translation)).sort()
       if (missing.length > 0) report[locale] = missing
     }
 
     expect(report).toEqual({})
-  })
-
-  it('keeps the pending routing-weights keys scoped to the new page', () => {
-    const keys = collectLiteralKeys()
-    const pending = [...keys].filter((key) => PENDING_KEYS.has(key)).sort()
-    expect(pending).toEqual([...PENDING_ROUTING_WEIGHTS_I18N_KEYS].sort())
   })
 })

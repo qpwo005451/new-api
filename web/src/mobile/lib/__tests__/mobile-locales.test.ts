@@ -22,18 +22,6 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { PENDING_ROUTING_WEIGHTS_I18N_KEYS } from '@/mobile/features/routing-weights/lib/pending-i18n-keys'
-
-const PENDING_KEYS = new Set<string>(PENDING_ROUTING_WEIGHTS_I18N_KEYS)
-
-function missingKeysFromError(error: unknown): string[] {
-  const message = error instanceof Error ? error.message : ''
-  const match = /Missing base translations for \d+ mobile key\(s\): (.+)$/.exec(
-    message
-  )
-  return match ? match[1].split(', ') : []
-}
-
 // The generator is a build script, so it is imported dynamically by absolute
 // path (nothing in src/ depends on scripts/) and `@vite-ignore` keeps the bundler
 // from trying to resolve it.
@@ -174,47 +162,36 @@ describe('buildMobileLocales', () => {
     const { MOBILE_LOCALE_FILES, buildMobileLocales } = await loadScript()
     const outDir = mkdtempSync(join(tmpdir(), 'mobile-locales-'))
 
-    try {
-      const result = await buildMobileLocales({ root: process.cwd(), outDir })
+    const result = await buildMobileLocales({ root: process.cwd(), outDir })
 
-      expect(result.literalKeys).toBeGreaterThan(30)
-      expect(result.dynamicKeys).toBeGreaterThan(20)
-      expect(result.keys).toBeGreaterThan(30)
+    expect(result.literalKeys).toBeGreaterThan(30)
+    expect(result.dynamicKeys).toBeGreaterThan(20)
+    expect(result.keys).toBeGreaterThan(30)
 
-      const english = JSON.parse(
-        readFileSync(join(outDir, MOBILE_LOCALE_FILES.en), 'utf8')
-      ) as Record<string, string>
-      const chinese = JSON.parse(
-        readFileSync(join(outDir, MOBILE_LOCALE_FILES.zhCN), 'utf8')
-      ) as Record<string, string>
-      const traditional = JSON.parse(
-        readFileSync(join(outDir, MOBILE_LOCALE_FILES.zhTW), 'utf8')
-      ) as Record<string, string>
+    const english = JSON.parse(
+      readFileSync(join(outDir, MOBILE_LOCALE_FILES.en), 'utf8')
+    ) as Record<string, string>
+    const chinese = JSON.parse(
+      readFileSync(join(outDir, MOBILE_LOCALE_FILES.zhCN), 'utf8')
+    ) as Record<string, string>
+    const traditional = JSON.parse(
+      readFileSync(join(outDir, MOBILE_LOCALE_FILES.zhTW), 'utf8')
+    ) as Record<string, string>
 
-      // Every language carries the mobile key set, not just the base locale.
-      for (const entry of result.report) {
-        expect(entry.keys).toBe(result.keys)
-      }
-      expect(english['Mobile console']).toBe('Mobile console')
-      expect(chinese['Mobile console']).toBe('手机控制台')
-      expect(traditional['Mobile console']).toBe('手機控制台')
-
-      // The trimmed English bundle must stay orders of magnitude smaller than
-      // the shared desktop locale (~700 KB), the point of this generator.
-      const englishEntry = result.report.find(
-        (entry) => entry.code === 'en'
-      ) as { bytes: number }
-      expect(englishEntry.bytes).toBeLessThan(20_000)
-    } catch (error) {
-      // The routing-weights copy is added to the shared locales by the
-      // follow-up i18n worker. Until then the generator intentionally rejects
-      // the real sources; assert that only the pending keys are uncovered so a
-      // real regression still fails here. Any other failure (including a failed
-      // assertion above) is rethrown.
-      const missing = missingKeysFromError(error)
-      if (missing.length === 0) throw error
-      expect(missing.every((key) => PENDING_KEYS.has(key))).toBe(true)
+    // Every language carries the mobile key set, not just the base locale.
+    for (const entry of result.report) {
+      expect(entry.keys).toBe(result.keys)
     }
+    expect(english['Mobile console']).toBe('Mobile console')
+    expect(chinese['Mobile console']).toBe('手机控制台')
+    expect(traditional['Mobile console']).toBe('手機控制台')
+
+    // The trimmed English bundle must stay orders of magnitude smaller than the
+    // shared desktop locale (~700 KB), which is the point of this generator.
+    const englishEntry = result.report.find((entry) => entry.code === 'en') as {
+      bytes: number
+    }
+    expect(englishEntry.bytes).toBeLessThan(20_000)
   })
 
   it('fails the build when an indirectly reached key has no base translation', async () => {

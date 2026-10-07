@@ -132,15 +132,19 @@ export function RoutingWeightsPage() {
     let currentPriority: number | null = null
     for (const row of customGroup.rows) {
       const key = rowKey(row.entry.channel_id)
-      if (tiers.length === 0 || row.priority !== currentPriority) {
-        tiers.push({ priority: row.priority, rows: [] })
+      let tier = tiers.at(-1)
+      if (!tier || row.priority !== currentPriority) {
+        tier = { priority: row.priority, rows: [], locked: false }
+        tiers.push(tier)
         currentPriority = row.priority
       }
-      tiers.at(-1)?.rows.push({
+      tier.rows.push({
         key,
         label: channelLabel(row),
         value: customValues[key] ?? '',
       })
+      // A tier whose share is unavailable for any row is read-only.
+      if (row.sharePercent === null) tier.locked = true
     }
     return tiers
   }, [customGroup, customValues])
@@ -174,14 +178,10 @@ export function RoutingWeightsPage() {
   const openCustom = (group: ModelWeightGroup) => {
     const values: Record<string, string> = {}
     for (const row of group.rows) {
-      const key = rowKey(row.entry.channel_id)
-      if (row.sharePercent !== null) {
-        values[key] = String(row.sharePercent)
-      } else if (row.weight !== null) {
-        values[key] = String(row.weight)
-      } else {
-        values[key] = ''
-      }
+      // Only a trusted share may seed an editable percent input. A raw weight
+      // must never be reinterpreted as a percentage; a locked tier keeps it.
+      if (row.sharePercent === null) continue
+      values[rowKey(row.entry.channel_id)] = String(row.sharePercent)
     }
     setCustomModel(group.model)
     setCustomValues(values)
@@ -192,6 +192,7 @@ export function RoutingWeightsPage() {
     if (!customGroup) return
     const weightsByChannel = new Map<number, number>()
     let anyPositive = false
+    let hasEditableTier = false
     let index = 0
     while (index < customGroup.rows.length) {
       const priority = customGroup.rows[index].priority
@@ -203,6 +204,10 @@ export function RoutingWeightsPage() {
         tier.push(customGroup.rows[index])
         index += 1
       }
+      // A tier without a trusted share is read-only: keep its current weights
+      // and keep it out of both the validation and the written payload.
+      if (tier.some((row) => row.sharePercent === null)) continue
+      hasEditableTier = true
       const percents = tier.map((row) =>
         Number(customValues[rowKey(row.entry.channel_id)] ?? '')
       )
@@ -214,6 +219,8 @@ export function RoutingWeightsPage() {
         weightsByChannel.set(row.entry.channel_id, normalized[tierIndex])
       })
     }
+    // Every tier is locked, so Apply is disabled and there is nothing to write.
+    if (!hasEditableTier) return
     if (!anyPositive) {
       setCustomError(t('Enter a ratio greater than 0.'))
       return

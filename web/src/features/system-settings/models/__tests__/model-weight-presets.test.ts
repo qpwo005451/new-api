@@ -23,6 +23,7 @@ import {
   findActivePresetName,
   findActiveScopedPresetName,
   type ModelWeightOverrideEntry,
+  type ModelWeightPreset,
   normalizeRatioWeights,
   parseModelWeightPresets,
   presetsForModel,
@@ -382,6 +383,37 @@ describe('applyPresetToModel', () => {
       model: 'deepseek-v4.1-flash',
       weight: 100,
     })
+  })
+
+  it('ignores tampered preset rows whose model does not match the preset scope', () => {
+    const tampered: ModelWeightPreset = {
+      name: '被篡改',
+      model: 'deepseek-v4.1-flash',
+      weights: [
+        {
+          channel_id: 9,
+          model: 'deepseek-v4.1-flash',
+          priority: 501,
+          weight: 600,
+        },
+        { channel_id: 99, model: 'kimi-k3', weight: 999 },
+      ],
+    }
+
+    const result: ModelWeightOverrideEntry[] = JSON.parse(
+      applyPresetToModel(current, tampered)
+    )
+
+    expect(result).toEqual([
+      { channel_id: 1, model: 'glm-4.6', weight: 100 },
+      {
+        channel_id: 9,
+        model: 'deepseek-v4.1-flash',
+        priority: 501,
+        weight: 600,
+      },
+      { channel_id: 2, model: 'kimi-k2', weight: 100 },
+    ])
   })
 })
 

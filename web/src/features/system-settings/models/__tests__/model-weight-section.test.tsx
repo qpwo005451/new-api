@@ -33,11 +33,17 @@ import {
 import userEvent from '@testing-library/user-event'
 import i18next from 'i18next'
 import { useState } from 'react'
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { Channel } from '@/features/channels/types'
 import { api } from '@/lib/api'
 
 import { SettingsPageProvider } from '../../components/settings-page-context'
+import type { ModelWeightOverrideEntry } from '../model-weight-presets'
+import {
+  applyCustomRatioWeights,
+  buildCustomRatioState,
+} from '../model-weight-rows'
 import { ModelWeightSection } from '../model-weight-section'
 
 const channelState = vi.hoisted(() => ({ error: null as Error | null }))
@@ -660,4 +666,146 @@ it('snapshots the current editor rows when saving a preset', async () => {
       weights: [{ channel_id: 9, model: 'deepseek-v4.1-flash', weight: 30 }],
     },
   ])
+})
+
+describe('custom ratio locked tiers', () => {
+  const channel = (id: number, priority: number, weight: number) =>
+    ({ id, name: `channel-${id}`, priority, weight }) as Channel
+
+  const channelById = new Map<number, Channel>([
+    [9, channel(9, 500, 100)],
+    [36, channel(36, 500, 100)],
+  ])
+
+  const mixedWeights = JSON.stringify([
+    { channel_id: 9, model: 'deepseek-v4.1-flash', weight: 700, priority: 500 },
+    {
+      channel_id: 36,
+      model: 'deepseek-v4.1-flash',
+      weight: 300,
+      priority: 500,
+    },
+    {
+      channel_id: 47,
+      model: 'deepseek-v4.1-flash',
+      weight: 100,
+      priority: 400,
+    },
+    { channel_id: 48, model: 'deepseek-v4.1-flash', priority: 400 },
+  ])
+
+  it('marks a tier whose effective weights cannot all be resolved as locked without zeroing it', () => {
+    const state = buildCustomRatioState(
+      mixedWeights,
+      'deepseek-v4.1-flash',
+      channelById
+    )
+    expect(state.tiers.find((tier) => tier.tier === 500)?.locked).toBe(false)
+    const locked = state.tiers.find((tier) => tier.tier === 400)
+    expect(locked?.locked).toBe(true)
+    for (const entry of locked?.entries ?? []) {
+      expect(
+        state.percents[`${entry.channel_id}|deepseek-v4.1-flash`]
+      ).toBeUndefined()
+    }
+  })
+
+  it('leaves locked tier entries byte-identical when applying editable percentages', () => {
+    const state = buildCustomRatioState(
+      mixedWeights,
+      'deepseek-v4.1-flash',
+      channelById
+    )
+    const result = applyCustomRatioWeights(mixedWeights, state)
+    const inputLocked = (
+      JSON.parse(mixedWeights) as ModelWeightOverrideEntry[]
+    ).filter((entry) => entry.priority === 400)
+    const outputLocked = (
+      JSON.parse(result) as ModelWeightOverrideEntry[]
+    ).filter((entry) => entry.priority === 400)
+    expect(JSON.stringify(outputLocked)).toBe(JSON.stringify(inputLocked))
+    expect(outputLocked).toEqual(inputLocked)
+    expect('weight' in outputLocked[1]).toBe(false)
+  })
+
+  it('keeps the locked tier read-only and writes nothing for it', async () => {
+    weights = mixedWeights
+    show()
+
+    const select = await screen.findByRole('combobox', {
+      name: 'Routing ratio deepseek-v4.1-flash',
+    })
+    await userEvent.click(select)
+    await userEvent.click(
+      await screen.findByRole('option', { name: 'Custom ratio' })
+    )
+
+    expect(
+      await screen.findByText(
+        'Channel data is unavailable, so this tier keeps its current weights.'
+      )
+    ).toBeVisible()
+    const lockedShare = screen.getByRole('spinbutton', { name: 'Share #47' })
+    expect(lockedShare).toBeDisabled()
+    expect(lockedShare).toHaveAttribute('readonly')
+    expect(screen.getByRole('spinbutton', { name: 'Share #9' })).toBeEnabled()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Apply' }))
+
+    await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
+    const payload = vi.mocked(api.patch).mock.calls[0][1] as {
+      options: Record<string, string>
+    }
+    expect(JSON.parse(payload.options['model_weight_setting.weights'])).toEqual(
+      [
+        {
+          channel_id: 9,
+          model: 'deepseek-v4.1-flash',
+          weight: 70,
+          priority: 500,
+        },
+        {
+          channel_id: 36,
+          model: 'deepseek-v4.1-flash',
+          weight: 30,
+          priority: 500,
+        },
+        {
+          channel_id: 47,
+          model: 'deepseek-v4.1-flash',
+          weight: 100,
+          priority: 400,
+        },
+        { channel_id: 48, model: 'deepseek-v4.1-flash', priority: 400 },
+      ]
+    )
+  })
+
+  it('disables Apply and explains why when every tier is locked', async () => {
+    weights = JSON.stringify([
+      {
+        channel_id: 47,
+        model: 'deepseek-v4.1-flash',
+        weight: 100,
+        priority: 400,
+      },
+      { channel_id: 48, model: 'deepseek-v4.1-flash', priority: 400 },
+    ])
+    show()
+
+    const select = await screen.findByRole('combobox', {
+      name: 'Routing ratio deepseek-v4.1-flash',
+    })
+    await userEvent.click(select)
+    await userEvent.click(
+      await screen.findByRole('option', { name: 'Custom ratio' })
+    )
+
+    expect(
+      await screen.findByText(
+        'Channel data is unavailable, so this tier keeps its current weights.'
+      )
+    ).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled()
+  })
 })

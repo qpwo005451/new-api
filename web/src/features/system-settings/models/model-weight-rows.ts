@@ -62,6 +62,12 @@ export type RowGroup = {
 export type CustomRatioTier = {
   tier: number
   entries: ModelWeightOverrideEntry[]
+  /**
+   * True when at least one entry's effective weight is unknown, so the tier
+   * cannot be re-proportioned. Locked tiers are read-only and are never
+   * rewritten by `applyCustomRatioWeights`.
+   */
+  locked: boolean
 }
 
 export type CustomRatioState = {
@@ -235,22 +241,31 @@ export function buildCustomRatioState(
   )
   const tiers = [...groupEntriesByTier(entries, channelById).entries()]
     .sort((left, right) => right[0] - left[0])
-    .map(([tier, tierEntries]) => ({ tier, entries: tierEntries }))
+    .map(([tier, tierEntries]) => {
+      const weights = tierEntries.map((entry) =>
+        effectiveEntryWeight(entry, channelById.get(entry.channel_id))
+      )
+      const locked = !weights.every(
+        (weight) => weight !== undefined && Number.isFinite(weight)
+      )
+      return { tier, entries: tierEntries, locked }
+    })
 
   const percents: Record<string, string> = {}
   for (const tier of tiers) {
+    // A locked tier has no trustworthy shares: leave its percents unset so the
+    // dialog cannot encode the lock as a real "0" weight.
+    if (tier.locked) continue
     const weights = tier.entries.map((entry) =>
       effectiveEntryWeight(entry, channelById.get(entry.channel_id))
     )
-    const resolved = weights.every(
-      (weight) => weight !== undefined && Number.isFinite(weight)
+    const sum = weights.reduce<number>(
+      (total, weight) => total + (weight ?? 0),
+      0
     )
-    const sum = resolved
-      ? weights.reduce<number>((total, weight) => total + (weight as number), 0)
-      : 0
     tier.entries.forEach((entry, index) => {
       const weight = weights[index]
-      if (!resolved || sum <= 0 || weight === undefined || weight <= 0) {
+      if (weight === undefined || sum <= 0 || weight <= 0) {
         percents[entryKey(entry)] = '0'
         return
       }
@@ -271,6 +286,9 @@ export function applyCustomRatioWeights(
   const { model, tiers, percents } = state
   const weightByEntryKey = new Map<string, number>()
   for (const tier of tiers) {
+    // Locked tiers are untouched: their entries keep whatever weight key (or
+    // absence of one) they already have in `savedWeights`.
+    if (tier.locked) continue
     const values = tier.entries.map((entry) => {
       const parsed = Number(percents[entryKey(entry)] ?? '')
       return Number.isFinite(parsed) ? parsed : 0

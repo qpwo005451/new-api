@@ -38,7 +38,13 @@ export function ModelWeightCustomRatioDialog(
   const { t } = useTranslation()
   const state = props.state
   const hasPositiveShare = state
-    ? Object.values(state.percents).some((value) => Number(value) > 0)
+    ? state.tiers.some(
+        (tier) =>
+          !tier.locked &&
+          tier.entries.some(
+            (entry) => Number(state.percents[entryKey(entry)] ?? '') > 0
+          )
+      )
     : false
 
   return (
@@ -81,9 +87,11 @@ export function ModelWeightCustomRatioDialog(
                   <span className='text-muted-foreground font-medium'>
                     {t('Priority')} {tier.tier}
                   </span>
-                  <span className='text-muted-foreground'>
-                    {t('Total')}: {tierTotal(tier, state.percents)}%
-                  </span>
+                  {tier.locked ? null : (
+                    <span className='text-muted-foreground'>
+                      {t('Total')}: {tierTotal(tier, state.percents)}%
+                    </span>
+                  )}
                 </div>
                 {tier.entries.map((entry) => (
                   <label
@@ -97,11 +105,16 @@ export function ModelWeightCustomRatioDialog(
                       min={0}
                       max={100}
                       value={state.percents[entryKey(entry)] ?? ''}
-                      onChange={(event) =>
-                        props.onPercentChange(
-                          entryKey(entry),
-                          event.target.value
-                        )
+                      disabled={tier.locked}
+                      readOnly={tier.locked}
+                      onChange={
+                        tier.locked
+                          ? undefined
+                          : (event) =>
+                              props.onPercentChange(
+                                entryKey(entry),
+                                event.target.value
+                              )
                       }
                     />
                   </label>
@@ -112,6 +125,13 @@ export function ModelWeightCustomRatioDialog(
           {!hasPositiveShare ? (
             <p className='text-destructive text-sm'>
               {t('Enter a ratio greater than 0.')}
+            </p>
+          ) : null}
+          {state.tiers.some((tier) => tier.locked) ? (
+            <p className='text-muted-foreground text-sm'>
+              {t(
+                'Channel data is unavailable, so this tier keeps its current weights.'
+              )}
             </p>
           ) : null}
         </div>

@@ -17,11 +17,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { ChevronDown, ChevronRight } from 'lucide-react'
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from '@/components/ui/input-group'
 import {
   Select,
   SelectContent,
@@ -29,6 +35,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { cn } from '@/lib/utils'
 
 import {
   findActiveScopedPresetName,
@@ -43,6 +50,18 @@ import {
 } from './model-weight-rows'
 
 const CUSTOM_PRESET_VALUE = '__custom_preset__'
+
+/**
+ * Allocation rows share one grid so the channel name, the advanced override
+ * inputs and the share control line up in the same columns on every row.
+ * The name column hugs the longest channel name (capped, then truncated) and
+ * the trailing `1fr` keeps the tier subheader bands and hover highlights
+ * spanning the full card.
+ */
+const COLLAPSED_GRID =
+  'grid grid-cols-[fit-content(50%)_6rem_minmax(0,1fr)] sm:grid-cols-[fit-content(14rem)_6rem_minmax(0,1fr)]'
+const ADVANCED_GRID =
+  'flex flex-col sm:grid sm:grid-cols-[fit-content(14rem)_5.5rem_5.5rem_6rem_minmax(0,1fr)]'
 
 type Props = {
   card: ModelAllocationCard
@@ -135,105 +154,129 @@ export function ModelWeightCard(props: Props) {
         </div>
       </div>
 
-      <div className='space-y-3 p-3'>
-        {props.card.tiers.length === 0 ? (
-          <p className='text-muted-foreground text-sm'>
-            {t('No enabled channel serves this model.')}
-          </p>
-        ) : (
-          props.card.tiers.map((tier) => (
-            <div key={tier.priority} className='space-y-2'>
-              {props.card.tiers.length > 1 ? (
-                <div className='flex items-center justify-between gap-2 text-xs'>
-                  <span className='text-muted-foreground font-medium'>
-                    {`${t('Priority')} ${tier.priority}`}
+      {props.card.tiers.length === 0 ? (
+        <p className='text-muted-foreground px-3 py-3 text-sm'>
+          {t('No enabled channel serves this model.')}
+        </p>
+      ) : (
+        <div
+          className={cn(
+            'divide-y gap-x-3',
+            advanced ? ADVANCED_GRID : COLLAPSED_GRID
+          )}
+        >
+          {advanced ? (
+            <div className='text-muted-foreground col-span-full flex flex-wrap items-center gap-x-3 pb-1 text-xs sm:grid sm:grid-cols-subgrid'>
+              <span className='h-5 w-full sm:h-auto sm:w-auto' aria-hidden='true' />
+              <span className='w-[5.5rem] shrink-0 sm:w-auto'>
+                {t('Priority')}
+              </span>
+              <span className='w-[5.5rem] shrink-0 sm:w-auto'>
+                {t('Weight')}
+              </span>
+              <span className='w-24 shrink-0 sm:w-auto'>{t('Share')}</span>
+            </div>
+          ) : null}
+          {props.card.tiers.map((tier) => (
+            <Fragment key={tier.priority}>
+              <div className='bg-muted/50 col-span-full flex items-center gap-2 px-3 py-1.5'>
+                <span className='text-sm font-semibold'>
+                  {`${t('Priority')} ${tier.priority}`}
+                </span>
+                <Badge
+                  variant='outline'
+                  className={cn(
+                    'h-5 rounded px-1.5 text-[0.7rem]',
+                    tier.participates
+                      ? 'border-primary/30 bg-primary/10 text-primary'
+                      : 'border-muted-foreground/30 bg-muted text-muted-foreground'
+                  )}
+                >
+                  {tier.participates ? t('Participating') : t('Fallback')}
+                </Badge>
+                <span className='ml-auto flex items-center gap-1 text-xs tabular-nums'>
+                  <span className='text-muted-foreground'>{t('Total')}</span>
+                  <span
+                    className={cn(
+                      'font-medium',
+                      tier.totalPercent === 100
+                        ? 'text-muted-foreground'
+                        : 'text-destructive'
+                    )}
+                  >
+                    {`${tier.totalPercent}%`}
                   </span>
-                  <span className='text-muted-foreground'>
-                    {tier.participates ? t('Participating') : t('Fallback')}
-                  </span>
-                </div>
-              ) : null}
+                </span>
+              </div>
               {tier.rows.map((row) => (
                 <div
                   key={row.key}
-                  className='grid items-center gap-2 sm:grid-cols-[minmax(0,1fr)_6rem]'
+                  className={cn(
+                    'col-span-full items-center gap-x-3 py-1 transition-colors hover:bg-muted/40',
+                    advanced
+                      ? 'flex flex-wrap gap-y-1 sm:grid sm:grid-cols-subgrid'
+                      : 'grid grid-cols-subgrid'
+                  )}
                 >
-                  <span className='truncate text-sm'>{row.channelName}</span>
-                  <div className='flex items-center gap-1'>
-                    <Input
+                  <span
+                    title={row.channelName}
+                    className={cn(
+                      'min-w-0 truncate ps-3 text-sm',
+                      advanced && 'w-full sm:w-auto'
+                    )}
+                  >
+                    {row.channelName}
+                  </span>
+                  {advanced ? (
+                    <>
+                      <Input
+                        aria-label={`${t('Priority')} ${props.card.model} #${row.channelId}`}
+                        type='number'
+                        min={0}
+                        max={MAX_MODEL_PRIORITY_VALUE}
+                        placeholder={String(row.channelPriority)}
+                        value={row.priority}
+                        className='h-8 w-[5.5rem] shrink-0 text-right tabular-nums sm:w-full'
+                        onChange={(event) =>
+                          props.onPriorityChange(row.key, event.target.value)
+                        }
+                      />
+                      <Input
+                        aria-label={`${t('Weight')} ${props.card.model} #${row.channelId}`}
+                        type='number'
+                        min={0}
+                        max={MAX_MODEL_WEIGHT_VALUE}
+                        value={String(derivedWeightFromPercent(row.percent))}
+                        className='h-8 w-[5.5rem] shrink-0 text-right tabular-nums sm:w-full'
+                        onChange={(event) =>
+                          props.onWeightChange(row.key, event.target.value)
+                        }
+                      />
+                    </>
+                  ) : null}
+                  <InputGroup className='h-8 w-24 shrink-0 sm:w-full'>
+                    <InputGroupInput
                       aria-label={`${t('Share')} ${props.card.model} #${row.channelId}`}
                       type='number'
                       min={0}
                       max={100}
                       step='any'
-                      className='text-right'
+                      className='h-8 text-right tabular-nums'
                       value={row.percent}
                       onChange={(event) =>
                         props.onPercentChange(row.key, event.target.value)
                       }
                     />
-                    <span className='text-muted-foreground text-xs'>%</span>
-                  </div>
-                  {advanced ? (
-                    <div className='grid gap-2 sm:col-span-2 sm:grid-cols-2'>
-                      <label className='grid gap-1 text-xs'>
-                        <span className='text-muted-foreground font-medium'>
-                          {t('Priority')}
-                        </span>
-                        <Input
-                          aria-label={`${t('Priority')} ${props.card.model} #${row.channelId}`}
-                          type='number'
-                          min={0}
-                          max={MAX_MODEL_PRIORITY_VALUE}
-                          placeholder={String(row.channelPriority)}
-                          value={row.priority}
-                          onChange={(event) =>
-                            props.onPriorityChange(
-                              row.key,
-                              event.target.value
-                            )
-                          }
-                        />
-                      </label>
-                      <label className='grid gap-1 text-xs'>
-                        <span className='text-muted-foreground font-medium'>
-                          {t('Weight')}
-                        </span>
-                        <Input
-                          aria-label={`${t('Weight')} ${props.card.model} #${row.channelId}`}
-                          type='number'
-                          min={0}
-                          max={MAX_MODEL_WEIGHT_VALUE}
-                          value={String(
-                            derivedWeightFromPercent(row.percent)
-                          )}
-                          onChange={(event) =>
-                            props.onWeightChange(row.key, event.target.value)
-                          }
-                        />
-                      </label>
-                    </div>
-                  ) : null}
+                    <InputGroupAddon align='inline-end' className='pl-0'>
+                      %
+                    </InputGroupAddon>
+                  </InputGroup>
                 </div>
               ))}
-              {tier.totalPercent !== 100 ? (
-                <div className='flex justify-end gap-2 text-xs'>
-                  <span className='text-muted-foreground'>{t('Total')}</span>
-                  <span
-                    className={
-                      tier.totalPercent === 100
-                        ? 'text-muted-foreground'
-                        : 'text-destructive font-medium'
-                    }
-                  >
-                    {`${tier.totalPercent}%`}
-                  </span>
-                </div>
-              ) : null}
-            </div>
-          ))
-        )}
-      </div>
+            </Fragment>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

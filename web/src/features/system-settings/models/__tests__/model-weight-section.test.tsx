@@ -339,7 +339,7 @@ describe('per-model allocation cards', () => {
 })
 
 describe('card presentation', () => {
-  it('shows a flat row list without tier subheaders when the model has one priority', async () => {
+  it('labels a single tier with its role and total', async () => {
     weights = JSON.stringify([
       { channel_id: 9, model: MODEL, weight: 700 },
       { channel_id: 36, model: MODEL, weight: 300 },
@@ -348,7 +348,20 @@ describe('card presentation', () => {
     show()
 
     expect(await screen.findByText('channel-9')).toBeVisible()
-    expect(screen.queryByText('Priority 500')).not.toBeInTheDocument()
+    expect(screen.getByText('Priority 500')).toBeVisible()
+    expect(screen.getByText('Participating')).toBeVisible()
+    expect(screen.getByText('Total')).toBeVisible()
+  })
+
+  it('keeps the percent suffix inside the share field', async () => {
+    weights = JSON.stringify([{ channel_id: 9, model: MODEL, weight: 100 }])
+    channelState.items = [mockChannel({ id: 9 })]
+    show()
+
+    const share = await screen.findByRole('spinbutton', {
+      name: `Share ${MODEL} #9`,
+    })
+    expect(share.parentElement).toHaveTextContent('%')
   })
 
   it('shows one tier subheader per priority when the model has several', async () => {
@@ -375,13 +388,15 @@ describe('card presentation', () => {
     show()
 
     await screen.findByText('channel-9')
-    expect(screen.queryByText('Total')).not.toBeInTheDocument()
+    expect(screen.getByText('Total')).toBeVisible()
+    expect(screen.getByText('100%')).toBeVisible()
 
     fireEvent.change(shareInput(MODEL, 36), { target: { value: '70' } })
     expect(shareInput(MODEL, 36)).toHaveValue(70)
     expect(shareInput(MODEL, 9)).toHaveValue(30)
-    // The tier still totals 100, so the card stays quiet.
-    expect(screen.queryByText('Total')).not.toBeInTheDocument()
+    // The tier still totals 100, so the total stays quiet (not destructive).
+    expect(screen.getByText('100%')).toBeVisible()
+    expect(screen.getByText('100%')).not.toHaveClass('text-destructive')
   })
 
   it('reveals editable priority and raw weight fields behind Advanced', async () => {

@@ -26,6 +26,7 @@ import { PatGate } from '@/mobile/components/pat-gate'
 import { PullToRefresh } from '@/mobile/components/pull-to-refresh'
 import { ChannelsPage } from '@/mobile/features/channels/components/channels-page'
 import { ModelsPage } from '@/mobile/features/models/components/models-page'
+import { RoutingWeightsPage } from '@/mobile/features/routing-weights/components/routing-weights-page'
 import { RoutingPage } from '@/mobile/features/routing/components/routing-page'
 import { UsagePage } from '@/mobile/features/usage/components/usage-page'
 import { mobileErrorCopy } from '@/mobile/lib/error-copy'
@@ -85,6 +86,7 @@ export function MobileApp() {
           {activeTab === 'models' ? <ModelsPage /> : null}
           {activeTab === 'routing' ? <RoutingPage /> : null}
           {activeTab === 'channels' ? <ChannelsPage /> : null}
+          {activeTab === 'routing-weights' ? <RoutingWeightsPage /> : null}
           <div className='px-3 pb-2'>
             <button
               type='button'

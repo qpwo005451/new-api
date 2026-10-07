@@ -31,6 +31,15 @@ describe('mobileErrorCopy', () => {
     })
   })
 
+  it('names the administrator role problem on 403', () => {
+    expect(
+      mobileErrorCopy(new ApiError('forbidden', 'no permission', 403))
+    ).toEqual({
+      titleKey: 'Administrator access required',
+      descriptionKey: 'This page needs an administrator access token.',
+    })
+  })
+
   it('keeps the generic retry copy for HTTP and business failures', () => {
     expect(
       mobileErrorCopy(new ApiError('http', 'Request failed', 500))

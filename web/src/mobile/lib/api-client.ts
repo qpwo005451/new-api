@@ -142,3 +142,11 @@ export function mobileApiPost<T>(path: string, body?: unknown): Promise<T> {
     body: body === undefined ? undefined : JSON.stringify(body),
   })
 }
+
+export function mobileApiPatch<T>(path: string, body?: unknown): Promise<T> {
+  return request<T>(path, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+}

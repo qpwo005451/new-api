@@ -33,12 +33,15 @@ import { Label } from '@/components/ui/label'
 export interface CustomRatioRow {
   key: string
   label: string
+  /** Editable percentage, only ever seeded from a trusted share. */
   value: string
 }
 
 export interface CustomRatioTier {
   priority: number
   rows: CustomRatioRow[]
+  /** A tier without a trusted share keeps its current weights untouched. */
+  locked: boolean
 }
 
 interface CustomRatioDialogProps {
@@ -57,6 +60,8 @@ interface CustomRatioDialogProps {
  */
 export function CustomRatioDialog(props: CustomRatioDialogProps) {
   const { t } = useTranslation()
+  const allTiersLocked =
+    props.tiers.length > 0 && props.tiers.every((tier) => tier.locked)
 
   return (
     <Dialog
@@ -80,6 +85,13 @@ export function CustomRatioDialog(props: CustomRatioDialogProps) {
               <p className='text-muted-foreground text-xs font-medium'>
                 {t('Priority')} {tier.priority}
               </p>
+              {tier.locked ? (
+                <p className='text-muted-foreground text-xs'>
+                  {t(
+                    'Channel data is unavailable, so this tier keeps its current weights.'
+                  )}
+                </p>
+              ) : null}
               {tier.rows.map((row) => (
                 <div
                   key={row.key}
@@ -98,8 +110,12 @@ export function CustomRatioDialog(props: CustomRatioDialogProps) {
                     inputMode='decimal'
                     className='w-24'
                     value={row.value}
-                    onChange={(event) =>
-                      props.onValueChange(row.key, event.target.value)
+                    disabled={tier.locked}
+                    onChange={
+                      tier.locked
+                        ? undefined
+                        : (event) =>
+                            props.onValueChange(row.key, event.target.value)
                     }
                   />
                 </div>
@@ -120,7 +136,10 @@ export function CustomRatioDialog(props: CustomRatioDialogProps) {
           >
             {t('Cancel')}
           </Button>
-          <Button onClick={props.onConfirm} disabled={props.isSaving}>
+          <Button
+            onClick={props.onConfirm}
+            disabled={props.isSaving || allTiersLocked}
+          >
             {t('Apply')}
           </Button>
         </DialogFooter>

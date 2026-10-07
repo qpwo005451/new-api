@@ -270,6 +270,157 @@ describe('RoutingWeightsPage', () => {
     expect(patchCalls(fetchMock)).toHaveLength(0)
   })
 
+  it('keeps a locked tier out of the written payload', async () => {
+    const fetchMock = installFetch({
+      weights: JSON.stringify([
+        { channel_id: 7, model: 'gpt-5', weight: 700, priority: 800 },
+        { channel_id: 9, model: 'gpt-5', priority: 501 },
+        { channel_id: 36, model: 'gpt-5', priority: 501 },
+      ]),
+      presets: '[]',
+      channels: [
+        { ...CHANNELS[0], id: 7, name: 'edge', priority: 800 },
+        { ...CHANNELS[0], id: 9, name: 'primary-openai', priority: 501 },
+      ],
+    })
+    renderPage()
+    await screen.findByText('gpt-5')
+    const user = userEvent.setup()
+
+    await user.click(
+      screen.getByRole('combobox', { name: 'Routing ratio gpt-5' })
+    )
+    await user.click(
+      await screen.findByRole('option', { name: 'Custom ratio' })
+    )
+    await user.click(screen.getByRole('button', { name: 'Apply' }))
+    await waitFor(() => expect(patchCalls(fetchMock)).toHaveLength(1))
+
+    const body = JSON.parse(String(patchCalls(fetchMock)[0][1]?.body)) as {
+      options: Record<string, string>
+    }
+    const written = JSON.parse(body.options[WEIGHTS_OPTION_KEY]) as Array<{
+      channel_id: number
+      weight?: number
+    }>
+
+    expect(written).toEqual([
+      { channel_id: 7, model: 'gpt-5', weight: 100, priority: 800 },
+      { channel_id: 9, model: 'gpt-5', priority: 501 },
+      { channel_id: 36, model: 'gpt-5', priority: 501 },
+    ])
+    // Neither channel of the locked tier gets an explicit weight: the known
+    // raw weight is never reinterpreted as a percentage and the unknown weight
+    // never becomes an explicit zero.
+    expect(
+      written.find((entry) => entry.channel_id === 9)?.weight
+    ).toBeUndefined()
+    expect(
+      written.find((entry) => entry.channel_id === 36)?.weight
+    ).toBeUndefined()
+  })
+
+  it('renders locked tiers read-only with the explanatory copy', async () => {
+    installFetch({
+      weights: JSON.stringify([
+        { channel_id: 7, model: 'gpt-5', weight: 700, priority: 800 },
+        { channel_id: 9, model: 'gpt-5', priority: 501 },
+        { channel_id: 36, model: 'gpt-5', priority: 501 },
+      ]),
+      presets: '[]',
+      channels: [
+        { ...CHANNELS[0], id: 7, name: 'edge', priority: 800 },
+        { ...CHANNELS[0], id: 9, name: 'primary-openai', priority: 501 },
+      ],
+    })
+    renderPage()
+    await screen.findByText('gpt-5')
+    const user = userEvent.setup()
+
+    await user.click(
+      screen.getByRole('combobox', { name: 'Routing ratio gpt-5' })
+    )
+    await user.click(
+      await screen.findByRole('option', { name: 'Custom ratio' })
+    )
+
+    const lockedKnown = await screen.findByRole('spinbutton', {
+      name: 'primary-openai',
+    })
+    expect(lockedKnown).toBeDisabled()
+    // The raw channel weight (1000) must never be seeded as a percentage.
+    expect(lockedKnown).toHaveValue(null)
+    expect(screen.getByRole('spinbutton', { name: '#36' })).toBeDisabled()
+    expect(
+      screen.getByText(
+        'Channel data is unavailable, so this tier keeps its current weights.'
+      )
+    ).toBeInTheDocument()
+  })
+
+  it('validates any-positive against editable tiers only', async () => {
+    const fetchMock = installFetch({
+      weights: JSON.stringify([
+        { channel_id: 7, model: 'gpt-5', weight: 700, priority: 800 },
+        { channel_id: 9, model: 'gpt-5', weight: 700, priority: 501 },
+        { channel_id: 36, model: 'gpt-5', priority: 501 },
+      ]),
+      presets: '[]',
+      channels: [
+        { ...CHANNELS[0], id: 7, name: 'edge', priority: 800 },
+        { ...CHANNELS[0], id: 9, name: 'primary-openai', priority: 501 },
+      ],
+    })
+    renderPage()
+    await screen.findByText('gpt-5')
+    const user = userEvent.setup()
+
+    await user.click(
+      screen.getByRole('combobox', { name: 'Routing ratio gpt-5' })
+    )
+    await user.click(
+      await screen.findByRole('option', { name: 'Custom ratio' })
+    )
+    // Clearing the only editable input must fail even though the locked tier
+    // still carries a raw weight of 700.
+    await user.clear(screen.getByRole('spinbutton', { name: 'edge' }))
+    await user.click(screen.getByRole('button', { name: 'Apply' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Enter a ratio greater than 0.'
+    )
+    expect(patchCalls(fetchMock)).toHaveLength(0)
+  })
+
+  it('disables Apply when every tier is locked', async () => {
+    installFetch({
+      weights: JSON.stringify([
+        { channel_id: 9, model: 'gpt-5', priority: 501 },
+        { channel_id: 36, model: 'gpt-5', priority: 501 },
+      ]),
+      presets: '[]',
+      channels: [CHANNELS[0]],
+    })
+    renderPage()
+    await screen.findByText('gpt-5')
+    const user = userEvent.setup()
+
+    await user.click(
+      screen.getByRole('combobox', { name: 'Routing ratio gpt-5' })
+    )
+    await user.click(
+      await screen.findByRole('option', { name: 'Custom ratio' })
+    )
+
+    expect(
+      await screen.findByText(
+        'Channel data is unavailable, so this tier keeps its current weights.'
+      )
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
   it('renders the administrator copy and no retry on a forbidden read', async () => {
     installFetch({ policyStatus: 403 })
     renderPage()

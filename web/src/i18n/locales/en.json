@@ -1045,6 +1045,7 @@
     "Channel consistency repaired: {{success}} succeeded, {{fails}} failed": "Channel consistency repaired: {{success}} succeeded, {{fails}} failed",
     "Channel copied successfully": "Channel copied successfully",
     "Channel created successfully": "Channel created successfully",
+    "Channel data is unavailable, so this tier keeps its current weights.": "Channel data is unavailable, so this tier keeps its current weights.",
     "Channel deleted successfully": "Channel deleted successfully",
     "Channel disable requested": "Channel disable requested",
     "Channel disabled": "Channel disabled",

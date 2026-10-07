@@ -1045,6 +1045,7 @@
     "Channel consistency repaired: {{success}} succeeded, {{fails}} failed": "Согласованность каналов восстановлена: успешно {{success}}, ошибок {{fails}}",
     "Channel copied successfully": "Канал успешно скопирован",
     "Channel created successfully": "Канал успешно создан",
+    "Channel data is unavailable, so this tier keeps its current weights.": "Данные каналов недоступны, поэтому этот уровень сохраняет текущие веса.",
     "Channel deleted successfully": "Канал успешно удалён",
     "Channel disable requested": "Запрошено отключение канала",
     "Channel disabled": "Канал отключён",

@@ -1045,6 +1045,7 @@
     "Channel consistency repaired: {{success}} succeeded, {{fails}} failed": "Cohérence des canaux réparée : {{success}} réussie(s), {{fails}} échouée(s)",
     "Channel copied successfully": "Canal copié avec succès",
     "Channel created successfully": "Canal créé avec succès",
+    "Channel data is unavailable, so this tier keeps its current weights.": "Les données des canaux sont indisponibles ; ce palier conserve ses poids actuels.",
     "Channel deleted successfully": "Canal supprimé avec succès",
     "Channel disable requested": "Désactivation du canal demandée",
     "Channel disabled": "Canal désactivé",

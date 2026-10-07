@@ -1045,6 +1045,7 @@
     "Channel consistency repaired: {{success}} succeeded, {{fails}} failed": "チャネル整合性を修復しました：成功 {{success}} 件、失敗 {{fails}} 件",
     "Channel copied successfully": "チャネルが正常にコピーされました",
     "Channel created successfully": "チャネルが正常に作成されました",
+    "Channel data is unavailable, so this tier keeps its current weights.": "チャネルデータを利用できないため、このティアは現在の重みを維持します。",
     "Channel deleted successfully": "チャネルが正常に削除されました",
     "Channel disable requested": "チャネル無効化を要求",
     "Channel disabled": "チャネルを無効にしました",

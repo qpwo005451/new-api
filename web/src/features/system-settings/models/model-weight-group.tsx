@@ -216,6 +216,20 @@ export function ModelWeightCard(props: Props) {
                   ) : null}
                 </div>
               ))}
+              {tier.totalPercent !== 100 ? (
+                <div className='flex justify-end gap-2 text-xs'>
+                  <span className='text-muted-foreground'>{t('Total')}</span>
+                  <span
+                    className={
+                      tier.totalPercent === 100
+                        ? 'text-muted-foreground'
+                        : 'text-destructive font-medium'
+                    }
+                  >
+                    {`${tier.totalPercent}%`}
+                  </span>
+                </div>
+              ) : null}
             </div>
           ))
         )}

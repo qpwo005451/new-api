@@ -130,26 +130,22 @@ export function SessionRulesTable(props: SessionRulesTableProps) {
           className: 'w-[22%]',
           cell: (rule) => (
             <div className='flex min-w-0 flex-col gap-1.5'>
-              {(rule.key_sources || []).map((source) => (
-                <div
-                  key={`${source.type}:${source.path || source.key}`}
-                  className='flex min-w-0 items-center gap-2'
-                >
-                  <Badge variant='secondary' className='shrink-0'>
-                    {source.type}
-                  </Badge>
-                  <TruncatedCell
-                    tabIndex={0}
-                    tooltipContent={
-                      source.type === 'gjson' ? source.path : source.key
-                    }
+              {(rule.key_sources || []).map((source) => {
+                const target = source.path || source.key
+                return (
+                  <div
+                    key={`${source.type}:${target}`}
+                    className='flex min-w-0 items-center gap-2'
                   >
-                    <code>
-                      {source.type === 'gjson' ? source.path : source.key}
-                    </code>
-                  </TruncatedCell>
-                </div>
-              ))}
+                    <Badge variant='secondary' className='shrink-0'>
+                      {source.type}
+                    </Badge>
+                    <TruncatedCell tabIndex={0} tooltipContent={target}>
+                      <code>{target}</code>
+                    </TruncatedCell>
+                  </div>
+                )
+              })}
               {!rule.key_sources?.length ? (
                 <span className='text-muted-foreground'>—</span>
               ) : null}

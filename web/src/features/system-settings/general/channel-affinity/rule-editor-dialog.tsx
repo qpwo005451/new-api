@@ -58,6 +58,7 @@ const KEY_SOURCE_TYPES = [
   'context_string',
   'request_header',
   'gjson',
+  'gjson_fingerprint',
 ] as const
 
 const CONTEXT_KEY_PRESETS = [
@@ -96,9 +97,17 @@ function normalizeStringList(text: string): string[] {
     .filter((s) => s.length > 0)
 }
 
+// gjson_fingerprint reads the same body path as gjson and keys the binding with
+// a digest of the value, so both types take a path instead of a key.
+function usesBodyPath(type: KeySource['type']): boolean {
+  return type === 'gjson' || type === 'gjson_fingerprint'
+}
+
 function normalizeKeySource(src: Partial<KeySource>): KeySource {
   const type = (src?.type || 'gjson') as KeySource['type']
-  if (type === 'gjson') return { ...src, type, key: '', path: src?.path || '' }
+  if (usesBodyPath(type)) {
+    return { ...src, type, key: '', path: src?.path || '' }
+  }
   return { ...src, type, key: src?.key || '', path: '' }
 }
 
@@ -207,7 +216,7 @@ export function RuleEditorDialog(props: Props) {
 
     const validKeySources = keySources
       .map(({ rowId: _, ...source }) => normalizeKeySource(source))
-      .filter((s) => s.type && (s.type === 'gjson' ? s.path : s.key))
+      .filter((s) => s.type && (usesBodyPath(s.type) ? s.path : s.key))
     if (validKeySources.length === 0) {
       toast.error(t('At least one valid key source is required'))
       return
@@ -402,14 +411,16 @@ export function RuleEditorDialog(props: Props) {
                 <Input
                   className='min-w-0 flex-1'
                   placeholder={
-                    src.type === 'gjson'
+                    usesBodyPath(src.type)
                       ? 'metadata.conversation_id'
                       : 'user_id'
                   }
-                  value={src.type === 'gjson' ? src.path || '' : src.key || ''}
+                  value={
+                    usesBodyPath(src.type) ? src.path || '' : src.key || ''
+                  }
                   onChange={(e) => {
                     const next = [...keySources]
-                    if (src.type === 'gjson') {
+                    if (usesBodyPath(src.type)) {
                       next[idx] = { ...src, path: e.target.value }
                     } else {
                       next[idx] = { ...src, key: e.target.value }

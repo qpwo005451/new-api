@@ -242,6 +242,92 @@ func TestGetPreferredChannelByAffinity_RequestHeaderKeySource(t *testing.T) {
 	require.Equal(t, buildChannelAffinityKeyHint(affinityValue), meta.KeyHint)
 }
 
+func buildChannelAffinityBodyContext(t *testing.T, body string) *gin.Context {
+	t.Helper()
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	return ctx
+}
+
+// A client that sends no session identifier still repeats one stable body field
+// in every request of a session. The fingerprint source turns that field into a
+// binding key, so the session stays on one channel without the key carrying the
+// request content.
+func TestExtractChannelAffinityValue_BodyPathFingerprint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	const firstUserMessage = "route the harness client"
+	source := operation_setting.ChannelAffinityKeySource{
+		Type: "gjson_fingerprint",
+		Path: `messages.#(role=="user").content`,
+	}
+	firstTurn := `{"model":"deepseek-v4.1-flash","messages":[{"role":"developer","content":"agent"},{"role":"user","content":"` + firstUserMessage + `"}]}`
+	laterTurn := `{"model":"deepseek-v4.1-flash","messages":[{"role":"developer","content":"agent"},{"role":"user","content":"` + firstUserMessage + `"},{"role":"user","content":"runtime context snapshot 2"},{"role":"assistant","content":"ok"}]}`
+	otherSession := `{"model":"deepseek-v4.1-flash","messages":[{"role":"developer","content":"agent"},{"role":"user","content":"a different task"}]}`
+
+	first := extractChannelAffinityValue(buildChannelAffinityBodyContext(t, firstTurn), source)
+	require.NotEmpty(t, first)
+	require.NotContains(t, first, firstUserMessage)
+	// The same session keeps its key while the conversation grows.
+	require.Equal(t, first, extractChannelAffinityValue(buildChannelAffinityBodyContext(t, laterTurn), source))
+	// Another session must not share the binding.
+	require.NotEqual(t, first, extractChannelAffinityValue(buildChannelAffinityBodyContext(t, otherSession), source))
+	// A body without the configured path yields no value, so the next key source applies.
+	require.Empty(t, extractChannelAffinityValue(buildChannelAffinityBodyContext(t, `{"messages":[]}`), source))
+	// The plain gjson source keeps returning the raw value.
+	require.Equal(t, firstUserMessage, extractChannelAffinityValue(
+		buildChannelAffinityBodyContext(t, firstTurn),
+		operation_setting.ChannelAffinityKeySource{Type: "gjson", Path: `messages.#(role=="user").content`},
+	))
+}
+
+func TestGetPreferredChannelByAffinity_BodyPathFingerprintKeySource(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rule := operation_setting.ChannelAffinityRule{
+		Name:       "harness session stickiness",
+		ModelRegex: []string{"^deepseek-.*$"},
+		KeySources: []operation_setting.ChannelAffinityKeySource{
+			{Type: "gjson_fingerprint", Path: `messages.#(role=="user").content`},
+		},
+		IncludeRuleName:  true,
+		IncludeModelName: true,
+	}
+	firstTurn := `{"model":"deepseek-v4.1-flash","messages":[{"role":"developer","content":"agent"},{"role":"user","content":"session A"}]}`
+	laterTurn := `{"model":"deepseek-v4.1-flash","messages":[{"role":"developer","content":"agent"},{"role":"user","content":"session A"},{"role":"user","content":"runtime context snapshot 2"}]}`
+
+	affinityValue := extractChannelAffinityValue(buildChannelAffinityBodyContext(t, firstTurn), rule.KeySources[0])
+	require.NotEmpty(t, affinityValue)
+	cacheKeySuffix := buildChannelAffinityCacheKeySuffix(rule, "deepseek-v4.1-flash", "default", affinityValue)
+
+	cache := getChannelAffinityCache()
+	require.NoError(t, cache.SetWithTTL(cacheKeySuffix, 9528, time.Minute))
+	t.Cleanup(func() {
+		_, _ = cache.DeleteMany([]string{cacheKeySuffix})
+	})
+
+	setting := operation_setting.GetChannelAffinitySetting()
+	originalRules := setting.Rules
+	setting.Rules = append([]operation_setting.ChannelAffinityRule{rule}, originalRules...)
+	t.Cleanup(func() {
+		setting.Rules = originalRules
+	})
+
+	// The next turn of the same session keeps the channel the session started on.
+	ctx := buildChannelAffinityBodyContext(t, laterTurn)
+	channelID, found := GetPreferredChannelByAffinity(ctx, "deepseek-v4.1-flash", "default")
+	require.True(t, found)
+	require.Equal(t, 9528, channelID)
+
+	meta, ok := getChannelAffinityMeta(ctx)
+	require.True(t, ok)
+	require.Equal(t, "gjson_fingerprint", meta.KeySourceType)
+	require.Equal(t, `messages.#(role=="user").content`, meta.KeySourcePath)
+	require.Equal(t, affinityValue, meta.KeyHint)
+	require.NotContains(t, meta.KeyHint, "session A")
+}
+
 func TestClearCurrentChannelAffinityCache(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

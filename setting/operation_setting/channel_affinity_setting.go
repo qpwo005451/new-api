@@ -7,7 +7,14 @@ import (
 )
 
 type ChannelAffinityKeySource struct {
-	Type string `json:"type"` // context_int, context_string, request_header, gjson
+	// context_int, context_string, request_header, gjson, gjson_fingerprint.
+	//
+	// gjson_fingerprint reads the same body path as gjson and keys the binding
+	// with a short digest of the value instead of the value itself, so request
+	// content never reaches the binding key or the log hint. Use it for clients
+	// that send no session identifier at all but repeat one stable body field in
+	// every request of a session, such as the first user message.
+	Type string `json:"type"`
 	Key  string `json:"key,omitempty"`
 	Path string `json:"path,omitempty"`
 }

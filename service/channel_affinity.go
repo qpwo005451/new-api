@@ -458,29 +458,40 @@ func extractChannelAffinityValue(c *gin.Context, src operation_setting.ChannelAf
 		}
 		return strings.TrimSpace(c.Request.Header.Get(src.Key))
 	case "gjson":
-		if src.Path == "" {
-			return ""
-		}
-		storage, err := common.GetBodyStorage(c)
-		if err != nil {
-			return ""
-		}
-		body, err := storage.Bytes()
-		if err != nil || len(body) == 0 {
-			return ""
-		}
-		res := gjson.GetBytes(body, src.Path)
-		if !res.Exists() {
-			return ""
-		}
-		switch res.Type {
-		case gjson.String, gjson.Number, gjson.True, gjson.False:
-			return strings.TrimSpace(res.String())
-		default:
-			return strings.TrimSpace(res.Raw)
-		}
+		return extractChannelAffinityBodyValue(c, src.Path)
+	case "gjson_fingerprint":
+		// A client that sends no session identifier still repeats one stable body
+		// field in every request of a session. Hashing that field keeps the
+		// binding key fixed for the session without storing request content in
+		// the key, the log hint, or the binding list.
+		return affinityFingerprint(extractChannelAffinityBodyValue(c, src.Path))
 	default:
 		return ""
+	}
+}
+
+// extractChannelAffinityBodyValue reads one request body path with gjson syntax.
+func extractChannelAffinityBodyValue(c *gin.Context, path string) string {
+	if path == "" || c == nil || c.Request == nil {
+		return ""
+	}
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return ""
+	}
+	body, err := storage.Bytes()
+	if err != nil || len(body) == 0 {
+		return ""
+	}
+	res := gjson.GetBytes(body, path)
+	if !res.Exists() {
+		return ""
+	}
+	switch res.Type {
+	case gjson.String, gjson.Number, gjson.True, gjson.False:
+		return strings.TrimSpace(res.String())
+	default:
+		return strings.TrimSpace(res.Raw)
 	}
 }
 

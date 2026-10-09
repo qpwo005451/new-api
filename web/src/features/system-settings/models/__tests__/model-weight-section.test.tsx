@@ -339,7 +339,7 @@ describe('per-model allocation cards', () => {
 })
 
 describe('card presentation', () => {
-  it('labels a single tier with its role and total', async () => {
+  it('labels a single tier with its role and keeps a full tier quiet', async () => {
     weights = JSON.stringify([
       { channel_id: 9, model: MODEL, weight: 700 },
       { channel_id: 36, model: MODEL, weight: 300 },
@@ -352,6 +352,22 @@ describe('card presentation', () => {
     expect(screen.getByText('Participating')).toBeVisible()
     // The tier adds up, so the card does not spend a row on the total.
     expect(screen.queryByText(/^Total/)).toBeNull()
+  })
+
+  it('mirrors each row share in a proportional bar', async () => {
+    weights = JSON.stringify([
+      { channel_id: 9, model: MODEL, weight: 700 },
+      { channel_id: 36, model: MODEL, weight: 300 },
+    ])
+    channelState.items = [mockChannel({ id: 9 }), mockChannel({ id: 36 })]
+    show()
+
+    await screen.findByText('channel-9')
+    const bars = screen.getAllByRole('progressbar', { hidden: true })
+
+    expect(bars).toHaveLength(2)
+    expect(bars[0]).toHaveAttribute('aria-valuenow', '70')
+    expect(bars[1]).toHaveAttribute('aria-valuenow', '30')
   })
 
   it('surfaces a tier that no longer totals 100', async () => {

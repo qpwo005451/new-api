@@ -28,6 +28,7 @@ import {
   InputGroupAddon,
   InputGroupInput,
 } from '@/components/ui/input-group'
+import { Progress } from '@/components/ui/progress'
 import {
   Select,
   SelectContent,
@@ -247,15 +248,13 @@ export function ModelWeightCard(props: Props) {
                     </>
                   ) : null}
                   <div className='flex min-w-0 items-center gap-2'>
-                    <div
-                      className='bg-muted hidden h-1 min-w-0 flex-1 overflow-hidden rounded-full sm:block'
-                      aria-hidden='true'
-                    >
-                      <div
-                        className='bg-primary/50 h-full rounded-full'
-                        style={{
-                          width: `${Math.min(100, Math.max(0, Number(row.percent) || 0))}%`,
-                        }}
+                    {/* The share field already announces this value, so the bar
+                     * only mirrors it visually and stays out of the a11y tree. */}
+                    <div className='hidden min-w-0 flex-1 sm:block'>
+                      <Progress
+                        aria-hidden='true'
+                        value={Number(row.percent) || 0}
+                        className='w-full'
                       />
                     </div>
                     <InputGroup className='h-8 w-24 shrink-0 sm:w-[5.5rem]'>

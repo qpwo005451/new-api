@@ -4554,6 +4554,7 @@
     "Pick models and derive the other side with a rule to create request-to-upstream mappings.": "モデルを選択し、ルールでもう一方の名前を生成して「リクエスト → 上流」のマッピングを作成します。",
     "Pick or create both a store and a product before saving.": "保存する前に、ストアと商品の両方を選択または作成してください。",
     "Ping Interval (seconds)": "Ping間隔（秒）",
+    "Pinned channel left the preferred tier": "固定したチャネルが優先階層から外れました",
     "Pinned sessions": "固定されたセッション",
     "Plan": "プラン",
     "Plan ID": "プラン ID",

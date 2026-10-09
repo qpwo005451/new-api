@@ -34,6 +34,8 @@ export function policyLabel(t: TFunction, value: string): string {
       return t('Status matches the retry rules')
     case 'session_rule_matched':
       return t('Session rule matched')
+    case 'affinity_pin_not_preferred':
+      return t('Pinned channel left the preferred tier')
     case 'channel_selected':
       return t('Channel selected')
     case 'request_completed':

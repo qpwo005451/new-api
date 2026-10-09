@@ -204,3 +204,114 @@ func TestGetPreferredChannelByAffinityPlacesSessionWithoutBinding(t *testing.T) 
 	require.True(t, found)
 	assert.NotEqual(t, channelID, otherChannelID)
 }
+
+// A sticky pin must follow a routing policy edit: once the pinned channel leaves
+// the tier the policy prefers, the session is placed again instead of staying on
+// the channel the policy no longer wants.
+func TestGetPreferredChannelByAffinityRebindsWhenPinLeavesPreferredTier(t *testing.T) {
+	setupAffinityPlacementTest(t, map[int]int{101: 90, 102: 10})
+
+	originalAffinity := *operation_setting.GetChannelAffinitySetting()
+	originalWeights := operation_setting.GetModelWeightSetting().Weights
+	t.Cleanup(func() {
+		*operation_setting.GetChannelAffinitySetting() = originalAffinity
+		operation_setting.GetModelWeightSetting().Weights = originalWeights
+	})
+
+	rule := operation_setting.ChannelAffinityRule{
+		Name:              "tier rule",
+		ModelRegex:        []string{"^deepseek-.*$"},
+		KeySources:        []operation_setting.ChannelAffinityKeySource{{Type: "request_header", Key: "Session_id"}},
+		SessionMode:       "prefer",
+		TTLSeconds:        1800,
+		IncludeRuleName:   true,
+		IncludeModelName:  true,
+		IncludeUsingGroup: true,
+	}
+	affinity := operation_setting.GetChannelAffinitySetting()
+	*affinity = operation_setting.ChannelAffinitySetting{
+		Enabled:           true,
+		DefaultTTLSeconds: 1800,
+		Placement:         operation_setting.ChannelAffinityPlacementBalanced,
+		Rules:             []operation_setting.ChannelAffinityRule{rule},
+	}
+	sessions := []string{"tier-prefer", "tier-zero-weight", "tier-strict"}
+	cacheKey := func(session string) string {
+		return buildChannelAffinityCacheKeySuffix(rule, affinityPlacementTestModel, affinityPlacementTestGroup, session)
+	}
+	t.Cleanup(func() {
+		for _, session := range sessions {
+			_, _ = getChannelAffinityCache().DeleteMany([]string{cacheKey(session)})
+		}
+	})
+	// The model weight table carries the per-model weight and priority of each
+	// channel, exactly like the routing settings the administrator edits.
+	setModelWeights := func(firstWeight uint, firstPriority int64, secondWeight uint, secondPriority int64) {
+		operation_setting.GetModelWeightSetting().Weights = fmt.Sprintf(
+			`[{"channel_id":101,"model":%q,"weight":%d,"priority":%d},{"channel_id":102,"model":%q,"weight":%d,"priority":%d}]`,
+			affinityPlacementTestModel, firstWeight, firstPriority,
+			affinityPlacementTestModel, secondWeight, secondPriority,
+		)
+	}
+	sessionContext := func(session string) *gin.Context {
+		request := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader("{}"))
+		request.Header.Set("Session_id", session)
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Request = request
+		return ctx
+	}
+	// pinSession places a session and records the binding the relay writes after
+	// a successful request.
+	pinSession := func(session string) int {
+		ctx := sessionContext(session)
+		channelID, found := GetPreferredChannelByAffinity(ctx, affinityPlacementTestModel, affinityPlacementTestGroup)
+		require.True(t, found)
+		RecordChannelAffinity(ctx, channelID)
+		return channelID
+	}
+	pinLookup := func(session string) (int, bool) {
+		return GetPreferredChannelByAffinity(sessionContext(session), affinityPlacementTestModel, affinityPlacementTestGroup)
+	}
+	bindingExists := func(session string) bool {
+		_, found, err := getChannelAffinityCache().Get(cacheKey(session))
+		require.NoError(t, err)
+		return found
+	}
+
+	// Both channels start in the preferred tier, so the session is pinned to the
+	// heavier channel, and the pin holds while the channel stays in that tier.
+	setModelWeights(90, 500, 10, 500)
+	require.Equal(t, 101, pinSession("tier-prefer"))
+	kept, found := pinLookup("tier-prefer")
+	require.True(t, found)
+	assert.Equal(t, 101, kept)
+
+	// A priority edit moves channel 101 to a fallback tier, so the next request
+	// follows the policy and the stale binding is dropped.
+	setModelWeights(90, 4, 10, 500)
+	moved, found := pinLookup("tier-prefer")
+	require.True(t, found)
+	assert.Equal(t, 102, moved)
+	assert.False(t, bindingExists("tier-prefer"))
+
+	// A weight edit that zeroes the pinned channel drops the pin as well, because
+	// a zero weight never wins the weighted draw.
+	setModelWeights(90, 500, 10, 500)
+	require.Equal(t, 101, pinSession("tier-zero-weight"))
+	setModelWeights(0, 500, 10, 500)
+	zeroed, found := pinLookup("tier-zero-weight")
+	require.True(t, found)
+	assert.Equal(t, 102, zeroed)
+	assert.False(t, bindingExists("tier-zero-weight"))
+
+	// A strict session keeps its pin by design and fails instead of switching.
+	affinity.Rules[0].SessionMode = "strict"
+	setModelWeights(90, 500, 10, 500)
+	require.Equal(t, 101, pinSession("tier-strict"))
+
+	setModelWeights(90, 4, 10, 500)
+	strictKept, found := pinLookup("tier-strict")
+	require.True(t, found)
+	assert.Equal(t, 101, strictKept)
+	assert.True(t, bindingExists("tier-strict"))
+}

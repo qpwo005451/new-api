@@ -782,7 +782,17 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 			return 0, false
 		}
 		if found {
-			return channelID, true
+			// A pin is a preference, not a guarantee. When a routing policy edit
+			// moved the pinned channel out of the tier the policy now prefers (or
+			// gave it weight zero), the session must follow the policy instead of
+			// keeping the stale channel. A strict session keeps its pin by design
+			// and fails rather than switching.
+			if state.SessionMode != "strict" && !channelAffinityPinStillPreferred(c, modelName, usingGroup, channelID) {
+				state.AddEvent(PolicyEvent{ChannelID: channelID, Decision: PolicyDecision{Action: "rebind", Reason: "affinity_pin_not_preferred", Source: "session_rule"}})
+				ClearCurrentChannelAffinityCache(c)
+			} else {
+				return channelID, true
+			}
 		}
 		// The session has no binding yet: place it on the channel that carries
 		// the fewest live sessions per unit of weight, so sticky sessions spread

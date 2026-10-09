@@ -199,3 +199,55 @@ The live schema hash is now `567bf9ab4fcabad03c19c48459e9c0544b28762c2d338601a47
 - only the physical `sqlite_master` rowid order of the 14 `users` indexes changed, with no semantic effect
 - cause: `model/main.go` runs `migrateDB()` only when `common.IsMasterNode` (`NODE_TYPE != slave`). Production is the master and ran the migration; the 4003 candidate runs with `NODE_TYPE=slave`, which is why its schema hash stayed unchanged during staging
 - the same reshuffle is present in the earlier cutover backups of this deployment (`2026-10-07-routing-ratio-rc01` at 02:41, `...-rc01` at 07:07, `...-rc02` at 09:50 all show different `users` index orders), and the `glebarez/sqlite@v1.11.0/migrator.go:342` line in the startup log is that migrator's index recreation path
+
+
+## Production option write (2026-10-09 09:17 CST, operator-confirmed)
+
+Applied through the admin API on production (`PUT /api/option/`, RootAuth, root PAT), option key
+`channel_affinity_setting.rules`. The only change was one appended key source on the rule
+"deepseek glm session stickiness":
+
+```json
+{"type":"gjson_fingerprint","path":"messages.#(role==\"user\").content"}
+```
+
+- `PUT /api/option/` returned 200 with `{"success":true}`; the read-back listed ten sources for that rule
+- a strict comparison of the rules before and after (after removing the appended source) is equal, so no other
+  field of any rule changed
+- the pre-write rules were saved for rollback at
+  `releases/2026-10-09-dsh-session-fingerprint-rc01/runtime/prod-channel-affinity-rules-before.json` (mode 600);
+  reverting is a second `PUT /api/option/` with that JSON, which restores the previous behavior immediately
+- the option write takes effect without a restart: `model/request_policy.go` rebuilds the request policy snapshot
+  and the runtime affinity setting from the option map on every option write
+
+## Production effect on real traffic
+
+Read-only observation of the production log database after the write:
+
+| id | time (CST) | model | channel | affinity key fingerprint |
+| --- | --- | --- | --- | --- |
+| 798330 | 09:17:48 | deepseek-v4.1-flash | 9 | `5f0d2ed5` |
+| 798331 | 09:17:57 | deepseek-v4.1-flash | 9 | `5f0d2ed5` |
+| 798332 | 09:18:03 | deepseek-v4.1-flash | 9 | `5f0d2ed5` |
+| 798333 | 09:18:10 | deepseek-v4.1-flash | 9 | `5f0d2ed5` |
+
+Four consecutive requests of one real session produced one affinity key and stayed on one channel. Grouping all
+rows that carry the new key source gives one key, `5f0d2ed5`, with the single distinct channel `9`.
+`GET /api/log/channel_affinity_bindings` reports `total=1`:
+rule "deepseek glm session stickiness", model `deepseek-v4.1-flash`, group `svip`, key hint `26278f5c`,
+fingerprint `5f0d2ed5` -> channel 9 (`input-0.1X`). Only the digest is stored; the message text is not.
+
+For comparison, the same model in the fifty minutes before the write produced 142 rows spread over channels 46 and
+9 with no affinity key, which is the flapping this release fixes.
+
+## Merge and push (2026-10-09, operator-confirmed)
+
+`prod/251` was fast-forwarded from `993207f57` to `0d718cdd9` and pushed to `origin/prod/251`
+(`993207f57..0d718cdd9`). The deployed binary was built from `e1c792cc9`, which is an ancestor of that head; the
+two later commits are documentation only. `git status` reports `prod/251` in sync with `origin/prod/251`.
+
+## Remaining steps
+
+- `scripts/finalize_release.sh 2026-10-09-dsh-session-fingerprint-rc01` (keeps the release artifacts and stops the
+  4003 candidate runtime) and `scripts/cleanup_local_release.ps1 -ReleaseId 2026-10-09-dsh-session-fingerprint-rc01`
+  on the workstation. Both are pending operator confirmation.

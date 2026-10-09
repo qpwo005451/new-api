@@ -117,6 +117,20 @@ For commercial licensing, please contact support@quantumnous.com
     font-family: var(--font-body);
   }
 
+  /* Number inputs keep their keyboard stepping, but the stepper the browser
+   * paints inside the field is dropped: it ignores the theme and renders as a
+   * light block wedged between the value and the field edge, which reads as a
+   * broken scrollbar in the dark theme. */
+  input[type='number'] {
+    appearance: textfield;
+  }
+
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    appearance: none;
+    margin: 0;
+  }
+
   /* Keep sticky headers stable while primitives lock body scrolling. */
   body[data-scroll-locked] {
     overflow: unset !important;

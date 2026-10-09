@@ -134,7 +134,7 @@ still be placed on channel 46 or 47 when channel 9 is loaded.
 
 No production write was performed. Every write in this section was confined to the isolated candidate database copy.
 
-## Cutover (requires explicit operator confirmation in the current thread)
+## Cutover (executed after explicit operator confirmation)
 
 ```
 cd /opt/new-api && scripts/cutover_release.sh 2026-10-09-dsh-session-fingerprint-rc01
@@ -167,3 +167,35 @@ change does not need to be reverted for a rollback to work; it can be removed la
 
 Wait for explicit operator confirmation of this exact release identity, then run the cutover, the production
 option write, production verification, finalize, and local cleanup (`scripts/cleanup_local_release.ps1`).
+
+
+## Cutover result (2026-10-09 08:51:31 CST, operator-confirmed)
+
+Pre-cutover baseline: live binary sha256 `8aca07135ff8f45e1e80708d63116efc9750eb96326360268e1f70bd445cf0d7` (rc02), `new-api.service` active, MainPID 1967502 (started 2026-10-07 17:50:35 CST), `GET /api/status` 200.
+
+```
+cd /opt/new-api && scripts/cutover_release.sh 2026-10-09-dsh-session-fingerprint-rc01
+```
+
+- script output: `smoke fast ok: http://127.0.0.1:4002`, exit 0
+- deployed binary sha256 `201164c5325430b5274d0c1752741fc6d8cb060ef8bc07ac319465a252ed611b`, equal to manifest `BINARY_SHA256`
+- new MainPID 572151, `ActiveState=active`, `NRestarts=0`, started 2026-10-09 08:51:31 CST, listening on 4002
+- `GET /` 200, `GET /api/status` 200; production serves the desktop chunk `static/js/index.01264a5b9a.js` with two `gjson_fingerprint` occurrences
+- production rules are still the original nine key sources: the option write has not been applied, so routing behavior is unchanged
+- `cutover-backup.env` recorded `PREVIOUS_BINARY_SHA256=8aca0713...`, backup binary `runtime/live-new-api.20261009-005123.bak`, backup DB `runtime/live-new-api.db.20261009-005123.bak`, `LIVE_SCHEMA_SHA256=7650d1e105a2a3c7d6a2f89e126191467b58301b9b4bc63bb49b216ae7565aa7`
+
+Data checks after the cutover:
+
+- row counts identical between the pre-cutover backup and the live database: users 1, tokens 6, channels 22, options 64, abilities 363, user_sessions 6, perf_metrics 18436; logs grew 789457 -> 789474 from live traffic
+- `pragma quick_check` on the live database: `ok`
+- journal from the new process: `[SYS] database migration started` (normal master startup migration), no migration error, `NRestarts=0`
+
+### Note on the schema hash change
+
+The live schema hash is now `567bf9ab4fcabad03c19c48459e9c0544b28762c2d338601a4737b87481c0914` instead of the recorded
+`7650d1e1...`. This is not a schema change:
+
+- every one of the 261 schema objects is byte-identical between the backup and the live database (sorted `type|name|sql` diff is empty); the object counts are 47 tables and 214 indexes in both
+- only the physical `sqlite_master` rowid order of the 14 `users` indexes changed, with no semantic effect
+- cause: `model/main.go` runs `migrateDB()` only when `common.IsMasterNode` (`NODE_TYPE != slave`). Production is the master and ran the migration; the 4003 candidate runs with `NODE_TYPE=slave`, which is why its schema hash stayed unchanged during staging
+- the same reshuffle is present in the earlier cutover backups of this deployment (`2026-10-07-routing-ratio-rc01` at 02:41, `...-rc01` at 07:07, `...-rc02` at 09:50 all show different `users` index orders), and the `glebarez/sqlite@v1.11.0/migrator.go:342` line in the startup log is that migrator's index recreation path

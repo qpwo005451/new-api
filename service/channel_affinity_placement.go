@@ -1,11 +1,14 @@
 package service
 
 import (
+	"fmt"
 	"math/rand"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
@@ -115,6 +118,114 @@ func splitChannelAffinitySessionKey(cacheKeyFull string) (string, string, bool) 
 	return cacheKeyFull[:index], cacheKeyFull, true
 }
 
+// channelAffinityCandidates is the channel set a sticky session may use for one
+// model: every candidate the routing policy satisfies, plus the channels of the
+// best priority tier with their effective per-model weights.
+type channelAffinityCandidates struct {
+	all       []*model.Channel
+	tier      []*model.Channel
+	weights   map[int]int
+	hasWeight bool
+}
+
+// resolveChannelAffinityCandidates collects the candidates the routing policy
+// satisfies for (group, model) and the channels among them that share the best
+// priority tier. Selection only ever draws from that tier, so a sticky session
+// is placed inside it and must stay inside it.
+//
+// The set is scoped by the routing policy only. Channel health is judged per
+// request by the selection path, so a cooling channel is not a policy change.
+func resolveChannelAffinityCandidates(c *gin.Context, modelName string, usingGroup string) (channelAffinityCandidates, bool) {
+	// An auto-group request resolves its group during selection, so candidates
+	// cannot be scoped to a group here.
+	if usingGroup == "" || usingGroup == "auto" {
+		return channelAffinityCandidates{}, false
+	}
+	candidates, err := model.GetSatisfiedChannelsInPriorityOrder(usingGroup, modelName, GetChannelConstraints(c).Filters)
+	if err != nil {
+		// Selection still runs; a lookup failure only means the policy cannot be
+		// judged here, so report it instead of failing silently.
+		common.SysError(fmt.Sprintf("channel affinity candidate lookup failed: model=%s group=%s err=%v", modelName, usingGroup, err))
+		return channelAffinityCandidates{}, false
+	}
+	if len(candidates) == 0 {
+		return channelAffinityCandidates{}, false
+	}
+	var topPriority int64
+	hasTop := false
+	for _, channel := range candidates {
+		if channel == nil {
+			continue
+		}
+		priority := operation_setting.EffectiveModelPriority(channel.Id, modelName, channel.GetPriority())
+		if !hasTop || priority > topPriority {
+			topPriority, hasTop = priority, true
+		}
+	}
+	if !hasTop {
+		return channelAffinityCandidates{}, false
+	}
+	result := channelAffinityCandidates{all: candidates, weights: make(map[int]int, len(candidates))}
+	for _, channel := range candidates {
+		if channel == nil {
+			continue
+		}
+		if operation_setting.EffectiveModelPriority(channel.Id, modelName, channel.GetPriority()) != topPriority {
+			continue
+		}
+		weight := operation_setting.EffectiveModelWeight(channel.Id, modelName, channel.GetWeight())
+		if weight > 0 {
+			result.hasWeight = true
+		}
+		result.weights[channel.Id] = weight
+		result.tier = append(result.tier, channel)
+	}
+	if len(result.tier) == 0 {
+		return channelAffinityCandidates{}, false
+	}
+	return result, true
+}
+
+// isCandidate reports whether the routing policy still satisfies the channel for
+// the model.
+func (c channelAffinityCandidates) isCandidate(channelID int) bool {
+	return slices.ContainsFunc(c.all, func(channel *model.Channel) bool {
+		return channel.Id == channelID
+	})
+}
+
+// allows reports whether the channel is one a sticky session may be pinned to. A
+// configured zero weight is an explicit "never draw this channel", so such a
+// channel cannot be pinned either.
+func (c channelAffinityCandidates) allows(channelID int) bool {
+	if channelID <= 0 {
+		return false
+	}
+	if !slices.ContainsFunc(c.tier, func(channel *model.Channel) bool {
+		return channel.Id == channelID
+	}) {
+		return false
+	}
+	return !c.hasWeight || c.weights[channelID] > 0
+}
+
+// channelAffinityPinStillPreferred reports whether the routing policy still
+// prefers the pinned channel for the model. Editing the routing weights can move
+// the pinned channel to a fallback tier or give it weight zero; keeping the pin
+// would then keep steering the session to a channel the policy no longer wants.
+//
+// A channel that is no longer a candidate at all keeps its pin: disabled,
+// removed and filtered channels are not a routing policy change, they already
+// have their own handling, and the channel selection path validates the pinned
+// channel before it is used.
+func channelAffinityPinStillPreferred(c *gin.Context, modelName string, usingGroup string, channelID int) bool {
+	candidates, ok := resolveChannelAffinityCandidates(c, modelName, usingGroup)
+	if !ok || !candidates.isCandidate(channelID) {
+		return true
+	}
+	return candidates.allows(channelID)
+}
+
 // PlaceChannelAffinitySession picks the channel a sticky session without a
 // binding should start on, and remembers the choice for the binding TTL. It
 // reports false when placement does not apply, so the caller keeps the normal
@@ -133,42 +244,17 @@ func PlaceChannelAffinitySession(
 	if setting.EffectivePlacement() != operation_setting.ChannelAffinityPlacementBalanced {
 		return 0, false
 	}
-	// An auto-group request resolves its group during selection, so candidates
-	// cannot be scoped to a group here.
-	if usingGroup == "" || usingGroup == "auto" {
+	candidates, ok := resolveChannelAffinityCandidates(c, modelName, usingGroup)
+	if !ok {
+		return 0, false
+	}
+	// A new session must not start on a channel that is cooling down.
+	tierChannels, err := FilterModelHealthCandidates(candidates.tier, modelName, usingGroup)
+	if err != nil || len(tierChannels) == 0 {
 		return 0, false
 	}
 	scope, sessionKey, ok := splitChannelAffinitySessionKey(cacheKeyFull)
 	if !ok {
-		return 0, false
-	}
-	candidates, err := model.GetSatisfiedChannelsInPriorityOrder(usingGroup, modelName, GetChannelConstraints(c).Filters)
-	if err != nil || len(candidates) == 0 {
-		return 0, false
-	}
-	candidates, err = FilterModelHealthCandidates(candidates, modelName, usingGroup)
-	if err != nil || len(candidates) == 0 {
-		return 0, false
-	}
-	topPriority := operation_setting.EffectiveModelPriority(candidates[0].Id, modelName, candidates[0].GetPriority())
-	weights := make(map[int]int, len(candidates))
-	tierChannels := make([]*model.Channel, 0, len(candidates))
-	hasWeight := false
-	for _, channel := range candidates {
-		if channel == nil {
-			continue
-		}
-		if operation_setting.EffectiveModelPriority(channel.Id, modelName, channel.GetPriority()) != topPriority {
-			continue
-		}
-		weight := operation_setting.EffectiveModelWeight(channel.Id, modelName, channel.GetWeight())
-		if weight > 0 {
-			hasWeight = true
-		}
-		weights[channel.Id] = weight
-		tierChannels = append(tierChannels, channel)
-	}
-	if len(tierChannels) == 0 {
 		return 0, false
 	}
 	now := time.Now()
@@ -179,8 +265,8 @@ func PlaceChannelAffinitySession(
 	bestWeight := 0
 	tied := make([]int, 0, len(tierChannels))
 	for _, channel := range tierChannels {
-		weight := weights[channel.Id]
-		if !hasWeight {
+		weight := candidates.weights[channel.Id]
+		if !candidates.hasWeight {
 			// Every candidate has no configured weight, so they are equivalent.
 			weight = 1
 		} else if weight <= 0 {

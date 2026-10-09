@@ -79,6 +79,16 @@ func setupAffinityPlacementTest(t *testing.T, weights map[int]int) {
 	})
 }
 
+// affinityTestSessionContext builds one request context whose Session_id header
+// identifies a single sticky session.
+func affinityTestSessionContext(session string) *gin.Context {
+	request := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader("{}"))
+	request.Header.Set("Session_id", session)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = request
+	return ctx
+}
+
 func TestPlaceChannelAffinitySessionSpreadsSessionsByWeight(t *testing.T) {
 	setupAffinityPlacementTest(t, map[int]int{101: 50, 102: 40, 103: 10})
 	setting := &operation_setting.ChannelAffinitySetting{
@@ -179,28 +189,21 @@ func TestGetPreferredChannelByAffinityPlacesSessionWithoutBinding(t *testing.T) 
 			},
 		}
 	}
-	sessionContext := func(session string) *gin.Context {
-		request := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader("{}"))
-		request.Header.Set("Session_id", session)
-		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-		ctx.Request = request
-		return ctx
-	}
 
 	// Placement is opt-in: without it a session without a binding is not pinned
 	// and keeps the plain weighted draw.
 	installRule("")
-	_, found := GetPreferredChannelByAffinity(sessionContext("placement-session-0"), affinityPlacementTestModel, affinityPlacementTestGroup)
+	_, found := GetPreferredChannelByAffinity(affinityTestSessionContext("placement-session-0"), affinityPlacementTestModel, affinityPlacementTestGroup)
 	assert.False(t, found)
 
 	installRule(operation_setting.ChannelAffinityPlacementBalanced)
-	channelID, found := GetPreferredChannelByAffinity(sessionContext("placement-session-1"), affinityPlacementTestModel, affinityPlacementTestGroup)
+	channelID, found := GetPreferredChannelByAffinity(affinityTestSessionContext("placement-session-1"), affinityPlacementTestModel, affinityPlacementTestGroup)
 	require.True(t, found)
 	assert.Contains(t, []int{101, 102, 103}, channelID)
 
 	// A second session starts on another channel so the live sessions of the rule
 	// stay spread over the configured weights.
-	otherChannelID, found := GetPreferredChannelByAffinity(sessionContext("placement-session-2"), affinityPlacementTestModel, affinityPlacementTestGroup)
+	otherChannelID, found := GetPreferredChannelByAffinity(affinityTestSessionContext("placement-session-2"), affinityPlacementTestModel, affinityPlacementTestGroup)
 	require.True(t, found)
 	assert.NotEqual(t, channelID, otherChannelID)
 }
@@ -253,24 +256,17 @@ func TestGetPreferredChannelByAffinityRebindsWhenPinLeavesPreferredTier(t *testi
 			affinityPlacementTestModel, secondWeight, secondPriority,
 		)
 	}
-	sessionContext := func(session string) *gin.Context {
-		request := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader("{}"))
-		request.Header.Set("Session_id", session)
-		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-		ctx.Request = request
-		return ctx
-	}
 	// pinSession places a session and records the binding the relay writes after
 	// a successful request.
 	pinSession := func(session string) int {
-		ctx := sessionContext(session)
+		ctx := affinityTestSessionContext(session)
 		channelID, found := GetPreferredChannelByAffinity(ctx, affinityPlacementTestModel, affinityPlacementTestGroup)
 		require.True(t, found)
 		RecordChannelAffinity(ctx, channelID)
 		return channelID
 	}
 	pinLookup := func(session string) (int, bool) {
-		return GetPreferredChannelByAffinity(sessionContext(session), affinityPlacementTestModel, affinityPlacementTestGroup)
+		return GetPreferredChannelByAffinity(affinityTestSessionContext(session), affinityPlacementTestModel, affinityPlacementTestGroup)
 	}
 	bindingExists := func(session string) bool {
 		_, found, err := getChannelAffinityCache().Get(cacheKey(session))

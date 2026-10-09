@@ -1,12 +1,14 @@
 package service
 
 import (
+	"fmt"
 	"math/rand"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
@@ -140,7 +142,13 @@ func resolveChannelAffinityCandidates(c *gin.Context, modelName string, usingGro
 		return channelAffinityCandidates{}, false
 	}
 	candidates, err := model.GetSatisfiedChannelsInPriorityOrder(usingGroup, modelName, GetChannelConstraints(c).Filters)
-	if err != nil || len(candidates) == 0 {
+	if err != nil {
+		// Selection still runs; a lookup failure only means the policy cannot be
+		// judged here, so report it instead of failing silently.
+		common.SysError(fmt.Sprintf("channel affinity candidate lookup failed: model=%s group=%s err=%v", modelName, usingGroup, err))
+		return channelAffinityCandidates{}, false
+	}
+	if len(candidates) == 0 {
 		return channelAffinityCandidates{}, false
 	}
 	var topPriority int64

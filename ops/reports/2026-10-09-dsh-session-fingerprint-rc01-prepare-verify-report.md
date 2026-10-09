@@ -246,8 +246,34 @@ For comparison, the same model in the fifty minutes before the write produced 14
 (`993207f57..0d718cdd9`). The deployed binary was built from `e1c792cc9`, which is an ancestor of that head; the
 two later commits are documentation only. `git status` reports `prod/251` in sync with `origin/prod/251`.
 
-## Remaining steps
+## Finalize and cleanup (executed 2026-10-09 09:20 CST, operator-confirmed)
 
-- `scripts/finalize_release.sh 2026-10-09-dsh-session-fingerprint-rc01` (keeps the release artifacts and stops the
-  4003 candidate runtime) and `scripts/cleanup_local_release.ps1 -ReleaseId 2026-10-09-dsh-session-fingerprint-rc01`
-  on the workstation. Both are pending operator confirmation.
+```
+cd /opt/new-api && scripts/finalize_release.sh 2026-10-09-dsh-session-fingerprint-rc01
+```
+
+- exit 0; the 4003 candidate (PID 537313) was stopped, port 4003 is now free, and production 4002 stayed healthy
+  (MainPID 572151, active, `NRestarts=0`, `/api/status` 200)
+- the release directory keeps the candidate binary, `manifest.env`, `finalized.env`, and in `runtime/`:
+  `cutover-backup.env`, the previous binary and database backups, and `prod-channel-affinity-rules-before.json`
+- the candidate runtime files (candidate env/log, candidate database, schema markers) were removed
+
+Local cleanup: `scripts/cleanup_local_release.ps1` is PowerShell-only and this workstation has no `pwsh`, so the
+equivalent steps were run with shell commands: the local release directory was removed, `git worktree prune` was
+run, and the workspace build artifacts (`web/node_modules`, `web/dist`, `web/mobile-dist`, `.gocache`,
+`.gomodcache`, `.gopath`) were deleted. `.local-tools/release-cache` (137 MB) was retained as intended.
+
+Final production check at 09:20 CST, grouping all traffic that carries the new key source over the previous 30
+minutes:
+
+| affinity key fingerprint | requests | distinct channels |
+| --- | --- | --- |
+| `5f0d2ed5` | 14 | 9 |
+| `67ef3909` | 2 | 9 |
+| `8bd1e96e` | 1 | 9 |
+| `5867d6ba` | 1 | 9 |
+
+Four live sessions, each pinned to exactly one channel, and `GET /api/log/channel_affinity_bindings` reports
+`total=4` with one entry per session. Traffic that does not match the rule (155 rows in the same window, other
+models and clients) still spread over channels 9, 35, 46, 5 and 6, so the change did not alter normal weighted
+routing.

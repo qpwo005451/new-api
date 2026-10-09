@@ -350,7 +350,26 @@ describe('card presentation', () => {
     expect(await screen.findByText('channel-9')).toBeVisible()
     expect(screen.getByText('Priority 500')).toBeVisible()
     expect(screen.getByText('Participating')).toBeVisible()
-    expect(screen.getByText('Total')).toBeVisible()
+    // The tier adds up, so the card does not spend a row on the total.
+    expect(screen.queryByText(/^Total/)).toBeNull()
+  })
+
+  it('surfaces a tier that no longer totals 100', async () => {
+    weights = JSON.stringify([
+      { channel_id: 9, model: MODEL, weight: 700, priority: 500 },
+      { channel_id: 36, model: MODEL, weight: 300, priority: 400 },
+    ])
+    channelState.items = [
+      mockChannel({ id: 9, priority: 500 }),
+      mockChannel({ id: 36, priority: 400 }),
+    ]
+    show()
+
+    await screen.findByText('channel-36')
+    // The fallback tier holds one channel, so the edit is not rebalanced.
+    fireEvent.change(shareInput(MODEL, 36), { target: { value: '50' } })
+
+    expect(screen.getByText('Total 50%')).toHaveClass('text-destructive')
   })
 
   it('keeps the percent suffix inside the share field', async () => {
@@ -388,15 +407,13 @@ describe('card presentation', () => {
     show()
 
     await screen.findByText('channel-9')
-    expect(screen.getByText('Total')).toBeVisible()
-    expect(screen.getByText('100%')).toBeVisible()
+    expect(screen.queryByText(/^Total/)).toBeNull()
 
     fireEvent.change(shareInput(MODEL, 36), { target: { value: '70' } })
     expect(shareInput(MODEL, 36)).toHaveValue(70)
     expect(shareInput(MODEL, 9)).toHaveValue(30)
-    // The tier still totals 100, so the total stays quiet (not destructive).
-    expect(screen.getByText('100%')).toBeVisible()
-    expect(screen.getByText('100%')).not.toHaveClass('text-destructive')
+    // The tier still totals 100 after the edit, so no total is surfaced.
+    expect(screen.queryByText(/^Total/)).toBeNull()
   })
 
   it('reveals editable priority and raw weight fields behind Advanced', async () => {

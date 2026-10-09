@@ -59,9 +59,9 @@ const CUSTOM_PRESET_VALUE = '__custom_preset__'
  * spanning the full card.
  */
 const COLLAPSED_GRID =
-  'grid grid-cols-[fit-content(50%)_6rem_minmax(0,1fr)] sm:grid-cols-[fit-content(14rem)_6rem_minmax(0,1fr)]'
+  'grid grid-cols-[fit-content(50%)_minmax(0,1fr)] sm:grid-cols-[fit-content(14rem)_minmax(0,1fr)]'
 const ADVANCED_GRID =
-  'flex flex-col sm:grid sm:grid-cols-[fit-content(14rem)_5.5rem_5.5rem_6rem_minmax(0,1fr)]'
+  'flex flex-col sm:grid sm:grid-cols-[fit-content(14rem)_5.5rem_5.5rem_minmax(0,1fr)]'
 
 type Props = {
   card: ModelAllocationCard
@@ -103,7 +103,7 @@ export function ModelWeightCard(props: Props) {
     <div className='rounded-lg border'>
       <div className='flex flex-wrap items-center justify-between gap-2 border-b p-3'>
         <div className='flex min-w-0 items-center gap-2'>
-          <span className='truncate text-sm font-medium'>{props.card.model}</span>
+          <span className='truncate text-sm font-semibold'>{props.card.model}</span>
           <span className='text-muted-foreground text-xs whitespace-nowrap'>
             {t('{{count}} channels', { count: props.card.channelCount })}
           </span>
@@ -179,34 +179,26 @@ export function ModelWeightCard(props: Props) {
           ) : null}
           {props.card.tiers.map((tier) => (
             <Fragment key={tier.priority}>
-              <div className='bg-muted/50 col-span-full flex items-center gap-2 px-3 py-1.5'>
-                <span className='text-sm font-semibold'>
+              <div className='bg-muted/40 col-span-full flex items-center gap-2 px-3 py-1'>
+                <span className='text-muted-foreground text-xs font-medium'>
                   {`${t('Priority')} ${tier.priority}`}
                 </span>
                 <Badge
                   variant='outline'
                   className={cn(
-                    'h-5 rounded px-1.5 text-[0.7rem]',
+                    'h-4 rounded px-1 text-[0.65rem] font-normal',
                     tier.participates
                       ? 'border-primary/30 bg-primary/10 text-primary'
-                      : 'border-muted-foreground/30 bg-muted text-muted-foreground'
+                      : 'border-transparent text-muted-foreground/70'
                   )}
                 >
                   {tier.participates ? t('Participating') : t('Fallback')}
                 </Badge>
-                <span className='ml-auto flex items-center gap-1 text-xs tabular-nums'>
-                  <span className='text-muted-foreground'>{t('Total')}</span>
-                  <span
-                    className={cn(
-                      'font-medium',
-                      tier.totalPercent === 100
-                        ? 'text-muted-foreground'
-                        : 'text-destructive'
-                    )}
-                  >
-                    {`${tier.totalPercent}%`}
+                {tier.totalPercent === 100 ? null : (
+                  <span className='text-destructive ml-auto text-xs font-medium tabular-nums'>
+                    {`${t('Total')} ${tier.totalPercent}%`}
                   </span>
-                </span>
+                )}
               </div>
               {tier.rows.map((row) => (
                 <div
@@ -254,23 +246,36 @@ export function ModelWeightCard(props: Props) {
                       />
                     </>
                   ) : null}
-                  <InputGroup className='h-8 w-24 shrink-0 sm:w-full'>
-                    <InputGroupInput
-                      aria-label={`${t('Share')} ${props.card.model} #${row.channelId}`}
-                      type='number'
-                      min={0}
-                      max={100}
-                      step='any'
-                      className='h-8 text-right tabular-nums'
-                      value={row.percent}
-                      onChange={(event) =>
-                        props.onPercentChange(row.key, event.target.value)
-                      }
-                    />
-                    <InputGroupAddon align='inline-end' className='pl-0'>
-                      %
-                    </InputGroupAddon>
-                  </InputGroup>
+                  <div className='flex min-w-0 items-center gap-2'>
+                    <div
+                      className='bg-muted hidden h-1 min-w-0 flex-1 overflow-hidden rounded-full sm:block'
+                      aria-hidden='true'
+                    >
+                      <div
+                        className='bg-primary/50 h-full rounded-full'
+                        style={{
+                          width: `${Math.min(100, Math.max(0, Number(row.percent) || 0))}%`,
+                        }}
+                      />
+                    </div>
+                    <InputGroup className='h-8 w-24 shrink-0 sm:w-[5.5rem]'>
+                      <InputGroupInput
+                        aria-label={`${t('Share')} ${props.card.model} #${row.channelId}`}
+                        type='number'
+                        min={0}
+                        max={100}
+                        step='any'
+                        className='h-8 text-right tabular-nums'
+                        value={row.percent}
+                        onChange={(event) =>
+                          props.onPercentChange(row.key, event.target.value)
+                        }
+                      />
+                      <InputGroupAddon align='inline-end' className='pl-0'>
+                        %
+                      </InputGroupAddon>
+                    </InputGroup>
+                  </div>
                 </div>
               ))}
             </Fragment>

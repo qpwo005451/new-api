@@ -145,3 +145,76 @@ Open external issue, not caused by this release: the `input.codes` upstream behi
 Finalization: `scripts/finalize_release.sh 2026-10-09-routing-card-affinity-pin-rc02` exit 0 - candidate on 4003 stopped and the port released, production still active with `NRestarts=0`, and the candidate binary, `cutover-backup.env`, the previous binary and the previous database backup are preserved for rollback.
 
 Local cleanup: the release directory, detached worktrees, `web/node_modules`, `web/dist`, `web/mobile-dist`, `.gocache`, `.gomodcache` and `.gopath` are removed; `.local-tools/release-cache` is kept.
+
+## Verification script (kept here because the copy on the host and in /tmp was removed)
+
+Runs on the production host against a staged release; touches only that release's runtime copy on port 4003.
+
+```bash
+#!/usr/bin/env bash
+# Verifies that a sticky session follows a routing policy edit, on an isolated
+# instance. usage: verify_affinity_pin.sh <release-id> [port]
+set -uo pipefail
+
+release_id="${1:?release id required}"
+port="${2:-4003}"
+release_root="/opt/new-api/releases/$release_id"
+runtime_root="$release_root/runtime"
+db="$runtime_root/new-api.db"
+base="http://127.0.0.1:$port"
+model="glm-5.3-flash"
+top="46"      # ollama_pro, reachable
+other="9"     # input-0.1X, the channel the policy promotes in step 2
+session="affinity-pin-verify-$(date +%s)"
+pass=0; fail=0
+
+say() { printf '%s\n' "$*"; }
+ok()  { pass=$((pass+1)); say "PASS: $*"; }
+bad() { fail=$((fail+1)); say "FAIL: $*"; }
+
+[ -f "$db" ] || { say "no staged runtime at $runtime_root"; exit 2; }
+pat="$(sqlite3 -noheader -batch "$db" "select access_token from users where access_token <> '' limit 1;")"
+key="$(sqlite3 -noheader -batch "$db" "select key from tokens where status = 1 limit 1;")"
+[ -n "$pat" ] && [ -n "$key" ] || { say "missing credential in the staged copy"; exit 2; }
+
+weights_step1="[{\"channel_id\":$top,\"model\":\"$model\",\"weight\":100,\"priority\":500},{\"channel_id\":$other,\"model\":\"$model\",\"weight\":100,\"priority\":400}]"
+weights_step2="[{\"channel_id\":$top,\"model\":\"$model\",\"weight\":100,\"priority\":400},{\"channel_id\":$other,\"model\":\"$model\",\"weight\":100,\"priority\":500}]"
+
+set_weights() {
+  curl -sS -m 20 -o /tmp/verify-weights.out -w '%{http_code}' -X PUT "$base/api/option/" \
+    -H "Authorization: Bearer $pat" -H 'Content-Type: application/json' \
+    --data "$(WEIGHTS="$1" python3 -c 'import json,os;print(json.dumps({"key":"model_weight_setting.weights","value":os.environ["WEIGHTS"]}))')"
+}
+
+ask() {
+  curl -sS -m 180 -o /tmp/verify-ask.out -w '%{http_code}' -X POST "$base/v1/chat/completions" \
+    -H "Authorization: Bearer $key" -H 'Content-Type: application/json' -H "Session_id: $session" \
+    --data "{\"model\":\"$model\",\"messages\":[{\"role\":\"user\",\"content\":\"reply with the single word ok\"}],\"max_tokens\":8,\"stream\":false}"
+}
+
+max_log_id() { sqlite3 -noheader -batch "$db" "select coalesce(max(id),0) from logs;"; }
+# The channel the gateway picked for the newest log row of this model after the
+# given id, whether the request succeeded (type 2) or failed upstream (type 5).
+picked() {
+  sqlite3 -noheader -batch "$db" "select channel_id || '|' || type || '|' || coalesce(json_extract(other,'\$.admin_info.channel_affinity.key_fp'),'-') from logs where id > $1 and model_name='$model' order by id desc limit 1;"
+}
+
+say "release=$release_id port=$port model=$model session=$session step1_top=$top step2_top=$other"
+
+code="$(set_weights "$weights_step1")"; [ "$code" = "200" ] && ok "weights step 1 written" || bad "weights step 1 returned $code"
+before="$(max_log_id)"
+code="$(ask)"; say "  step 1 http=$code"
+first="$(picked "$before")"
+[ "${first%%|*}" = "$top" ] && ok "fresh session served by $top (row: $first)" || bad "fresh session row $first, expected channel $top"
+
+code="$(set_weights "$weights_step2")"; [ "$code" = "200" ] && ok "weights step 2 written" || bad "weights step 2 returned $code"
+before="$(max_log_id)"
+code="$(ask)"; say "  step 2 http=$code (an upstream error is fine, the selected channel is what matters)"
+second="$(picked "$before")"
+[ "${second%%|*}" = "$other" ] && ok "session followed the policy edit to $other (row: $second)" || bad "session row $second after the policy demoted channel $top"
+
+say "bindings:"
+curl -sS -m 20 "$base/api/log/channel_affinity_bindings" -H "Authorization: Bearer $pat" | head -c 600; say ""
+say "result: pass=$pass fail=$fail"
+[ "$fail" -eq 0 ]
+```

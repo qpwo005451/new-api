@@ -122,3 +122,26 @@ The candidate run was repeated on the freshly staged copy and passed 4/4 both ti
 
 - The card change and the pin fix are independent; the pin fix is what stops a session from staying on a channel the routing policy demoted.
 - `glm-5.3-flash` still prefers `ollama_pro` (channel 46) because that channel carries priority 500 for it against 498 for `input-0.1X`. That is configuration, not code: raise channel 9 above 500 for glm, or set channel 46's glm weight to 0, or remove glm from the ollama channel.
+
+## Cutover and finalization (2026-10-09 11:07 CST)
+
+The user approved the cutover for this exact release id in-thread, so
+`cd /opt/new-api && scripts/cutover_release.sh 2026-10-09-routing-card-affinity-pin-rc02`
+was run. Exit 0, `smoke fast ok: http://127.0.0.1:4002`.
+
+- live binary `sha256sum /opt/new-api/new-api` = `bc476833d0ac54322ea8c8036930dddd51219da5827cb72769e829a4d5c136de`, equal to the manifest.
+- `new-api.service` active, new MainPID 743275, `NRestarts=0`, started 2026-10-09 11:07:28 CST; `/api/status` and `/` both 200.
+- the served desktop entry chunk is `static/js/index.c0742d2ef3.js`, the new one, so the card redesign and the number-stepper fix are live.
+- rollback handles recorded in `runtime/cutover-backup.env`: `PREVIOUS_BINARY_SHA256=201164c5325430b5274d0c1752741fc6d8cb060ef8bc07ac319465a252ed611b`, `BACKUP_BIN=runtime/live-new-api.20261009-030713.bak`, `BACKUP_DB=runtime/live-new-api.db.20261009-030713.bak`, `LIVE_SCHEMA_SHA256=567bf9ab4fcabad03c19c48459e9c0544b28762c2d338601a4737b87481c0914`.
+
+Production behavior after cutover, read-only:
+
+- sticky sessions still bind: over a ten minute window, 11 sessions carried a `channel_affinity` fingerprint and 8 of them used exactly one channel. The three that span channels are upstream failover inside a single request, visible in the recorded decision flow (attempt 1 channel 9, 2 channel 36, 3 channel 21, 4 channel 46, `retry_status_matched` between attempts), not a stale pin. No `affinity_pin_not_preferred` event appeared, which is correct because no policy edit happened in that window.
+- both key sources are in use: `gjson_fingerprint` on `/v1/chat/completions` and `request_header` (`Session-Id`) on `/v1/responses`.
+- startup was clean: no migration error, no panic, service did not restart.
+
+Open external issue, not caused by this release: the `input.codes` upstream behind channels 9, 21 and 36 is returning 502 with `upstream TLS handshake failed`, so requests fail over to channel 46 and succeed. The same 502s were present before the cutover, and they are also why the candidate `smoke full` run needed `SMOKE_MODEL=glm-5.3-flash`.
+
+Finalization: `scripts/finalize_release.sh 2026-10-09-routing-card-affinity-pin-rc02` exit 0 - candidate on 4003 stopped and the port released, production still active with `NRestarts=0`, and the candidate binary, `cutover-backup.env`, the previous binary and the previous database backup are preserved for rollback.
+
+Local cleanup: the release directory, detached worktrees, `web/node_modules`, `web/dist`, `web/mobile-dist`, `.gocache`, `.gomodcache` and `.gopath` are removed; `.local-tools/release-cache` is kept.

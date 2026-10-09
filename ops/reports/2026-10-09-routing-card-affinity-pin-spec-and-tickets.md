@@ -118,3 +118,17 @@ step, not a defect.
 
 Merge gate satisfied: Spec axis has no unresolved requirement failure, Standards
 axis has no unresolved hard violation.
+
+## Ticket status (2026-10-09 11:05 CST)
+
+| ticket | state |
+| --- | --- |
+| T1 Spec review | done, round 2 clean |
+| T2 Standards review | done, round 2 clean |
+| T3 Merge into `prod/251` | done: `36027f6aa` (merge), `63f721af7` (audit record), `94fc34675` (verification record) |
+| T4 Build candidate | done: `2026-10-09-routing-card-affinity-pin-rc02`, binary `bc476833d0ac54322ea8c8036930dddd51219da5827cb72769e829a4d5c136de`, commit `63f721af73ff00ea955dedd01faae047dde94daa` |
+| T5 4003 verification | done: `smoke fast ok`, `smoke full ok` (glm-5.3-flash), schema unchanged, 4002 untouched, sticky-session A/B reproduces the bug on the deployed binary and confirms the fix on the candidate |
+| T6 Cutover | waiting on the user's explicit approval for this release id |
+| T7 Finalize and cleanup | pending T6 |
+
+Details: `ops/reports/2026-10-09-routing-card-affinity-pin-rc02-prepare-verify-report.md`.

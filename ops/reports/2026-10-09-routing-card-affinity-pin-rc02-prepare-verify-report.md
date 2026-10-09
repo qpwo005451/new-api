@@ -218,3 +218,14 @@ curl -sS -m 20 "$base/api/log/channel_affinity_bindings" -H "Authorization: Bear
 say "result: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
 ```
+
+## Backup and temporary-file cleanup (2026-10-09 11:15 CST)
+
+On the production host:
+
+- removed the superseded rollback copies - the database backups, the previous-binary backups, a stray staged candidate database and the candidate logs/env/pid of `2026-10-07-routing-allocation-card-rc01`, `2026-10-07-routing-allocation-card-rc02`, `2026-10-07-routing-ratio-rc01` and `2026-10-09-dsh-session-fingerprint-rc01`. Each of those releases keeps `bin/new-api`, `manifest.env`, `finalized.env` and its `cutover-backup.env`;
+- kept the current release's full rollback set: `runtime/live-new-api.20261009-030713.bak`, `runtime/live-new-api.db.20261009-030713.bak` and `runtime/cutover-backup.env`;
+- removed the temporary verification files `/tmp/verify_affinity_pin.sh`, `/tmp/verify-ask.out` and `/tmp/verify-weights.out`;
+- `/opt` went from 57G to 52G used and the service stayed healthy: active, MainPID 743275, `NRestarts=0`, live binary still `bc476833...`, `/api/status` 200, only port 4002 listening.
+
+Locally: the release directory, `web/node_modules`, `web/dist`, `web/mobile-dist`, `.gocache`, `.gomodcache`, `.gopath`, the evidence directory `/tmp/dsh-cap` and the older build logs are removed, and the `~/.codex/version.json` update-prompt backup is deleted (the dismissal itself stays). `.local-tools/release-cache` (206M) is kept for the next build.

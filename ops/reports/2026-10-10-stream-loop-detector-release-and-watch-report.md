@@ -145,3 +145,17 @@ coordinator should re-run build and tests on the integrated tree.
 | `cd relaykit && GOWORK=off go build ./...` | passes |
 | ownership | exactly the four files in the commit table; no unrelated files |
 | two-axis audit | Standards has two judgement findings and no hard finding; Spec R1-R8 covered |
+
+## Cutover and finalization (2026-10-10 16:06 CST)
+
+The user approved the cutover for this exact release id in-thread, so
+`cd /opt/new-api && scripts/cutover_release.sh 2026-10-10-stream-loop-detector-rc01`
+was run. Exit 0, `smoke fast ok: http://127.0.0.1:4002`.
+
+- live binary `sha256sum /opt/new-api/new-api` = `35e08a12103ee216f7685be7b3ceec11bb9d47f8c48c4ff8370acad7dc1bed4d`, equal to the manifest.
+- `new-api.service` active, new MainPID 2867566, `NRestarts=0`, started 2026-10-10 16:06:18 CST; `/api/status` and `/` both 200.
+- the detector strings `upstream_loop_detected`, `upstream stream loop detected` and `degenerate repetition loop` are embedded in the deployed binary; the `affinity_pin_not_preferred` fix from rc02 is still embedded.
+- candidate verification before cutover: staging on port 4003 with `SQL_DSN=local`, schema hash unchanged before and after startup, `smoke fast ok` and `smoke full ok` with `SMOKE_MODEL=glm-5.3-flash` (the default-model 502 is the known external `input.codes` upstream outage, unchanged from rc02), production untouched throughout.
+- rollback handles recorded in `runtime/cutover-backup.env`: `PREVIOUS_BINARY_SHA256=bc476833d0ac54322ea8c8036930dddd51219da5827cb72769e829a4d5c136de`, `BACKUP_BIN=runtime/live-new-api.20261010-080613.bak`, `BACKUP_DB=runtime/live-new-api.db.20261010-080613.bak`, `LIVE_SCHEMA_SHA256=5dfc39a37abe259ce99e0aeb384875a89853966fe120275fe89a9c331bac9a2b`. Rollback: `cd /opt/new-api && scripts/rollback_release.sh 2026-10-10-stream-loop-detector-rc01`.
+- `scripts/finalize_release.sh 2026-10-10-stream-loop-detector-rc01` exit 0: candidate on 4003 stopped and the port released, production still active with `NRestarts=0`, and the candidate binary, `cutover-backup.env`, the previous binary and the previous database backup are preserved for rollback.
+- production behavior immediately after cutover, read-only: no `upstream stream loop detected` line in the journal in the first minutes after the restart, which is expected because no deepseek-v4/v4.1-flash traffic triggered a loop yet; watch the metrics in Monitoring above from this timestamp.

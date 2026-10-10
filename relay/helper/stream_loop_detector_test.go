@@ -130,7 +130,9 @@ func TestLoopDetectorEnabledWhitelist(t *testing.T) {
 		{"deepseek-v4.1-flash-max", true},
 		{"deepseek-ai/DeepSeek-V4.1-Flash", true},
 		{"deepseek/deepseek-v4.1-flash-max", true},
-		{"deepseek-v4-flash", false},
+		{"deepseek-v4-flash", true},
+		{"deepseek-v4-flash-max", true},
+		{"deepseek-v4-flash-none", true},
 		{"deepseek-v4.1-pro", false},
 		{"gpt-4o", false},
 		{"deepseek-v4.1", false},
@@ -236,8 +238,8 @@ func TestOaiStreamHandlerStopsDegenerateLoop(t *testing.T) {
 func TestOaiStreamHandlerDoesNotDetectLoopForOtherModels(t *testing.T) {
 	setLoopStreamTestTimeout(t)
 
-	// deepseek-v4-flash is deliberately outside the v4.1 whitelist.
-	const model = "deepseek-v4-flash"
+	// gpt-4o-mini is deliberately outside the detection whitelist.
+	const model = "gpt-4o-mini"
 	body := repetitiveChatStream(model, "let me ", 200) + "data: [DONE]\n\n"
 	c, recorder, resp, info, _ := newLoopStreamTestContext(t, model, strings.NewReader(body))
 

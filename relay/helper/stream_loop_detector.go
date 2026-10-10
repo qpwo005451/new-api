@@ -41,12 +41,15 @@ const (
 	loopDetectorSnippetBytes = 80
 )
 
-// loopDetectorModelPrefixes is the model whitelist. Detection is opt-in so the
-// extra parsing and scanning never run for providers that have not shown this
-// failure mode. Matching is case-insensitive and tolerates an organization
-// prefix such as "deepseek/deepseek-v4.1-flash".
+// loopDetectorModelPrefixes is the model whitelist for the DeepSeek-V4.1-flash
+// and DeepSeek-V4-flash families. Detection is opt-in so the extra parsing and
+// scanning never run for providers that have not shown this failure mode.
+// Matching is case-insensitive and tolerates an organization prefix such as
+// "deepseek/deepseek-v4.1-flash". Keep the more specific v4.1 entry before the
+// broader v4 entry because LoopDetectorEnabled checks prefixes in order.
 var loopDetectorModelPrefixes = []string{
 	"deepseek-v4.1-flash",
+	"deepseek-v4-flash",
 }
 
 // LoopDetector accumulates the decoded body text (content and reasoning

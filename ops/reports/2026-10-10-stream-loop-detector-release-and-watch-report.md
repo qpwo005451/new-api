@@ -127,8 +127,10 @@ is intentionally outside this document-only task.
 
 A detected loop bills the tokens already consumed by the response. The handler
 continues to use valid upstream usage when present; otherwise it estimates from
-the accumulated response text. Refund or half-price treatment is deferred; the
-user will decide that separately. This release does not touch any billing path
+the accumulated response text. Decision (2026-10-10): billing consumed tokens
+as-is is final — refund and half-price treatment are deliberately not wanted
+(the deployment is single-user personal use), so this record closes the
+decision instead of deferring it. This release does not touch any billing path
 or pricing rule.
 
 ## Verification

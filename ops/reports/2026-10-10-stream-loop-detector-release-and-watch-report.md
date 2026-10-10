@@ -37,7 +37,12 @@ Merge and deploy the reviewed commit as follows:
    merge.
 2. Run `git merge --ff-only a10943d17`. The branch is a single reviewed commit
    on top of that base, so fast-forward keeps the reviewed commit id unchanged
-   and avoids adding an unnecessary merge commit.
+   and avoids adding an unnecessary merge commit. As actually executed on
+   2026-10-10, `prod/251` had gained the same-day `db62eb538` ops report after
+   the branch was cut, so fast-forward was impossible; the merge used
+   `--no-ff` instead (merge commit `a3f63a1ce`). The reviewed commit ids
+   `a10943d17` and the same-day whitelist extension `f201f21c5` are unchanged
+   in the merged history.
 3. Build on the local workstation with `go build ./...` (or the normal local
    release-candidate flow when a full artifact is required), deploy the built
    binary, and restart `new-api.service`.

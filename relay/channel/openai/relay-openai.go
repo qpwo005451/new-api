@@ -125,6 +125,13 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	seenStreamToolCalls := make(map[string]struct{})
 	var streamFunctionCallNames []string
 
+	// 退化重复循环检测按模型白名单开启，只累计正文(content + reasoning_content)。
+	var loopDetector *helper.LoopDetector
+	if helper.LoopDetectorEnabled(model) {
+		loopDetector = helper.NewLoopDetector()
+	}
+	var loopDetected bool
+
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 		if lastStreamData != "" {
 			if err := HandleStreamFormat(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
@@ -145,6 +152,22 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 			if err := processTokenData(info, data, &responseTextBuilder, &toolCount); err != nil {
 				logger.LogError(c, "error processing stream token data: "+err.Error())
 				sr.Error(err)
+			}
+			if loopDetector != nil && !loopDetector.Triggered() {
+				if bodyText := streamDeltaBodyText(info.RelayMode, data); bodyText != "" && loopDetector.Append(bodyText) {
+					loopDetected = true
+					logger.LogError(c, fmt.Sprintf(
+						"upstream stream loop detected: model=%s period=%d repeats=%d snippet=%q",
+						model, loopDetector.MatchPeriod(), loopDetector.MatchRepeats(), loopDetector.MatchSnippet(),
+					))
+					loopErr := fmt.Errorf("upstream loop detected: %d-byte unit repeated %d times",
+						loopDetector.MatchPeriod(), loopDetector.MatchRepeats())
+					// Set the end reason before Stop so the more specific loop
+					// reason wins over Stop's generic handler_stop.
+					info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonUpstreamLoop, loopErr)
+					info.StreamStatus.MarkFailed("upstream_loop_detected", "upstream_stream_error", 0)
+					sr.Stop(loopErr)
+				}
 			}
 		}
 	})
@@ -173,6 +196,11 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	// that carries a finish reason, or the protocol-level [DONE] sentinel. A
 	// stream that ends with neither was cut short, so surface a retryable error.
 	streamComplete := receivedFinishReason || info.StreamStatus.EndReason == relaycommon.StreamEndReasonDone
+	if loopDetected {
+		// The loop error chunk is emitted below; a finish_reason that arrived on
+		// the same chunk must not turn the aborted stream into a success.
+		streamComplete = false
+	}
 	if !streamComplete {
 		if info.AttemptOutcome != nil && info.AttemptOutcome.IsActive() {
 			_ = info.AttemptOutcome.MarkDownstreamCommitted()
@@ -182,7 +210,11 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 				relaycommon.AttemptUpstreamAccepted,
 			)
 		}
-		sendOpenAIStreamError(c, info)
+		if loopDetected {
+			sendOpenAIStreamLoopError(c, info)
+		} else {
+			sendOpenAIStreamError(c, info)
+		}
 		if !containStreamUsage {
 			usage = service.ResponseText2Usage(c, responseTextBuilder.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())
 			usage.CompletionTokens += toolCount * 7
@@ -268,6 +300,25 @@ func streamChunkHasFinishReason(relayMode int, data string) bool {
 	return false
 }
 
+// streamDeltaBodyText returns the assistant body text carried by one decoded
+// chat-completions chunk. Only content and reasoning_content count toward loop
+// detection; tool-call argument deltas are deliberately excluded.
+func streamDeltaBodyText(relayMode int, data string) string {
+	if relayMode != relayconstant.RelayModeChatCompletions {
+		return ""
+	}
+	var streamResponse dto.ChatCompletionsStreamResponse
+	if err := common.UnmarshalJsonStr(data, &streamResponse); err != nil {
+		return ""
+	}
+	var body strings.Builder
+	for _, choice := range streamResponse.Choices {
+		body.WriteString(choice.Delta.GetContentString())
+		body.WriteString(choice.Delta.GetReasoningContent())
+	}
+	return body.String()
+}
+
 func sendOpenAIStreamError(c *gin.Context, info *relaycommon.RelayInfo) {
 	message := "upstream stream terminated unexpectedly"
 	if info != nil && info.StreamStatus != nil && info.StreamStatus.EndError != nil {
@@ -278,6 +329,23 @@ func sendOpenAIStreamError(c *gin.Context, info *relaycommon.RelayInfo) {
 			"message": message,
 			"type":    "upstream_stream_error",
 			"code":    "upstream_stream_terminated",
+		},
+	})
+}
+
+// sendOpenAIStreamLoopError reports a degenerate repetition loop using the same
+// OpenAI-style SSE error envelope as sendOpenAIStreamError, but with a distinct
+// code so the client can treat the response as a stream error and retry.
+func sendOpenAIStreamLoopError(c *gin.Context, info *relaycommon.RelayInfo) {
+	message := "upstream stream entered a degenerate repetition loop"
+	if info != nil && info.StreamStatus != nil && info.StreamStatus.EndError != nil {
+		message += ": " + info.StreamStatus.EndError.Error()
+	}
+	_ = helper.ObjectData(c, map[string]any{
+		"error": map[string]any{
+			"message": message,
+			"type":    "upstream_stream_error",
+			"code":    "upstream_loop_detected",
 		},
 	})
 }

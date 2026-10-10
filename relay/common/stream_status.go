@@ -19,6 +19,11 @@ const (
 	StreamEndReasonEOF         StreamEndReason = "eof"
 	StreamEndReasonPanic       StreamEndReason = "panic"
 	StreamEndReasonPingFail    StreamEndReason = "ping_fail"
+	// StreamEndReasonUpstreamLoop marks a stream aborted by the degenerate
+	// repetition detector. It is an abnormal end: the upstream was still
+	// producing when the relay cut it off, so IsNormalEnd reports false and
+	// health sampling counts it as an upstream failure.
+	StreamEndReasonUpstreamLoop StreamEndReason = "upstream_loop"
 )
 
 // ResponseOutcome is the protocol-level result of one response, independent of
